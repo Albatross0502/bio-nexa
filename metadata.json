@@ -1,0 +1,6 @@
+{
+  "name": "BIO-NEXA",
+  "description": "Connecting Science. Creating Careers. Biotechnology, Internship, Education, and Careers platform for students, researchers, and life science professionals.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
