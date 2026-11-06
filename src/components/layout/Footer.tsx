@@ -237,6 +237,16 @@ export const Footer: React.FC = () => {
               Terms of Service
             </button>
             <button
+              onClick={() => {
+                sessionStorage.removeItem('bionexa_welcome_entered');
+                window.location.search = '?welcome=1';
+              }}
+              className="hover:text-teal-400 transition-colors text-slate-400 flex items-center gap-1"
+              title="Return to Welcome Landing Screen"
+            >
+              <span>Welcome Screen</span>
+            </button>
+            <button
               onClick={() => navigate('/admin')}
               className="hover:text-slate-300 transition-colors text-slate-600"
             >
