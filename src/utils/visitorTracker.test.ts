@@ -1,29 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getIndianDateTime, buildTrackingPayload, sendVisitorTracking } from './visitorTracker';
+import {
+  BIO_NEXA_TRACKING_URL,
+  sendBioNexaVisitorEntry,
+  resetBioNexaTrackingFlag
+} from './visitorTracker';
 
-test('getIndianDateTime returns formatted Indian date and time in Asia/Kolkata', () => {
-  // Use a known UTC instant: 2026-11-06T03:00:00Z -> IST is +05:30 -> 8:30 AM on 06 Nov 2026
-  const testDate = new Date('2026-11-06T03:00:00.000Z');
-  const indian = getIndianDateTime(testDate);
-
-  assert.equal(indian.timezone, 'Asia/Kolkata');
-  assert.ok(indian.date.includes('2026'), 'Date must contain year 2026');
-  assert.ok(indian.time.includes('AM') || indian.time.includes('pm') || indian.time.includes('am') || indian.time.includes('PM'), 'Time must format with AM/PM');
+test('BIO_NEXA_TRACKING_URL is configured with the Google Apps Script Web App', () => {
+  assert.ok(BIO_NEXA_TRACKING_URL.includes('script.google.com/macros/s/'));
+  assert.ok(BIO_NEXA_TRACKING_URL.endsWith('/exec'));
 });
 
-test('buildTrackingPayload generates correct schema for Google Sheets Entry', () => {
-  const payload = buildTrackingPayload();
+test('sendBioNexaVisitorEntry prevents duplicate requests in the same session', () => {
+  resetBioNexaTrackingFlag();
+  // First call should proceed
+  const first = sendBioNexaVisitorEntry();
+  assert.equal(first, true);
 
-  assert.equal(payload.action, 'record_entry');
-  assert.equal(payload.timezone, 'Asia/Kolkata');
-  assert.ok(payload.indianDate.length > 0);
-  assert.ok(payload.indianTime.length > 0);
-  assert.ok(payload.timestamp.length > 0);
-});
+  // Immediate second call should be blocked by duplicate guard
+  const second = sendBioNexaVisitorEntry();
+  assert.equal(second, false);
 
-test('sendVisitorTracking gracefully handles empty URL without throwing', async () => {
-  const result = await sendVisitorTracking('');
-  assert.equal(result.success, true);
-  assert.equal(result.mode, 'local-ready');
+  resetBioNexaTrackingFlag();
 });

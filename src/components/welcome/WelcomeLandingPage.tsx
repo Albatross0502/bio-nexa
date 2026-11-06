@@ -1,5 +1,32 @@
 import React, { useState } from 'react';
-import { sendVisitorTracking } from '../../utils/visitorTracker';
+
+// ==========================================
+// BIO-NEXA GOOGLE SHEETS VISITOR TRACKING
+// ==========================================
+
+export const BIO_NEXA_TRACKING_URL =
+  "https://script.google.com/macros/s/AKfycbwCSGpoOJHEtqnVEKqf07kORQ3jfb0EqfMQn8NOo5QiAqYLGg4C33Oy2G7JXQ7iPwi8/exec";
+
+let bioNexaEntrySent = false;
+
+export function sendBioNexaVisitorEntry() {
+  // Prevent duplicate tracking requests
+  if (bioNexaEntrySent) {
+    return;
+  }
+
+  bioNexaEntrySent = true;
+
+  // Send visitor entry to Google Sheets
+  fetch(BIO_NEXA_TRACKING_URL, {
+    method: "GET",
+    mode: "no-cors",
+    cache: "no-store",
+    keepalive: true
+  }).catch(error => {
+    console.error("BIO-NEXA tracking request failed:", error);
+  });
+}
 
 interface WelcomeLandingPageProps {
   onEnter: () => void;
@@ -13,25 +40,23 @@ export const WelcomeLandingPage: React.FC<WelcomeLandingPageProps> = ({ onEnter 
    * handleBioNexaEnter()
    * 
    * Orchestrates the transition into the BIO-NEXA platform:
-   * 1. Immediately prevents duplicate clicks
-   * 2. Initiates non-blocking visitor tracking to Google Apps Script / Google Sheets
+   * 1. Prevents duplicate clicks
+   * 2. Initiates visitor tracking to Google Apps Script / Google Sheets
    * 3. Triggers the landing-page exit animation
    * 4. Smoothly reveals the existing BIO-NEXA website
    */
   const handleBioNexaEnter = () => {
-    // 1. Immediately prevent additional clicks
+    // Prevent duplicate button clicks
     if (isEntering) return;
     setIsEntering(true);
 
-    // 2. Initiate non-blocking visitor tracking
-    sendVisitorTracking().catch(() => {
-      // Guaranteed silent failover - website access is never blocked
-    });
+    // 1. Send visitor entry to Google Sheets
+    sendBioNexaVisitorEntry();
 
-    // 3. Start landing-page exit animation
+    // 2. Trigger landing-page exit animation
     setIsExiting(true);
 
-    // 4. Smoothly reveal the existing BIO-NEXA website after exit transition
+    // 3. Smoothly reveal the existing BIO-NEXA website
     setTimeout(() => {
       onEnter();
     }, 450);
