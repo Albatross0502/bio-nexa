@@ -122,7 +122,8 @@ const DEMO_USERS: Record<'student' | 'company' | 'admin', User> = {
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Navigation state synced with window.location
   const [currentPath, setCurrentPath] = useState<string>(() => {
-    return window.location.pathname || '/';
+    if (typeof window === 'undefined') return '/';
+    return (window.location.pathname + window.location.search) || '/';
   });
 
   // User state
@@ -303,14 +304,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Listen to browser Back and Forward events
   useEffect(() => {
     const handlePopState = () => {
-      setCurrentPath(window.location.pathname || '/');
+      setCurrentPath((window.location.pathname + window.location.search) || '/');
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   const navigate = (path: string) => {
-    if (window.location.pathname !== path) {
+    const currentFull = window.location.pathname + window.location.search;
+    if (currentFull !== path) {
       window.history.pushState({}, '', path);
       setCurrentPath(path);
       window.scrollTo({ top: 0, behavior: 'smooth' });

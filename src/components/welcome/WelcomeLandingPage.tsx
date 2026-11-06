@@ -1,32 +1,7 @@
 import React, { useState } from 'react';
+import { sendBioNexaVisitorEntry, BIO_NEXA_TRACKING_URL } from '../../utils/visitorTracker';
 
-// ==========================================
-// BIO-NEXA GOOGLE SHEETS VISITOR TRACKING
-// ==========================================
-
-export const BIO_NEXA_TRACKING_URL =
-  "https://script.google.com/macros/s/AKfycbwCSGpoOJHEtqnVEKqf07kORQ3jfb0EqfMQn8NOo5QiAqYLGg4C33Oy2G7JXQ7iPwi8/exec";
-
-let bioNexaEntrySent = false;
-
-export function sendBioNexaVisitorEntry() {
-  // Prevent duplicate tracking requests
-  if (bioNexaEntrySent) {
-    return;
-  }
-
-  bioNexaEntrySent = true;
-
-  // Send visitor entry to Google Sheets
-  fetch(BIO_NEXA_TRACKING_URL, {
-    method: "GET",
-    mode: "no-cors",
-    cache: "no-store",
-    keepalive: true
-  }).catch(error => {
-    console.error("BIO-NEXA tracking request failed:", error);
-  });
-}
+export { BIO_NEXA_TRACKING_URL, sendBioNexaVisitorEntry };
 
 interface WelcomeLandingPageProps {
   onEnter: () => void;

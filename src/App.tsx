@@ -26,6 +26,7 @@ import {
   TermsPage
 } from './components/pages/StaticPages';
 import { WelcomeLandingPage } from './components/welcome/WelcomeLandingPage';
+import { OpportunitiesPortal } from './components/opportunities/OpportunitiesPortal';
 
 const MainContent: React.FC = () => {
   const { currentPath } = useApp();
@@ -55,8 +56,11 @@ const MainContent: React.FC = () => {
     const path = currentPath === '/' ? '/' : currentPath.replace(/\/$/, '');
 
     if (path === '/') return <HomePage />;
-    if (path.startsWith('/jobs')) return <JobsPage />;
-    if (path.startsWith('/internships')) return <InternshipsPage />;
+    if (path.startsWith('/opportunities')) return <OpportunitiesPortal initialType="all" />;
+    if (path.startsWith('/workshops')) return <OpportunitiesPortal initialType="workshop" />;
+    if (path.startsWith('/biotech-jobs')) return <OpportunitiesPortal initialType="biotech_jobs" />;
+    if (path.startsWith('/jobs')) return <OpportunitiesPortal initialType="job" />;
+    if (path.startsWith('/internships')) return <OpportunitiesPortal initialType="internship" />;
     if (path.startsWith('/courses')) return <CoursesPage />;
     if (path.startsWith('/exams')) return <ExamsPage />;
     if (path.startsWith('/scholarships')) return <ScholarshipsPage />;

@@ -29,8 +29,8 @@ export const SEED_JOBS: Job[] = [
       'Demonstrated expertise in statistical Design of Experiments (DoE) using JMP or Design-Expert'
     ],
     skills: ['Bioreactors', 'Fermentation', 'DoE', 'cGMP', 'Mammalian Cell Culture', 'HPLC'],
-    benefits: ['Health Insurance', 'Relocation Assistance', 'Annual Retention Bonus', 'Campus Wellness Center'],
-    source: { name: 'Biocon Careers Portal', url: 'https://biocon.com/careers', isExternal: false },
+    source: { name: 'Biocon Careers Portal', url: 'https://www.biocon.com/careers/job-openings', isExternal: true },
+    applicationUrl: 'https://www.biocon.com/careers/job-openings',
     featured: true
   },
   {
@@ -62,7 +62,8 @@ export const SEED_JOBS: Job[] = [
     ],
     skills: ['CRISPR-Cas', 'RT-qPCR', 'Protein Purification', 'LAMP', 'Cloning', 'Gel Electrophoresis'],
     benefits: ['Government Fellowship Norms', 'Access to High-Performance Illumina Sequencers', 'Contributory Medical Scheme'],
-    source: { name: 'CSIR IGIB Official Notification', url: 'https://igib.res.in', isExternal: true },
+    source: { name: 'CSIR IGIB Official Notification', url: 'https://www.igib.res.in/career/project-vacancies', isExternal: true },
+    applicationUrl: 'https://www.igib.res.in/career/project-vacancies',
     featured: true
   },
   {
@@ -94,7 +95,8 @@ export const SEED_JOBS: Job[] = [
     ],
     skills: ['HPLC', 'ELISA', 'LAL Endotoxin', 'cGMP', 'SDS-PAGE', '21 CFR Part 11'],
     benefits: ['Subsidized Transportation', 'Annual Performance Incentive', 'Comprehensive Medical Coverage'],
-    source: { name: 'Serum Institute Human Resources', url: 'https://seruminstitute.com', isExternal: false }
+    source: { name: 'Serum Institute Human Resources', url: 'https://www.seruminstitute.com/careers.php', isExternal: true },
+    applicationUrl: 'https://www.seruminstitute.com/careers.php'
   },
   {
     id: 'job-4',
@@ -125,7 +127,8 @@ export const SEED_JOBS: Job[] = [
     ],
     skills: ['R / Seurat', 'Python / Scanpy', 'Nextflow', 'scRNA-seq', 'AWS', 'Linux Bash'],
     benefits: ['Flexible Work Model', 'Broadband Allowance', 'Skill Upskilling Stipend', 'Stock Options'],
-    source: { name: 'Syngene Careers', url: 'https://syngeneintl.com', isExternal: false }
+    source: { name: 'Syngene Careers', url: 'https://www.syngeneintl.com/careers/', isExternal: true },
+    applicationUrl: 'https://www.syngeneintl.com/careers/'
   },
   {
     id: 'job-5',
@@ -156,7 +159,8 @@ export const SEED_JOBS: Job[] = [
     ],
     skills: ['CHO Cell Lines', 'Vector Design', 'FACS', 'Optofluidics', 'Molecular Cloning', 'Glycosylation'],
     benefits: ['Executive Health Package', 'Annual Performance Equity', 'Relocation & Housing Support'],
-    source: { name: "Dr. Reddy's Talent Acquisition", url: 'https://drreddys.com', isExternal: false },
+    source: { name: "Dr. Reddy's Talent Acquisition", url: 'https://careers.drreddys.com', isExternal: true },
+    applicationUrl: 'https://careers.drreddys.com',
     featured: true
   }
 ];
@@ -181,7 +185,8 @@ export const SEED_INTERNSHIPS: Internship[] = [
       'Formal technical writing experience culminating in an Academy Fellowship monograph'
     ],
     skillsRequired: ['Basic Lab Calculations', 'Buffer Preparation', 'Molecular Biology Fundamentals', 'Curiosity'],
-    source: { name: 'Indian Academy of Sciences Web Portal', url: 'https://web-japps.ias.ac.in', isExternal: true },
+    source: { name: 'Indian Academy of Sciences Web Portal', url: 'https://web-japps.ias.ac.in/fellowship2027/', isExternal: true },
+    applicationUrl: 'https://web-japps.ias.ac.in/fellowship2027/',
     featured: true
   },
   {
@@ -191,7 +196,7 @@ export const SEED_INTERNSHIPS: Internship[] = [
     organization: 'Biocon Academy',
     location: 'Electronic City, Bengaluru',
     mode: 'On-site Lab',
-    stipend: '₹18,000 / month + Subsidized Accommodation',
+    stipend: '₹18,00,0 / month + Subsidized Accommodation',
     duration: '6 Months (Jan - June 2027)',
     deadline: '2026-12-10',
     category: 'Industrial R&D',
@@ -203,7 +208,8 @@ export const SEED_INTERNSHIPS: Internship[] = [
       'Fast-track placement opportunity into Biocon full-time Associate positions upon completion'
     ],
     skillsRequired: ['Aseptic Technique', 'Basic Chromatography', 'Data Analysis in Excel', 'Standard Operating Procedures'],
-    source: { name: 'Biocon Academy Programs', url: 'https://bioconacademy.com', isExternal: false },
+    source: { name: 'Biocon Academy Programs', url: 'https://www.bioconacademy.com/admissions.html', isExternal: true },
+    applicationUrl: 'https://www.bioconacademy.com/admissions.html',
     featured: true
   },
   {
@@ -225,7 +231,8 @@ export const SEED_INTERNSHIPS: Internship[] = [
       'Presentation of findings at NCBS weekly campus research seminars'
     ],
     skillsRequired: ['Confocal Microscopy Basics', 'Genetics', 'Dissection Skills', 'Scientific Literature Reading'],
-    source: { name: 'NCBS Academic Office', url: 'https://ncbs.res.in/academic/students', isExternal: true }
+    source: { name: 'NCBS Academic Office', url: 'https://www.ncbs.res.in/academic/admissions', isExternal: true },
+    applicationUrl: 'https://www.ncbs.res.in/academic/admissions'
   },
   {
     id: 'intern-4',
@@ -246,7 +253,8 @@ export const SEED_INTERNSHIPS: Internship[] = [
       'Flow cytometry staining and data interpretation'
     ],
     skillsRequired: ['Tissue Culture', 'Sterile Handling', 'Immunocytochemistry', 'Biosafety'],
-    source: { name: 'Reliance Life Sciences Careers', url: 'https://relbio.com', isExternal: false }
+    source: { name: 'Reliance Life Sciences Careers', url: 'https://www.rellife.com/careers.html', isExternal: true },
+    applicationUrl: 'https://www.rellife.com/careers.html'
   }
 ];
 

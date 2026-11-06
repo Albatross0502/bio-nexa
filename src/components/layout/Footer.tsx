@@ -81,6 +81,22 @@ export const Footer: React.FC = () => {
             <ul className="space-y-2 text-xs">
               <li>
                 <button
+                  onClick={() => navigate('/opportunities')}
+                  className="hover:text-teal-400 transition-colors font-semibold text-teal-300"
+                >
+                  Opportunities Portal (13 Branches)
+                </button>
+              </li>
+              <li>
+                <button
+                  onClick={() => navigate('/workshops')}
+                  className="hover:text-teal-400 transition-colors"
+                >
+                  Biotech Workshops & Training
+                </button>
+              </li>
+              <li>
+                <button
                   onClick={() => navigate('/jobs')}
                   className="hover:text-teal-400 transition-colors"
                 >

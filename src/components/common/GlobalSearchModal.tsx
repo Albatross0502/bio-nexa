@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, X, Briefcase, GraduationCap, FileText, Award, BookOpen, ChevronRight } from 'lucide-react';
+import { Search, X, Briefcase, GraduationCap, FileText, Award, BookOpen, ChevronRight, Sparkles } from 'lucide-react';
 import { SEED_EXAMS, SEED_SCHOLARSHIPS, SEED_RESEARCH } from '../../data/seedData';
+import { opportunityStore } from '../../services/opportunities/opportunityStore';
+import { Opportunity } from '../../types/opportunity';
 
 export const GlobalSearchModal: React.FC = () => {
   const { isSearchOpen, setIsSearchOpen, jobs, internships, courses, navigate } = useApp();
@@ -58,6 +60,17 @@ export const GlobalSearchModal: React.FC = () => {
   const matchedResearch = SEED_RESEARCH
     .filter((r) => !q || r.title.toLowerCase().includes(q) || r.keywords.some((k) => k.toLowerCase().includes(q)))
     .slice(0, 3);
+
+  const matchedOpportunities = React.useMemo(() => {
+    try {
+      const opps: Opportunity[] = opportunityStore.getAllOpportunities();
+      return opps
+        .filter((o: Opportunity) => o.isApproved && (!q || o.title.toLowerCase().includes(q) || o.organization.toLowerCase().includes(q) || o.branches.some((b: string) => b.toLowerCase().includes(q))))
+        .slice(0, 3);
+    } catch {
+      return [];
+    }
+  }, [q, isSearchOpen]);
 
   const handleSelect = (path: string) => {
     setIsSearchOpen(false);
@@ -122,6 +135,47 @@ export const GlobalSearchModal: React.FC = () => {
 
         {/* Results Container */}
         <div className="flex-1 overflow-y-auto p-4 divide-y divide-slate-100 dark:divide-slate-800">
+          {/* Live Opportunities Portal listings */}
+          {(showAll || filterType === 'jobs' || filterType === 'internships') && matchedOpportunities.length > 0 && (
+            <div className="py-2.5">
+              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Verified Opportunities & Workshops</span>
+                </div>
+                <button
+                  onClick={() => handleSelect(`/opportunities${query ? `?q=${encodeURIComponent(query)}` : ''}`)}
+                  className="text-[11px] font-medium text-sky-600 hover:underline cursor-pointer"
+                >
+                  View in Portal →
+                </button>
+              </div>
+              <div className="space-y-1">
+                {matchedOpportunities.map((opp: Opportunity) => (
+                  <div
+                    key={opp.id}
+                    onClick={() => handleSelect(`/opportunities?id=${opp.id}`)}
+                    className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer group transition-colors"
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-slate-900 dark:text-slate-100 group-hover:text-sky-600 transition-colors">
+                        {opp.title}
+                      </div>
+                      <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+                        <span>{opp.organization}</span>
+                        <span>·</span>
+                        <span className="capitalize">{opp.type.replace('_', ' ')}</span>
+                        <span>·</span>
+                        <span>{opp.location}</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 shrink-0" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Jobs */}
           {(showAll || filterType === 'jobs') && matchedJobs.length > 0 && (
             <div className="py-2.5">
@@ -315,7 +369,8 @@ export const GlobalSearchModal: React.FC = () => {
           )}
 
           {/* Empty search state */}
-          {matchedJobs.length === 0 &&
+          {matchedOpportunities.length === 0 &&
+            matchedJobs.length === 0 &&
             matchedInternships.length === 0 &&
             matchedCourses.length === 0 &&
             matchedExams.length === 0 &&

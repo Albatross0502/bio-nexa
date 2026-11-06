@@ -31,12 +31,13 @@ export interface Job {
   responsibilities: string[];
   requirements: string[];
   skills: string[];
-  benefits: string[];
+  benefits?: string[];
   source: {
     name: string;
     url: string;
     isExternal: boolean;
   };
+  applicationUrl?: string;
   featured?: boolean;
 }
 
@@ -60,6 +61,7 @@ export interface Internship {
     url: string;
     isExternal: boolean;
   };
+  applicationUrl?: string;
   featured?: boolean;
 }
 

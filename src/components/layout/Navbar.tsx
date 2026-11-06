@@ -8,8 +8,10 @@ export const Navbar: React.FC = () => {
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
 
   const navLinks = [
+    { label: 'Opportunities', path: '/opportunities' },
     { label: 'Jobs', path: '/jobs' },
     { label: 'Internships', path: '/internships' },
+    { label: 'Workshops', path: '/workshops' },
     { label: 'Courses', path: '/courses' },
     { label: 'Exams', path: '/exams' },
     { label: 'Scholarships', path: '/scholarships' },
