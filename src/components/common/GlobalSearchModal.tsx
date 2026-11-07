@@ -187,7 +187,7 @@ export const GlobalSearchModal: React.FC = () => {
                 {matchedJobs.map((job) => (
                   <div
                     key={job.id}
-                    onClick={() => handleSelect(`/jobs?id=${job.id}`)}
+                    onClick={() => handleSelect(`/jobs/${job.id}`)}
                     className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer group transition-colors"
                   >
                     <div>
@@ -376,9 +376,23 @@ export const GlobalSearchModal: React.FC = () => {
             matchedExams.length === 0 &&
             matchedScholarships.length === 0 &&
             matchedResearch.length === 0 && (
-              <div className="py-12 text-center text-slate-500">
+              <div className="py-12 text-center text-slate-500 space-y-2">
                 <p className="text-sm">No matches found for &ldquo;{query}&rdquo;</p>
-                <p className="text-xs text-slate-400 mt-1">Try searching for &quot;Fermentation&quot;, &quot;CRISPR&quot;, &quot;CSIR NET&quot;, or &quot;Biocon&quot;</p>
+                <p className="text-xs text-slate-400">Try searching for &quot;Fermentation&quot;, &quot;CRISPR&quot;, &quot;CSIR NET&quot;, or &quot;Biocon&quot;</p>
+                {query.trim() && (
+                  <div className="pt-2">
+                    <button
+                      onClick={() => {
+                        setIsSearchOpen(false);
+                        navigate(`/jobs?tab=google&q=${encodeURIComponent(query)}`);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#0B2A5B] text-white rounded-xl text-xs font-bold hover:bg-blue-900 transition-colors cursor-pointer shadow-xs"
+                    >
+                      <span>Search &ldquo;{query}&rdquo; on Google Jobs</span>
+                      <ChevronRight className="w-3.5 h-3.5 text-teal-300" />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
         </div>

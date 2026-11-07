@@ -440,8 +440,8 @@ export const CompanyDashboard: React.FC = () => {
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-slate-400">
                   <span>Deadline: {job.deadline}</span>
                   <button
-                    onClick={() => navigate(`/jobs?id=${job.id}`)}
-                    className="font-bold text-[#0B2A5B] dark:text-sky-300 hover:underline"
+                    onClick={() => navigate(`/jobs/${job.id}`)}
+                    className="font-bold text-[#0B2A5B] dark:text-sky-300 hover:underline cursor-pointer"
                   >
                     View Listing Page &rarr;
                   </button>

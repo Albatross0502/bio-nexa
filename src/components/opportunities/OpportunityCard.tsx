@@ -285,38 +285,38 @@ export const OpportunityCard: React.FC<OpportunityCardProps> = ({
           </button>
 
           {/* Functional Primary Action Button */}
-          {actionUrl ? (
-            isExternalUrl ? (
-              <a
-                href={actionUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={`flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-xs font-bold text-white px-4 py-2 rounded-xl shadow-xs transition-all ${
-                  isExpired || isClosed
-                    ? 'bg-slate-500 hover:bg-slate-600'
-                    : 'bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700'
-                }`}
-              >
-                <span>{currentType.actionLabel}</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            ) : (
-              <a
-                href={actionUrl}
-                className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 px-4 py-2 rounded-xl shadow-xs transition-all"
-              >
-                <span>{currentType.actionLabel}</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </a>
-            )
-          ) : (
+          {isExpired || isClosed ? (
             <button
-              onClick={() => onSelect(opportunity)}
-              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-xl shadow-xs transition-all"
+              disabled
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-xs font-bold text-slate-400 dark:text-slate-500 bg-slate-200 dark:bg-slate-800 px-4 py-2 rounded-xl cursor-not-allowed border border-slate-300 dark:border-slate-700"
             >
-              <span>Contact / Apply</span>
-              <Send className="w-3.5 h-3.5" />
+              <span>{isExpired ? 'Expired' : 'Closed'}</span>
             </button>
+          ) : !actionUrl || actionUrl === '#' || actionUrl.startsWith('javascript:') ? (
+            <button
+              disabled
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-xs font-bold text-slate-400 dark:text-slate-500 bg-slate-200 dark:bg-slate-800 px-4 py-2 rounded-xl cursor-not-allowed border border-slate-300 dark:border-slate-700"
+            >
+              <span>Link Unavailable</span>
+            </button>
+          ) : isExternalUrl ? (
+            <a
+              href={actionUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 px-4 py-2 rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              <span>{currentType.actionLabel}</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          ) : (
+            <a
+              href={actionUrl}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 px-4 py-2 rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              <span>{currentType.actionLabel}</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </a>
           )}
         </div>
       </div>

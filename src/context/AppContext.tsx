@@ -301,6 +301,54 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem('bionexa_newsletter', JSON.stringify(newsletterEmails));
   }, [newsletterEmails]);
 
+  // Synchronize jobs from backend database on mount
+  useEffect(() => {
+    let isMounted = true;
+    const fetchDatabaseJobs = async () => {
+      try {
+        const res = await fetch('/api/jobs');
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.jobs && Array.isArray(data.jobs) && data.jobs.length > 0) {
+            const mappedJobs: Job[] = data.jobs.map((j: any) => ({
+              id: j.id,
+              slug: j.id,
+              title: j.title,
+              company: j.employer || j.company,
+              location: j.location,
+              type: j.employmentType || j.type || 'Full-time',
+              sector: j.sector || 'Private Biopharma',
+              experienceLevel: 'Mid-level (2-5 yrs)',
+              qualification: j.qualification || 'M.Sc / M.Tech',
+              salary: j.salary,
+              postedDate: j.publicationDate || '2026-11-01',
+              deadline: j.expiryDate || '2026-12-31',
+              description: j.description,
+              responsibilities: j.responsibilities || [],
+              requirements: j.requirements || [],
+              skills: j.skills || [],
+              source: {
+                name: j.source || 'BIO-NEXA Verified',
+                url: j.applicationUrl,
+                isExternal: true
+              },
+              applicationUrl: j.applicationUrl,
+              featured: Boolean(j.featured)
+            }));
+            setJobs(mappedJobs);
+          }
+        }
+      } catch (err) {
+        console.warn('API /api/jobs sync note: using cached state.', err);
+      }
+    };
+
+    fetchDatabaseJobs();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Listen to browser Back and Forward events
   useEffect(() => {
     const handlePopState = () => {

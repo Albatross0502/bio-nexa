@@ -27,6 +27,9 @@ import {
 } from './components/pages/StaticPages';
 import { WelcomeLandingPage } from './components/welcome/WelcomeLandingPage';
 import { OpportunitiesPortal } from './components/opportunities/OpportunitiesPortal';
+import { JobDetailPage } from './components/jobs/JobDetailPage';
+import { NotFoundPage } from './components/pages/NotFoundPage';
+import { parseRoute } from './utils/routeMatcher';
 
 const MainContent: React.FC = () => {
   const { currentPath } = useApp();
@@ -35,6 +38,8 @@ const MainContent: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('welcome') === '1') return false;
     if (params.get('autostart') === '1') return true;
+    // Direct deep routes should open directly without welcome splash obstruction
+    if (window.location.pathname !== '/' && window.location.pathname !== '') return true;
     return sessionStorage.getItem('bionexa_welcome_entered') === 'true';
   });
 
@@ -52,33 +57,65 @@ const MainContent: React.FC = () => {
   };
 
   const renderRoute = () => {
-    // Normalise path (remove trailing slash unless root)
-    const path = currentPath === '/' ? '/' : currentPath.replace(/\/$/, '');
+    const parsed = parseRoute(currentPath);
 
-    if (path === '/') return <HomePage />;
-    if (path.startsWith('/opportunities')) return <OpportunitiesPortal initialType="all" />;
-    if (path.startsWith('/workshops')) return <OpportunitiesPortal initialType="workshop" />;
-    if (path.startsWith('/biotech-jobs')) return <OpportunitiesPortal initialType="biotech_jobs" />;
-    if (path.startsWith('/jobs')) return <OpportunitiesPortal initialType="job" />;
-    if (path.startsWith('/internships')) return <OpportunitiesPortal initialType="internship" />;
-    if (path.startsWith('/courses')) return <CoursesPage />;
-    if (path.startsWith('/exams')) return <ExamsPage />;
-    if (path.startsWith('/scholarships')) return <ScholarshipsPage />;
-    if (path.startsWith('/research')) return <ResearchPage />;
-    if (path.startsWith('/career-guidance')) return <CareerGuidancePage />;
-    if (path.startsWith('/community')) return <CommunityPage />;
-    if (path.startsWith('/news')) return <NewsPage />;
-    if (path.startsWith('/dashboard-student') || path.startsWith('/dashboard/student')) return <StudentDashboard />;
-    if (path.startsWith('/dashboard-company') || path.startsWith('/dashboard/company')) return <CompanyDashboard />;
-    if (path.startsWith('/admin')) return <AdminPanel />;
-    if (path.startsWith('/verify-certificate')) return <VerifyCertificatePage />;
-    if (path.startsWith('/about')) return <AboutPage />;
-    if (path.startsWith('/contact')) return <ContactPage />;
-    if (path.startsWith('/privacy')) return <PrivacyPage />;
-    if (path.startsWith('/terms')) return <TermsPage />;
-
-    // Fallback to Home if unmatched
-    return <HomePage />;
+    switch (parsed.route) {
+      case 'home':
+        return <HomePage />;
+      case 'job-detail':
+        return <JobDetailPage jobId={parsed.params.id || ''} />;
+      case 'jobs':
+        return <JobsPage />;
+      case 'biotech-jobs':
+        return <OpportunitiesPortal initialType="biotech_jobs" />;
+      case 'opportunities':
+        return <OpportunitiesPortal initialType="all" />;
+      case 'opportunity-detail':
+        return <JobDetailPage jobId={parsed.params.id || ''} />;
+      case 'workshops':
+        return <OpportunitiesPortal initialType="workshop" />;
+      case 'internships':
+        return <OpportunitiesPortal initialType="internship" />;
+      case 'courses':
+        return <CoursesPage />;
+      case 'exams':
+        return <ExamsPage />;
+      case 'scholarships':
+        return <ScholarshipsPage />;
+      case 'research':
+        return <ResearchPage />;
+      case 'career-guidance':
+        return <CareerGuidancePage />;
+      case 'community':
+        return <CommunityPage />;
+      case 'news':
+        return <NewsPage />;
+      case 'dashboard-student':
+        return <StudentDashboard />;
+      case 'dashboard-company':
+        return <CompanyDashboard />;
+      case 'admin':
+        return <AdminPanel />;
+      case 'verify-certificate':
+        return <VerifyCertificatePage />;
+      case 'about':
+        return <AboutPage />;
+      case 'contact':
+        return <ContactPage />;
+      case 'privacy':
+        return <PrivacyPage />;
+      case 'terms':
+        return <TermsPage />;
+      case 'not-found':
+      default:
+        return (
+          <NotFoundPage 
+            title="404 - Page Not Found"
+            message={`The URL "${parsed.pathname}" does not correspond to any active BIO-NEXA scientific page or resource.`}
+            requestedResource={parsed.pathname}
+          />
+        );
+    }
   };
 
   return (

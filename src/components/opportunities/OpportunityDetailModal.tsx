@@ -16,11 +16,13 @@ import {
   Video,
   ShieldCheck,
   Info,
-  BookOpen
+  BookOpen,
+  ChevronRight
 } from 'lucide-react';
 import { Opportunity } from '../../types/opportunity';
 import { EDUCATIONAL_BRANCHES } from '../../config/branches';
 import { getDaysUntilDeadline } from '../../services/opportunities/expiryManager';
+import { useApp } from '../../context/AppContext';
 
 interface OpportunityDetailModalProps {
   opportunity: Opportunity | null;
@@ -35,6 +37,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
   onBookmarkToggle,
   isBookmarked = false,
 }) => {
+  const { navigate } = useApp();
   const [copied, setCopied] = React.useState(false);
 
   if (!opportunity) return null;
@@ -353,19 +356,38 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
             </button>
           )}
 
-          <div className="flex items-center gap-3 ml-auto">
+          <div className="flex flex-wrap items-center gap-3 ml-auto">
+            {(opportunity.type === 'job' || opportunity.type === 'biotech_job') && (
+              <button
+                onClick={() => {
+                  onClose();
+                  navigate(`/jobs/${opportunity.id}`);
+                }}
+                className="px-3 py-2 text-xs font-semibold text-sky-600 dark:text-sky-400 hover:underline inline-flex items-center gap-1 cursor-pointer"
+              >
+                <span>Full Page View</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
             <button
               onClick={onClose}
-              className="px-4 py-2.5 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+              className="px-4 py-2.5 text-xs font-semibold text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
             >
               Close
             </button>
-            {opportunity.applicationUrl ? (
+            {isExpired ? (
+              <button
+                disabled
+                className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-slate-400 dark:text-slate-500 bg-slate-200 dark:bg-slate-800 rounded-xl cursor-not-allowed border border-slate-300 dark:border-slate-700"
+              >
+                <span>Applications Closed</span>
+              </button>
+            ) : opportunity.applicationUrl ? (
               <a
                 href={opportunity.applicationUrl}
                 target={opportunity.applicationUrl.startsWith('/') ? '_self' : '_blank'}
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 rounded-xl shadow-md hover:shadow-lg transition-all"
+                className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer"
               >
                 <span>
                   {opportunity.type === 'workshop' 
@@ -377,13 +399,12 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
                 <ExternalLink className="w-4 h-4" />
               </a>
             ) : (
-              <a
-                href={`mailto:contact@bio-nexa.org?subject=Application%20Inquiry%20-%20${encodeURIComponent(opportunity.title)}`}
-                className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-slate-800 hover:bg-slate-700 rounded-xl shadow-md transition-all"
+              <button
+                disabled
+                className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-slate-400 dark:text-slate-500 bg-slate-200 dark:bg-slate-800 rounded-xl cursor-not-allowed border border-slate-300 dark:border-slate-700"
               >
-                <span>Contact Organizer to Apply</span>
-                <ExternalLink className="w-4 h-4" />
-              </a>
+                <span>Application Link Unavailable</span>
+              </button>
             )}
           </div>
         </div>

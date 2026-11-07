@@ -472,7 +472,13 @@ export const HomePage: React.FC = () => {
               <OpportunityCard
                 key={opp.id}
                 opportunity={opp}
-                onSelect={(selected) => setSelectedOpportunity(selected)}
+                onSelect={(selected) => {
+                  if (selected.type === 'job' || selected.type === 'biotech_job') {
+                    navigate(`/jobs/${selected.id}`);
+                  } else {
+                    setSelectedOpportunity(selected);
+                  }
+                }}
                 isBookmarked={isItemSaved(opp.id)}
                 onToggleBookmark={(id) => toggleSaveItem(opp.id, opp.title)}
               />
@@ -555,7 +561,9 @@ export const HomePage: React.FC = () => {
               <OpportunityCard
                 key={job.id}
                 opportunity={job}
-                onSelect={(selected) => setSelectedOpportunity(selected)}
+                onSelect={(selected) => {
+                  navigate(`/jobs/${selected.id}`);
+                }}
                 isBookmarked={isItemSaved(job.id)}
                 onToggleBookmark={(id) => toggleSaveItem(job.id, job.title)}
               />

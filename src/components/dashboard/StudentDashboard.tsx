@@ -293,7 +293,7 @@ export const StudentDashboard: React.FC = () => {
             {savedJobs.map((job) => (
               <div
                 key={job.id}
-                onClick={() => navigate(`/jobs?id=${job.id}`)}
+                onClick={() => navigate(`/jobs/${job.id}`)}
                 className="p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-blue-400 cursor-pointer text-xs space-y-1 transition-colors"
               >
                 <span className="font-semibold text-blue-600">{job.company}</span>

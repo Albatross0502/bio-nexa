@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Job } from '../../types';
+import { getAllUnifiedJobs, UnifiedJob, isApplicationLinkActionable } from '../../services/jobs/jobService';
 import {
   Search,
   MapPin,
@@ -9,23 +9,34 @@ import {
   Share2,
   Flag,
   CheckCircle2,
+  AlertTriangle,
   X,
   Send,
   Building2,
   Clock,
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  ChevronRight,
+  Compass,
+  ArrowRight
 } from 'lucide-react';
+import { GoogleJobsSearchSection } from './GoogleJobsSearchSection';
 
 export const JobsPage: React.FC = () => {
-  const { jobs, isItemSaved, toggleSaveItem, applyToJob, addReport, addToast, currentUser } = useApp();
+  const { jobs, isItemSaved, toggleSaveItem, applyToJob, addReport, addToast, currentUser, navigate } = useApp();
+
+  // Combine state jobs and verified opportunities
+  const allJobs = useMemo(() => getAllUnifiedJobs(jobs), [jobs]);
+
+  // View mode tab state ('verified' direct listings vs 'google-search' discovery)
+  const [activeTab, setActiveTab] = useState<'verified' | 'google-search'>('verified');
 
   // Search & filter states
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSector, setSelectedSector] = useState<string>('all');
   const [selectedExp, setSelectedExp] = useState<string>('all');
   const [selectedType, setSelectedType] = useState<string>('all');
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [selectedJob, setSelectedJob] = useState<UnifiedJob | null>(null);
 
   // Application Modal state
   const [isApplying, setIsApplying] = useState(false);
@@ -46,14 +57,21 @@ export const JobsPage: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     const qParam = params.get('q');
     const idParam = params.get('id');
+    const tabParam = params.get('tab') || params.get('source') || params.get('discovery');
+
+    if (tabParam === 'google' || tabParam === 'google-search') {
+      setActiveTab('google-search');
+    }
     if (qParam) setSearchTerm(qParam);
     if (idParam) {
-      const match = jobs.find((j) => j.id === idParam);
+      const match = allJobs.find((j) => j.id.toLowerCase() === idParam.toLowerCase());
       if (match) setSelectedJob(match);
+    } else if (allJobs.length > 0 && !selectedJob) {
+      setSelectedJob(allJobs[0]);
     }
-  }, [jobs]);
+  }, [allJobs]);
 
-  const filteredJobs = jobs.filter((job) => {
+  const filteredJobs = allJobs.filter((job) => {
     const matchSearch =
       !searchTerm ||
       job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -62,14 +80,14 @@ export const JobsPage: React.FC = () => {
       job.skills.some((s) => s.toLowerCase().includes(searchTerm.toLowerCase()));
 
     const matchSector = selectedSector === 'all' || job.sector === selectedSector;
-    const matchExp = selectedExp === 'all' || job.experienceLevel === selectedExp;
-    const matchType = selectedType === 'all' || job.type === selectedType;
+    const matchExp = selectedExp === 'all' || job.experienceLevel.toLowerCase().includes(selectedExp.toLowerCase());
+    const matchType = selectedType === 'all' || job.type.toLowerCase().includes(selectedType.toLowerCase());
 
     return matchSearch && matchSector && matchExp && matchType;
   });
 
-  const handleShare = (job: Job) => {
-    const url = `${window.location.origin}/jobs?id=${job.id}`;
+  const handleShare = (job: UnifiedJob) => {
+    const url = `${window.location.origin}/jobs/${job.id}`;
     navigator.clipboard?.writeText(url);
     addToast('Job link copied to clipboard!', 'info');
   };
@@ -103,18 +121,77 @@ export const JobsPage: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      {/* Page Header */}
-      <div className="border-b border-slate-200 dark:border-slate-800 pb-5">
-        <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-          Biotechnology &amp; Life Sciences Jobs
-        </h1>
-        <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-          Explore vetted openings in fermentation, molecular biology, bioinformatics, and regulatory affairs.
-        </p>
+      {/* Page Header with Mode Switcher */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+            Biotechnology &amp; Life Sciences Jobs
+          </h1>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+            Explore vetted openings in fermentation, molecular biology, bioinformatics, and regulatory affairs.
+          </p>
+        </div>
+
+        {/* Search Mode Switcher */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 text-xs self-start sm:self-auto shrink-0">
+          <button
+            onClick={() => setActiveTab('verified')}
+            className={`px-3.5 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+              activeTab === 'verified'
+                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+            }`}
+          >
+            Direct Listings ({allJobs.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('google-search')}
+            className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'google-search'
+                ? 'bg-[#0B2A5B] text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-[#0B2A5B] dark:hover:text-sky-300'
+            }`}
+          >
+            <Compass className="w-3.5 h-3.5 text-teal-400" />
+            <span>Google Jobs Search</span>
+          </button>
+        </div>
       </div>
 
-      {/* Filter & Search Bar */}
-      <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+      {/* Conditional Content: Google Jobs Discovery Console or Direct Listings */}
+      {activeTab === 'google-search' ? (
+        <GoogleJobsSearchSection onClose={() => setActiveTab('verified')} />
+      ) : (
+        <>
+          {/* Prominent Google Jobs Search Discovery Banner */}
+          <div className="p-4 bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-teal-50/90 dark:from-slate-800/80 dark:to-slate-800/50 rounded-xl border border-blue-100 dark:border-slate-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-[#0B2A5B] text-white flex items-center justify-center shrink-0 shadow-xs">
+                <Compass className="w-4 h-4 text-teal-300" />
+              </div>
+              <div>
+                <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <span>Discover Real Biotechnology Jobs via Google Jobs</span>
+                  <span className="text-[10px] font-semibold text-teal-700 dark:text-teal-300 bg-teal-100/60 dark:bg-teal-900/40 px-2 py-0.5 rounded">
+                    Google Search
+                  </span>
+                </div>
+                <p className="text-slate-600 dark:text-slate-400 text-xs mt-0.5">
+                  Search live vacancies across Microbiology, Molecular Biology, Clinical Research, Internships &amp; Research Assistant posts.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab('google-search')}
+              className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shrink-0 shadow-xs cursor-pointer text-xs"
+            >
+              <span>Search on Google Jobs</span>
+              <ArrowRight className="w-3.5 h-3.5 text-teal-300" />
+            </button>
+          </div>
+
+          {/* Filter & Search Bar */}
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
         <div className="flex flex-col md:flex-row gap-3">
           <div className="flex-1 flex items-center gap-2 px-3 py-2 bg-slate-50 dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
             <Search className="w-4 h-4 text-slate-400 shrink-0" />
@@ -197,19 +274,29 @@ export const JobsPage: React.FC = () => {
           </div>
 
           {filteredJobs.length === 0 ? (
-            <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-500">
-              <p className="text-sm font-semibold">No job listings match your current filters.</p>
-              <button
-                onClick={() => {
-                  setSearchTerm('');
-                  setSelectedSector('all');
-                  setSelectedExp('all');
-                  setSelectedType('all');
-                }}
-                className="mt-2 text-xs text-[#0B2A5B] dark:text-sky-400 font-semibold hover:underline"
-              >
-                Clear all filters
-              </button>
+            <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-500 space-y-3">
+              <p className="text-sm font-semibold">No direct listings match your current filters.</p>
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-1 text-xs">
+                <button
+                  onClick={() => {
+                    setSearchTerm('');
+                    setSelectedSector('all');
+                    setSelectedExp('all');
+                    setSelectedType('all');
+                  }}
+                  className="text-xs text-[#0B2A5B] dark:text-sky-400 font-semibold hover:underline cursor-pointer"
+                >
+                  Clear all filters
+                </button>
+                <span className="text-slate-300">·</span>
+                <button
+                  onClick={() => setActiveTab('google-search')}
+                  className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Compass className="w-3.5 h-3.5" />
+                  <span>Search on Google Jobs</span>
+                </button>
+              </div>
             </div>
           ) : (
             filteredJobs.map((job) => {
@@ -266,23 +353,29 @@ export const JobsPage: React.FC = () => {
                     <span>Deadline: <strong className="text-slate-700 dark:text-slate-300">{job.deadline}</strong></span>
                     <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={() => {
-                          setSelectedJob(job);
-                          window.scrollTo({ top: 350, behavior: 'smooth' });
-                        }}
-                        className="px-2.5 py-1 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-[#0B2A5B] dark:hover:text-sky-300 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        onClick={() => navigate(`/jobs/${job.id}`)}
+                        className="px-2.5 py-1 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-[#0B2A5B] dark:hover:text-sky-300 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
                       >
                         Details
                       </button>
-                      <a
-                        href={job.applicationUrl || job.source.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3 py-1 bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 text-white text-xs font-bold rounded-lg transition-all inline-flex items-center gap-1 shadow-xs"
-                      >
-                        <span>Apply</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
+                      {isApplicationLinkActionable(job) ? (
+                        <a
+                          href={job.applicationUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-1 bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 text-white text-xs font-bold rounded-lg transition-all inline-flex items-center gap-1 shadow-xs cursor-pointer"
+                        >
+                          <span>Apply</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : (
+                        <button
+                          disabled
+                          className="px-3 py-1 bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 text-xs font-bold rounded-lg cursor-not-allowed border border-slate-300 dark:border-slate-700"
+                        >
+                          <span>{job.isExpired ? 'Expired' : job.isClosed ? 'Closed' : 'Unavailable'}</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -354,29 +447,55 @@ export const JobsPage: React.FC = () => {
               {/* Primary Call to Action */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
                 <div className="text-xs text-slate-500">
-                  Application Deadline: <strong className="text-slate-900 dark:text-slate-100">{selectedJob.deadline}</strong>
-                  <span className="ml-2 inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Open for Applications
-                  </span>
+                  Application Deadline: <strong className={selectedJob.isExpired ? 'text-rose-600' : 'text-slate-900 dark:text-slate-100'}>{selectedJob.deadline}</strong>
+                  {selectedJob.isExpired ? (
+                    <span className="ml-2 inline-flex items-center gap-1 font-semibold text-rose-600 dark:text-rose-400">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      Applications Closed
+                    </span>
+                  ) : (
+                    <span className="ml-2 inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Open for Applications
+                    </span>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
-                    onClick={() => setIsApplying(true)}
-                    className="px-3.5 py-2 border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5"
+                    onClick={() => navigate(`/jobs/${selectedJob.id}`)}
+                    className="px-3 py-2 border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Open Dedicated Full Page"
                   >
-                    <Send className="w-3.5 h-3.5" />
-                    <span>Quick Apply</span>
+                    <span>Full Page</span>
+                    <ChevronRight className="w-3.5 h-3.5" />
                   </button>
-                  <a
-                    href={selectedJob.applicationUrl || selectedJob.source.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-5 py-2 bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-xs"
-                  >
-                    <span>Apply on Official Portal</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
+                  {!selectedJob.isExpired && !selectedJob.isClosed && (
+                    <button
+                      onClick={() => setIsApplying(true)}
+                      className="px-3.5 py-2 border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>Quick Apply</span>
+                    </button>
+                  )}
+                  {isApplicationLinkActionable(selectedJob) ? (
+                    <a
+                      href={selectedJob.applicationUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-5 py-2 bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    >
+                      <span>Apply on Official Portal</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  ) : (
+                    <button
+                      disabled
+                      className="px-5 py-2 bg-slate-300 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-bold rounded-xl cursor-not-allowed border border-slate-300 dark:border-slate-700"
+                    >
+                      <span>{selectedJob.isExpired ? 'Applications Closed' : 'Link Unavailable'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -440,16 +559,18 @@ export const JobsPage: React.FC = () => {
               {/* Source & Transparency Note */}
               <div className="pt-4 border-t border-slate-100 dark:border-slate-800 text-xs text-slate-400 flex items-center justify-between">
                 <span>
-                  Source: <strong>{selectedJob.source.name}</strong>
+                  Source: <strong>{selectedJob.sourceName}</strong>
                 </span>
-                <a
-                  href={selectedJob.source.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hover:underline text-[#0B2A5B] dark:text-sky-400 font-medium"
-                >
-                  Verify Original Source &rarr;
-                </a>
+                {selectedJob.sourceUrl && (
+                  <a
+                    href={selectedJob.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:underline text-[#0B2A5B] dark:text-sky-400 font-medium"
+                  >
+                    Verify Original Source &rarr;
+                  </a>
+                )}
               </div>
             </div>
           ) : (
@@ -460,6 +581,8 @@ export const JobsPage: React.FC = () => {
           )}
         </div>
       </div>
+        </>
+      )}
 
       {/* Application Modal */}
       {isApplying && selectedJob && (

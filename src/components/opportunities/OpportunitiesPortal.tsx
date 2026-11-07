@@ -27,6 +27,7 @@ import { generateExternalSearchUrls } from '../../services/opportunities/externa
 import { OpportunityCard } from './OpportunityCard';
 import { OpportunityDetailModal } from './OpportunityDetailModal';
 import { SubmitOpportunityModal } from './SubmitOpportunityModal';
+import { useApp } from '../../context/AppContext';
 
 interface OpportunitiesPortalProps {
   initialType?: OpportunityType | 'all' | 'biotech_jobs';
@@ -37,6 +38,7 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
   initialType = 'all',
   initialBranch = 'all',
 }) => {
+  const { navigate } = useApp();
   // State from store
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null);
@@ -71,6 +73,22 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
   useEffect(() => {
     if (initialType) setSelectedTab(initialType);
   }, [initialType]);
+
+  // Handle direct ?id= queries
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const idParam = params.get('id');
+    if (idParam && opportunities.length > 0) {
+      const match = opportunities.find(o => o.id.toLowerCase() === idParam.toLowerCase());
+      if (match) {
+        if (match.type === 'job' || match.type === 'biotech_job') {
+          navigate(`/jobs/${match.id}`);
+        } else {
+          setSelectedOpportunity(match);
+        }
+      }
+    }
+  }, [opportunities, navigate]);
 
   // Persist bookmarks
   const toggleBookmark = (id: string) => {
@@ -568,7 +586,13 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
                 <OpportunityCard
                   key={opportunity.id}
                   opportunity={opportunity}
-                  onSelect={setSelectedOpportunity}
+                  onSelect={(opp) => {
+                    if (opp.type === 'job' || opp.type === 'biotech_job') {
+                      navigate(`/jobs/${opp.id}`);
+                    } else {
+                      setSelectedOpportunity(opp);
+                    }
+                  }}
                   isBookmarked={bookmarks.includes(opportunity.id)}
                   onToggleBookmark={toggleBookmark}
                 />

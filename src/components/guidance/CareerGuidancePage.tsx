@@ -407,7 +407,7 @@ export const CareerGuidancePage: React.FC = () => {
             {matchedJobs.map((job) => (
               <div
                 key={job.id}
-                onClick={() => navigate(`/jobs?id=${job.id}`)}
+                onClick={() => navigate(`/jobs/${job.id}`)}
                 className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer flex items-center justify-between text-xs transition-colors"
               >
                 <div>
