@@ -1,4 +1,4 @@
-import { Job } from '../../types';
+import { Job, JobVerificationStatus } from '../../types';
 import { Opportunity } from '../../types/opportunity';
 import { SEED_JOBS } from '../../data/seedData';
 import { SEED_OPPORTUNITIES } from '../opportunities/seedOpportunities';
@@ -10,6 +10,7 @@ export interface UnifiedJob {
   slug: string;
   title: string;
   company: string;
+  employer: string; // Verified employer identity
   companyLogo?: string;
   location: string;
   workMode: string;
@@ -20,14 +21,20 @@ export interface UnifiedJob {
   salary: string;
   postedDate: string;
   deadline: string;
+  publicationDate: string;
+  expiryDate: string;
   description: string;
   responsibilities: string[];
   requirements: string[];
   skills: string[];
   benefits: string[];
-  sourceName: string;
+  sourceName: string; // Original listing source
   sourceUrl: string;
-  applicationUrl: string;
+  originalJobUrl: string; // Original job announcement URL
+  applicationUrl: string; // Application destination
+  lastVerificationDate: string; // Last verified date
+  verificationStatus: JobVerificationStatus; // 5 statuses
+  verificationNotes?: string;
   status: 'Active' | 'Closing Soon' | 'Expired' | 'Closed';
   isExpired: boolean;
   isClosed: boolean;
@@ -48,19 +55,38 @@ export function slugify(text: string): string {
 }
 
 export function mapJobToUnified(job: Job): UnifiedJob {
-  const daysLeft = getDaysUntilDeadline(job.deadline);
-  const isExpired = daysLeft !== null && daysLeft < 0;
-  const isClosingSoon = daysLeft !== null && daysLeft <= 5 && daysLeft >= 0;
+  const daysLeft = getDaysUntilDeadline(job.deadline || job.expiryDate);
+  const isExpired = (daysLeft !== null && daysLeft < 0) || job.verificationStatus === 'Expired';
+  const isClosingSoon = !isExpired && daysLeft !== null && daysLeft <= 5 && daysLeft >= 0;
   const status: UnifiedJob['status'] = isExpired ? 'Expired' : isClosingSoon ? 'Closing Soon' : 'Active';
 
   const locLower = (job.location || '').toLowerCase();
   const workMode = locLower.includes('remote') ? 'Remote' : locLower.includes('hybrid') ? 'Hybrid' : 'On-site';
 
+  // Compute verification status strictly based on record
+  let verificationStatus: JobVerificationStatus = job.verificationStatus || 'Verified';
+  if (isExpired) {
+    verificationStatus = 'Expired';
+  } else if (job.verificationStatus) {
+    verificationStatus = job.verificationStatus;
+  }
+
+  // Verification is true ONLY if verificationStatus === 'Verified'
+  const isVerified = verificationStatus === 'Verified';
+
+  const sourceName = job.source?.name || 'Verified Career Portal';
+  const originalJobUrl = job.originalJobUrl || job.source?.url || job.applicationUrl || '';
+  const applicationUrl = job.applicationUrl || job.source?.url || '';
+  const pubDate = job.publicationDate || job.postedDate || '';
+  const expDate = job.expiryDate || job.deadline || 'Not Specified';
+  const lastVerDate = job.lastVerificationDate || (isVerified ? (pubDate || '2026-11-01') : '');
+
   return {
     id: job.id,
     slug: job.slug || slugify(job.title),
     title: job.title,
-    company: job.company,
+    company: job.company || job.employer || 'Biotechnology Enterprise',
+    employer: job.employer || job.company || 'Biotechnology Enterprise',
     companyLogo: job.companyLogo,
     location: job.location,
     workMode,
@@ -69,22 +95,28 @@ export function mapJobToUnified(job: Job): UnifiedJob {
     experienceLevel: job.experienceLevel || 'Not Specified',
     qualification: job.qualification || 'Relevant Degree in Life Sciences',
     salary: job.salary || 'Not Disclosed',
-    postedDate: job.postedDate || '',
-    deadline: job.deadline || 'Not Specified',
+    postedDate: pubDate,
+    deadline: expDate,
+    publicationDate: pubDate,
+    expiryDate: expDate,
     description: job.description || '',
     responsibilities: job.responsibilities || [],
     requirements: job.requirements || [],
     skills: job.skills || [],
     benefits: job.benefits || [],
-    sourceName: job.source?.name || 'Verified Career Portal',
-    sourceUrl: job.source?.url || job.applicationUrl || '',
-    applicationUrl: job.applicationUrl || job.source?.url || '',
+    sourceName,
+    sourceUrl: job.source?.url || originalJobUrl,
+    originalJobUrl,
+    applicationUrl,
+    lastVerificationDate: lastVerDate,
+    verificationStatus,
+    verificationNotes: job.verificationNotes || (isVerified ? 'Employer identity and application link audited by BIO-NEXA team.' : undefined),
     status,
     isExpired,
     isClosed: false,
     isClosingSoon,
     featured: !!job.featured,
-    isVerified: true,
+    isVerified,
     daysLeft,
     branches: ['biotechnology']
   };
@@ -117,12 +149,24 @@ export function mapOpportunityToUnified(opp: Opportunity): UnifiedJob {
   }
 
   const appUrl = opp.applicationUrl || opp.sourceUrl || '';
+  const origUrl = opp.source?.originalUrl || opp.sourceUrl || appUrl;
+  const isVerified = Boolean(opp.isVerified);
+  const verificationStatus: JobVerificationStatus = isExpired
+    ? 'Expired'
+    : isVerified
+      ? 'Verified'
+      : (opp.status === 'source_unavailable' ? 'Link Unavailable' : 'Pending Verification');
+
+  const pubDate = opp.postedDate || opp.createdAt || '';
+  const expDate = opp.deadline || opp.applicationDeadline || 'Not Specified';
+  const lastVerDate = isVerified ? (pubDate || '2026-11-01') : '';
 
   return {
     id: opp.id,
     slug: slugify(opp.title),
     title: opp.title,
     company: opp.organization,
+    employer: opp.organization,
     companyLogo: opp.organizationLogo,
     location: opp.location,
     workMode: opp.workMode || 'On-site',
@@ -131,8 +175,10 @@ export function mapOpportunityToUnified(opp: Opportunity): UnifiedJob {
     experienceLevel: opp.experience || 'Not Specified',
     qualification: opp.qualification || opp.qualifications?.join(', ') || opp.eligibility || 'Relevant Degree in Life Sciences',
     salary,
-    postedDate: opp.postedDate || opp.createdAt || '',
-    deadline: opp.deadline || opp.applicationDeadline || 'Not Specified',
+    postedDate: pubDate,
+    deadline: expDate,
+    publicationDate: pubDate,
+    expiryDate: expDate,
     description: opp.description || '',
     responsibilities: opp.responsibilities || [],
     requirements: opp.requirements || opp.qualifications || [],
@@ -140,13 +186,17 @@ export function mapOpportunityToUnified(opp: Opportunity): UnifiedJob {
     benefits: (opp as any).benefits || [],
     sourceName: opp.source?.name || opp.sourceName || 'Official Career Gazette',
     sourceUrl: opp.source?.originalUrl || opp.sourceUrl || appUrl,
+    originalJobUrl: origUrl,
     applicationUrl: appUrl,
+    lastVerificationDate: lastVerDate,
+    verificationStatus,
+    verificationNotes: isVerified ? 'Verified via official career gazette / institutional registry.' : undefined,
     status,
     isExpired,
     isClosed,
     isClosingSoon,
     featured: !!opp.featured,
-    isVerified: !!opp.isVerified,
+    isVerified,
     daysLeft,
     branches: opp.branches || ['biotechnology']
   };
@@ -218,11 +268,123 @@ export function getJobByIdOrSlug(idOrSlug: string, contextJobs?: Job[]): Unified
 
 /**
  * Validates whether an application URL is genuine and actionable.
+ * Disables expired, closed, rejected, or link-unavailable listings.
  */
 export function isApplicationLinkActionable(job: UnifiedJob): boolean {
   if (job.isExpired || job.isClosed) return false;
+  if (job.verificationStatus === 'Expired' || job.verificationStatus === 'Link Unavailable' || job.verificationStatus === 'Rejected') {
+    return false;
+  }
+  if (job.deadline) {
+    const parsed = new Date(job.deadline);
+    if (!isNaN(parsed.getTime())) {
+      parsed.setHours(23, 59, 59, 999);
+      if (parsed.getTime() < Date.now()) {
+        return false;
+      }
+    }
+  }
   if (!job.applicationUrl) return false;
   const url = job.applicationUrl.trim();
   if (url === '#' || url === '' || url.startsWith('javascript:')) return false;
   return url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/');
+}
+
+export interface ApplicationDestinationInfo {
+  destinationUrl: string;
+  domain: string;
+  isExternal: boolean;
+  isOfficialDomain: boolean;
+  isSuspicious: boolean;
+  warning?: string;
+  warningMessage?: string;
+}
+
+/**
+ * Parses and evaluates an application destination for user safety and transparency.
+ */
+export function parseApplicationDestination(job: UnifiedJob): ApplicationDestinationInfo {
+  const url = (job.applicationUrl || '').trim();
+  if (!url) {
+    const msg = 'No application link has been specified for this opening.';
+    return {
+      destinationUrl: '',
+      domain: 'Not Specified',
+      isExternal: false,
+      isOfficialDomain: false,
+      isSuspicious: false,
+      warning: msg,
+      warningMessage: msg
+    };
+  }
+
+  let domain = 'external-portal';
+  try {
+    const parsed = new URL(url);
+    domain = parsed.hostname;
+  } catch {
+    domain = url.replace(/^https?:\/\//, '').split('/')[0] || 'external';
+  }
+
+  const isExternal = true;
+  const dLower = domain.toLowerCase();
+  const uLower = url.toLowerCase();
+
+  const isOfficialDomain = (
+    dLower.includes('biocon.com') ||
+    dLower.includes('igib.res.in') ||
+    dLower.includes('seruminstitute.com') ||
+    dLower.includes('drreddys.com') ||
+    dLower.includes('syngeneintl.com') ||
+    dLower.includes('iisc.ac.in') ||
+    dLower.includes('cdri.res.in') ||
+    dLower.includes('ccmb.res.in') ||
+    dLower.includes('ncbs.res.in') ||
+    dLower.includes('thsti.res.in') ||
+    dLower.includes('nibmg.ac.in') ||
+    dLower.includes('rcb.res.in') ||
+    dLower.includes('gov.in') ||
+    dLower.includes('res.in') ||
+    dLower.includes('ac.in') ||
+    dLower.includes('edu') ||
+    dLower.includes('org')
+  );
+
+  const isShortener = (
+    dLower.includes('bit.ly') ||
+    dLower.includes('tinyurl') ||
+    dLower.includes('goo.gl') ||
+    dLower.includes('is.gd')
+  );
+
+  const hasFeeKeywords = (
+    uLower.includes('pay-') ||
+    uLower.includes('pay.') ||
+    uLower.includes('/pay') ||
+    uLower.includes('fee') ||
+    uLower.includes('deposit') ||
+    uLower.includes('money')
+  );
+
+  const isShortenerOrFee = isShortener || hasFeeKeywords;
+  const isSuspicious = isShortenerOrFee || !job.isVerified;
+
+  let warningMessage: string | undefined;
+  if (isShortener) {
+    warningMessage = 'CRITICAL WARNING: This destination URL uses a URL shortener service. Legitimate employers provide direct canonical links.';
+  } else if (hasFeeKeywords) {
+    warningMessage = 'CRITICAL WARNING: This destination references fee or payment terms. Legitimate life science employers never charge registration, interview, or processing fees.';
+  } else if (!job.isVerified) {
+    warningMessage = 'This listing is pending audit by BIO-NEXA administrators. Verify employer credentials before submitting personal documents.';
+  }
+
+  return {
+    destinationUrl: url,
+    domain,
+    isExternal,
+    isOfficialDomain,
+    isSuspicious,
+    warning: warningMessage,
+    warningMessage
+  };
 }

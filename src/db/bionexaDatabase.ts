@@ -16,6 +16,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
+export type JobVerificationStatus = 
+  | 'Pending Verification'
+  | 'Verified'
+  | 'Rejected'
+  | 'Expired'
+  | 'Link Unavailable';
+
+export function normalizeVerificationStatus(status?: string): JobVerificationStatus {
+  if (!status) return 'Pending Verification';
+  const clean = status.trim();
+  if (clean === 'Verified') return 'Verified';
+  if (clean === 'Rejected') return 'Rejected';
+  if (clean === 'Expired') return 'Expired';
+  if (clean === 'Link Unavailable' || clean === 'Source Unavailable') return 'Link Unavailable';
+  if (clean === 'Pending Verification' || clean === 'Pending Review' || clean === 'Flagged') return 'Pending Verification';
+  return 'Pending Verification';
+}
+
 export interface DbJob {
   id: string;
   title: string;
@@ -26,11 +44,15 @@ export interface DbJob {
   skills: string[]; // Stored as JSON array in SQLite
   employmentType: string;
   salary: string;
-  applicationUrl: string;
-  source: string;
+  applicationUrl: string; // Application destination
+  source: string; // Original listing source
+  originalJobUrl?: string; // Original job URL
   publicationDate: string;
   expiryDate: string;
-  verificationStatus: 'Verified' | 'Pending Review' | 'Flagged' | 'Source Unavailable';
+  lastVerificationDate?: string;
+  verificationStatus: JobVerificationStatus;
+  verificationNotes?: string;
+  isVerified?: boolean;
   isActive: boolean;
   isApproved: boolean;
   featured: boolean;
@@ -41,6 +63,10 @@ export interface DbJob {
   updatedAt: string;
 }
 
+export type WorkshopFormat = 'Online' | 'Offline' | 'Hybrid';
+export type WorkshopStatus = 'upcoming' | 'ongoing' | 'completed';
+export type WorkshopAvailability = 'Open' | 'Filling Fast' | 'Waitlist' | 'Closed';
+
 export interface DbWorkshop {
   id: string;
   name: string;
@@ -48,13 +74,17 @@ export interface DbWorkshop {
   instructor: string;
   date: string;
   time: string;
-  venue: string;
-  registrationLink: string;
-  availability: string;
-  status: 'active' | 'upcoming' | 'completed' | 'archived';
-  fees: string;
   duration: string;
+  format: WorkshopFormat;
+  venue: string;
+  registrationDeadline: string;
+  registrationLink: string;
+  availability: WorkshopAvailability | string;
+  status: WorkshopStatus | string;
+  fees: string;
   capacity: number;
+  imageUrl?: string;
+  featured: boolean;
   skillsCovered: string[];
   createdAt: string;
   updatedAt: string;
@@ -158,9 +188,12 @@ export class BionexaDatabase {
         salary TEXT DEFAULT 'Competitive',
         application_url TEXT NOT NULL,
         source TEXT DEFAULT 'BIO-NEXA Verified',
+        original_job_url TEXT DEFAULT '',
         publication_date TEXT NOT NULL,
         expiry_date TEXT DEFAULT '',
-        verification_status TEXT NOT NULL DEFAULT 'Verified',
+        last_verification_date TEXT DEFAULT '',
+        verification_status TEXT NOT NULL DEFAULT 'Pending Verification',
+        verification_notes TEXT DEFAULT '',
         is_active INTEGER NOT NULL DEFAULT 1,
         is_approved INTEGER NOT NULL DEFAULT 1,
         featured INTEGER NOT NULL DEFAULT 0,
@@ -178,13 +211,17 @@ export class BionexaDatabase {
         instructor TEXT DEFAULT '',
         date TEXT NOT NULL,
         time TEXT DEFAULT '09:00 AM - 05:00 PM IST',
+        duration TEXT DEFAULT '1 Day',
+        format TEXT NOT NULL DEFAULT 'Online',
         venue TEXT NOT NULL,
+        registration_deadline TEXT DEFAULT '',
         registration_link TEXT NOT NULL,
         availability TEXT DEFAULT 'Open',
-        status TEXT NOT NULL DEFAULT 'active',
+        status TEXT NOT NULL DEFAULT 'upcoming',
         fees TEXT DEFAULT 'Free',
-        duration TEXT DEFAULT '1 Day',
         capacity INTEGER DEFAULT 50,
+        image_url TEXT DEFAULT '',
+        featured INTEGER NOT NULL DEFAULT 0,
         skills_covered TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -255,6 +292,18 @@ export class BionexaDatabase {
       CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status);
       CREATE INDEX IF NOT EXISTS idx_announcements_is_active ON announcements(is_active);
     `);
+
+    // Ensure verification columns exist on existing databases
+    try { this.db.exec("ALTER TABLE jobs ADD COLUMN original_job_url TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE jobs ADD COLUMN last_verification_date TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE jobs ADD COLUMN verification_notes TEXT DEFAULT '';"); } catch (_) {}
+
+    // Ensure workshop columns exist on existing databases
+    try { this.db.exec("ALTER TABLE workshops ADD COLUMN format TEXT DEFAULT 'Online';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE workshops ADD COLUMN image_url TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE workshops ADD COLUMN registration_deadline TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE workshops ADD COLUMN featured INTEGER DEFAULT 0;"); } catch (_) {}
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_workshops_featured ON workshops(featured);"); } catch (_) {}
   }
 
   // ==========================================
@@ -267,6 +316,7 @@ export class BionexaDatabase {
     location?: string;
     onlyActive?: boolean;
     onlyApproved?: boolean;
+    verificationStatus?: string;
   }): DbJob[] {
     let sql = 'SELECT * FROM jobs WHERE 1=1';
     const params: any[] = [];
@@ -276,6 +326,10 @@ export class BionexaDatabase {
     }
     if (filter?.onlyApproved !== false) {
       sql += ' AND is_approved = 1';
+    }
+    if (filter?.verificationStatus) {
+      sql += ' AND verification_status = ?';
+      params.push(normalizeVerificationStatus(filter.verificationStatus));
     }
     if (filter?.sector) {
       sql += ' AND sector LIKE ?';
@@ -310,18 +364,20 @@ export class BionexaDatabase {
   public createJob(job: Omit<DbJob, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): DbJob {
     const id = job.id || `job-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const now = new Date().toISOString();
+    const verStatus = normalizeVerificationStatus(job.verificationStatus);
+    const lastVerDate = job.lastVerificationDate || (verStatus === 'Verified' ? (job.publicationDate || now.split('T')[0]) : '');
 
     const stmt = this.db.prepare(`
       INSERT INTO jobs (
         id, title, employer, description, location, qualification,
-        skills, employment_type, salary, application_url, source,
-        publication_date, expiry_date, verification_status,
+        skills, employment_type, salary, application_url, source, original_job_url,
+        publication_date, expiry_date, last_verification_date, verification_status, verification_notes,
         is_active, is_approved, featured, responsibilities, requirements,
         sector, created_at, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
-        ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?
       )
@@ -339,9 +395,12 @@ export class BionexaDatabase {
       job.salary || 'Competitive',
       job.applicationUrl,
       job.source || 'BIO-NEXA Verified',
+      job.originalJobUrl || job.applicationUrl || '',
       job.publicationDate || now.split('T')[0],
       job.expiryDate || '',
-      job.verificationStatus || 'Verified',
+      lastVerDate,
+      verStatus,
+      job.verificationNotes || '',
       job.isActive ? 1 : 0,
       job.isApproved ? 1 : 0,
       job.featured ? 1 : 0,
@@ -359,9 +418,14 @@ export class BionexaDatabase {
     const existing = this.getJobById(id);
     if (!existing) return null;
 
+    const verStatus = updates.verificationStatus !== undefined 
+      ? normalizeVerificationStatus(updates.verificationStatus) 
+      : normalizeVerificationStatus(existing.verificationStatus);
+
     const merged: DbJob = {
       ...existing,
       ...updates,
+      verificationStatus: verStatus,
       updatedAt: new Date().toISOString()
     };
 
@@ -369,8 +433,9 @@ export class BionexaDatabase {
       UPDATE jobs SET
         title = ?, employer = ?, description = ?, location = ?,
         qualification = ?, skills = ?, employment_type = ?, salary = ?,
-        application_url = ?, source = ?, publication_date = ?, expiry_date = ?,
-        verification_status = ?, is_active = ?, is_approved = ?, featured = ?,
+        application_url = ?, source = ?, original_job_url = ?, publication_date = ?, expiry_date = ?,
+        last_verification_date = ?, verification_status = ?, verification_notes = ?,
+        is_active = ?, is_approved = ?, featured = ?,
         responsibilities = ?, requirements = ?, sector = ?, updated_at = ?
       WHERE id = ?
     `);
@@ -386,9 +451,12 @@ export class BionexaDatabase {
       merged.salary,
       merged.applicationUrl,
       merged.source,
+      merged.originalJobUrl || merged.applicationUrl || '',
       merged.publicationDate,
       merged.expiryDate,
+      merged.lastVerificationDate || '',
       merged.verificationStatus,
+      merged.verificationNotes || '',
       merged.isActive ? 1 : 0,
       merged.isApproved ? 1 : 0,
       merged.featured ? 1 : 0,
@@ -407,29 +475,34 @@ export class BionexaDatabase {
     return (res.changes ?? 0) > 0;
   }
 
-  public verifyJob(jobId: string, verifiedBy: string, status: string, notes: string = ''): boolean {
+  public verifyJob(jobId: string, verifiedBy: string, status: string, notes: string = '', customDate?: string): DbJob | null {
     const job = this.getJobById(jobId);
-    if (!job) return false;
+    if (!job) return null;
 
     const now = new Date().toISOString();
+    const verDate = customDate || now.split('T')[0];
     const recordId = `ver-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+
+    const validStatus = normalizeVerificationStatus(status);
 
     this.db.prepare(`
       INSERT INTO job_verification_records (id, job_id, verified_by, verified_at, source_status, notes)
       VALUES (?, ?, ?, ?, ?, ?)
-    `).run(recordId, jobId, verifiedBy, now, status, notes);
+    `).run(recordId, jobId, verifiedBy, now, validStatus, notes);
 
-    const validStatus = (status === 'Verified' || status === 'Pending Review' || status === 'Flagged' || status === 'Source Unavailable')
-      ? status
-      : 'Verified';
+    const isApproved = validStatus === 'Verified' || validStatus === 'Link Unavailable';
+    const isActive = validStatus !== 'Rejected' && validStatus !== 'Expired';
 
     this.updateJob(jobId, {
       verificationStatus: validStatus,
-      isApproved: true,
+      lastVerificationDate: verDate,
+      verificationNotes: notes,
+      isApproved,
+      isActive,
       updatedAt: now
     });
 
-    return true;
+    return this.getJobById(jobId);
   }
 
   public getVerificationRecords(jobId: string): DbVerificationRecord[] {
@@ -451,14 +524,43 @@ export class BionexaDatabase {
   // WORKSHOPS CRUD
   // ==========================================
 
-  public getWorkshops(onlyActive: boolean = true): DbWorkshop[] {
-    let sql = 'SELECT * FROM workshops';
-    if (onlyActive) {
-      sql += " WHERE status = 'active'";
-    }
-    sql += ' ORDER BY date ASC, created_at DESC';
+  public getWorkshops(filter?: boolean | {
+    onlyActive?: boolean;
+    status?: string;
+    format?: string;
+    featured?: boolean;
+    search?: string;
+  }): DbWorkshop[] {
+    let sql = 'SELECT * FROM workshops WHERE 1=1';
+    const params: any[] = [];
 
-    const rows = this.db.prepare(sql).all() as any[];
+    if (typeof filter === 'boolean') {
+      if (filter) {
+        sql += " AND status != 'completed'";
+      }
+    } else if (filter) {
+      if (filter.status && filter.status !== 'all') {
+        sql += ' AND status = ?';
+        params.push(filter.status);
+      }
+      if (filter.format && filter.format !== 'all') {
+        sql += ' AND format = ?';
+        params.push(filter.format);
+      }
+      if (filter.featured !== undefined) {
+        sql += ' AND featured = ?';
+        params.push(filter.featured ? 1 : 0);
+      }
+      if (filter.search) {
+        sql += ' AND (name LIKE ? OR instructor LIKE ? OR description LIKE ? OR venue LIKE ?)';
+        const term = `%${filter.search}%`;
+        params.push(term, term, term, term);
+      }
+    }
+
+    sql += ' ORDER BY featured DESC, date ASC, created_at DESC';
+
+    const rows = this.db.prepare(sql).all(...params) as any[];
     return rows.map(this.mapWorkshopRow);
   }
 
@@ -474,24 +576,29 @@ export class BionexaDatabase {
 
     this.db.prepare(`
       INSERT INTO workshops (
-        id, name, description, instructor, date, time, venue,
-        registration_link, availability, status, fees, duration,
-        capacity, skills_covered, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, description, instructor, date, time, duration,
+        format, venue, registration_deadline, registration_link,
+        availability, status, fees, capacity, image_url,
+        featured, skills_covered, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.name,
       data.description,
       data.instructor || '',
       data.date,
-      data.time || '09:00 AM - 05:00 PM IST',
+      data.time || '09:30 AM - 04:30 PM IST',
+      data.duration || '1 Day',
+      data.format || 'Online',
       data.venue,
+      data.registrationDeadline || '',
       data.registrationLink,
       data.availability || 'Open',
-      data.status || 'active',
+      data.status || 'upcoming',
       data.fees || 'Free',
-      data.duration || '1 Day',
       data.capacity || 50,
+      data.imageUrl || '',
+      data.featured ? 1 : 0,
       JSON.stringify(data.skillsCovered || []),
       now,
       now
@@ -513,9 +620,10 @@ export class BionexaDatabase {
     this.db.prepare(`
       UPDATE workshops SET
         name = ?, description = ?, instructor = ?, date = ?,
-        time = ?, venue = ?, registration_link = ?, availability = ?,
-        status = ?, fees = ?, duration = ?, capacity = ?,
-        skills_covered = ?, updated_at = ?
+        time = ?, duration = ?, format = ?, venue = ?,
+        registration_deadline = ?, registration_link = ?,
+        availability = ?, status = ?, fees = ?, capacity = ?,
+        image_url = ?, featured = ?, skills_covered = ?, updated_at = ?
       WHERE id = ?
     `).run(
       merged.name,
@@ -523,13 +631,17 @@ export class BionexaDatabase {
       merged.instructor,
       merged.date,
       merged.time,
+      merged.duration,
+      merged.format,
       merged.venue,
+      merged.registrationDeadline,
       merged.registrationLink,
       merged.availability,
       merged.status,
       merged.fees,
-      merged.duration,
       merged.capacity,
+      merged.imageUrl || '',
+      merged.featured ? 1 : 0,
       JSON.stringify(merged.skillsCovered || []),
       merged.updatedAt,
       id
@@ -872,9 +984,13 @@ export class BionexaDatabase {
       salary: r.salary,
       applicationUrl: r.application_url,
       source: r.source,
+      originalJobUrl: r.original_job_url || r.application_url || '',
       publicationDate: r.publication_date,
       expiryDate: r.expiry_date || '',
-      verificationStatus: r.verification_status,
+      lastVerificationDate: r.last_verification_date || '',
+      verificationStatus: normalizeVerificationStatus(r.verification_status),
+      verificationNotes: r.verification_notes || '',
+      isVerified: normalizeVerificationStatus(r.verification_status) === 'Verified',
       isActive: r.is_active === 1,
       isApproved: r.is_approved === 1,
       featured: r.featured === 1,
@@ -900,14 +1016,18 @@ export class BionexaDatabase {
       description: r.description,
       instructor: r.instructor || '',
       date: r.date,
-      time: r.time,
+      time: r.time || '09:30 AM - 04:30 PM IST',
+      duration: r.duration || '1 Day',
+      format: (r.format as WorkshopFormat) || 'Online',
       venue: r.venue,
+      registrationDeadline: r.registration_deadline || '',
       registrationLink: r.registration_link,
-      availability: r.availability,
-      status: r.status,
-      fees: r.fees,
-      duration: r.duration,
+      availability: (r.availability as WorkshopAvailability) || 'Open',
+      status: (r.status as WorkshopStatus) || 'upcoming',
+      fees: r.fees || 'Free',
       capacity: r.capacity || 50,
+      imageUrl: r.image_url || '',
+      featured: r.featured === 1,
       skillsCovered,
       createdAt: r.created_at,
       updatedAt: r.updated_at
@@ -959,11 +1079,14 @@ export class BionexaDatabase {
           salary: j.salary || 'Competitive',
           applicationUrl: j.applicationUrl,
           source: j.source?.name || j.sourceName || 'BIO-NEXA Verified',
+          originalJobUrl: j.originalJobUrl || j.source?.url || j.applicationUrl || '',
           publicationDate: j.postedDate || j.publicationDate || '2026-11-01',
           expiryDate: j.deadline || '',
-          verificationStatus: 'Verified',
-          isActive: true,
-          isApproved: true,
+          lastVerificationDate: j.lastVerificationDate || (j.verificationStatus === 'Verified' ? '2026-11-07' : ''),
+          verificationStatus: j.verificationStatus || 'Verified',
+          verificationNotes: j.verificationNotes || 'Verified against official institutional portal.',
+          isActive: j.isActive !== undefined ? j.isActive : true,
+          isApproved: j.isApproved !== undefined ? j.isApproved : (j.verificationStatus === 'Verified' || !j.verificationStatus),
           featured: !!j.featured,
           responsibilities: j.responsibilities || [],
           requirements: j.requirements || [],
@@ -975,6 +1098,10 @@ export class BionexaDatabase {
     const workshopCount = (this.db.prepare('SELECT COUNT(*) as count FROM workshops').get() as any).count;
     if (workshopCount === 0 && seedWorkshops.length > 0) {
       for (const w of seedWorkshops) {
+        let fmt: WorkshopFormat = 'Online';
+        if (w.workMode === 'In-Person' || w.workMode === 'On-site') fmt = 'Offline';
+        else if (w.workMode === 'Hybrid') fmt = 'Hybrid';
+
         this.createWorkshop({
           id: w.id,
           name: w.title || w.name,
@@ -982,16 +1109,139 @@ export class BionexaDatabase {
           instructor: w.organization || w.instructor || 'Lead Research Faculty',
           date: w.workshopDetails?.dates?.split(' to ')[0] || w.date || '2026-12-01',
           time: '09:30 AM - 04:30 PM IST',
-          venue: `${w.location || 'Online / Hybrid'} (${w.workMode || 'Hybrid'})`,
-          registrationLink: w.workshopDetails?.registrationUrl || w.applicationUrl || 'https://bionexa.org/workshops',
-          availability: 'Open (45/50 Seats)',
-          status: 'active',
+          duration: w.workshopDetails?.duration || '3 Days Intensive',
+          format: fmt,
+          venue: `${w.location || 'Online'}`,
+          registrationDeadline: '2026-12-05',
+          registrationLink: w.workshopDetails?.registrationUrl || w.applicationUrl || 'https://www.igib.res.in/training',
+          availability: 'Open (30/40 Seats)',
+          status: 'upcoming',
           fees: w.workshopDetails?.fees || '₹1,500 (Subsidized Student Rate)',
-          duration: w.workshopDetails?.duration || '5 Days Intensive',
-          capacity: 50,
+          capacity: 40,
+          imageUrl: 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80',
+          featured: true,
           skillsCovered: w.skills || ['Hands-on Wet Lab', 'Protocol Optimization']
         });
       }
+    }
+
+    // Enrich existing workshop records with images, format, deadlines and featured flags if missing
+    try {
+      const rows = this.db.prepare('SELECT id, name, image_url, format, status FROM workshops').all() as any[];
+      for (const row of rows) {
+        if (!row.image_url || !row.format || row.status === 'active') {
+          let imageUrl = 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80';
+          let format: WorkshopFormat = 'Offline';
+          let status: WorkshopStatus = 'upcoming';
+          let deadline = '2026-12-05';
+          let time = '09:30 AM - 05:00 PM IST';
+          let duration = '3 Days Intensive';
+          let featured = 1;
+          let availability = 'Open (28/40 Seats)';
+
+          if (row.id === 'opp-work-1' || row.name.includes('CRISPR')) {
+            imageUrl = 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80';
+            format = 'Offline';
+            status = 'upcoming';
+            deadline = '2026-12-05';
+            time = '09:30 AM - 05:00 PM IST';
+            duration = '3 Days Intensive';
+            featured = 1;
+            availability = 'Open (28/40 Seats)';
+          } else if (row.id === 'opp-work-2' || row.name.includes('RNA-Seq')) {
+            imageUrl = 'https://images.unsplash.com/photo-1507668077129-56e32842fceb?auto=format&fit=crop&w=800&q=80';
+            format = 'Online';
+            status = 'upcoming';
+            deadline = '2026-12-14';
+            time = '10:00 AM - 04:30 PM IST';
+            duration = '2 Days Virtual';
+            featured = 1;
+            availability = 'Filling Fast (8 Seats Left)';
+          } else if (row.id === 'opp-work-3' || row.name.includes('HACCP')) {
+            imageUrl = 'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80';
+            format = 'Online';
+            status = 'ongoing';
+            deadline = '2026-11-12';
+            time = '10:00 AM - 03:00 PM IST';
+            duration = '1 Day Certification';
+            featured = 1;
+            availability = 'Waitlist';
+          } else if (row.id === 'opp-work-4' || row.name.includes('Manuscript')) {
+            imageUrl = 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80';
+            format = 'Hybrid';
+            status = 'completed';
+            deadline = '2026-10-20';
+            time = '02:00 PM - 06:00 PM IST';
+            duration = '2 Days Masterclass';
+            featured = 0;
+            availability = 'Closed';
+          }
+
+          this.db.prepare(`
+            UPDATE workshops SET
+              image_url = CASE WHEN image_url = '' OR image_url IS NULL THEN ? ELSE image_url END,
+              format = CASE WHEN format = '' OR format IS NULL OR format = 'Online' THEN ? ELSE format END,
+              status = CASE WHEN status = 'active' THEN ? ELSE status END,
+              registration_deadline = CASE WHEN registration_deadline = '' OR registration_deadline IS NULL THEN ? ELSE registration_deadline END,
+              time = CASE WHEN time = '' OR time IS NULL THEN ? ELSE time END,
+              duration = CASE WHEN duration = '' OR duration IS NULL THEN ? ELSE duration END,
+              featured = CASE WHEN featured IS NULL OR featured = 0 THEN ? ELSE featured END,
+              availability = CASE WHEN availability = '' OR availability IS NULL THEN ? ELSE availability END
+            WHERE id = ?
+          `).run(imageUrl, format, status, deadline, time, duration, featured, availability, row.id);
+        }
+      }
+
+      // Add Fermentation and Flow Cytometry if not existing
+      const hasFermentation = this.db.prepare("SELECT COUNT(*) as c FROM workshops WHERE id = 'opp-work-5'").get() as any;
+      if (hasFermentation.c === 0) {
+        this.createWorkshop({
+          id: 'opp-work-5',
+          name: 'Industrial Bioprocess Scaling & Microbial Fermentation Practicum',
+          description: 'Hands-on training on 100L pilot bioreactors, dissolved oxygen profiling, batch fed-batch kinetics, and downstream cross-flow filtration at Biocon Academy.',
+          instructor: 'Dr. Ramgopal Rao, Director of Academic Affairs',
+          date: '2026-12-20',
+          time: '09:00 AM - 05:30 PM IST',
+          duration: '4 Days Pilot-Scale Lab',
+          format: 'Offline',
+          venue: 'Biocon Academy Pilot Bioreactor Facility, Electronic City Phase 1, Bengaluru 560100',
+          registrationDeadline: '2026-12-10',
+          registrationLink: 'https://www.bioconacademy.com/programs',
+          availability: 'Filling Fast (6 Seats Left)',
+          status: 'upcoming',
+          fees: '₹3,500 (Academic / Student Subsidized)',
+          capacity: 25,
+          imageUrl: 'https://images.unsplash.com/photo-1582719471384-894fbb16e074?auto=format&fit=crop&w=800&q=80',
+          featured: true,
+          skillsCovered: ['Bioreactor Setup', 'Fed-Batch Fermentation', 'Downstream Processing', 'CIP / SIP Protocols']
+        });
+      }
+
+      const hasFlowCytometry = this.db.prepare("SELECT COUNT(*) as c FROM workshops WHERE id = 'opp-work-6'").get() as any;
+      if (hasFlowCytometry.c === 0) {
+        this.createWorkshop({
+          id: 'opp-work-6',
+          name: 'Multicolor Flow Cytometry & High-Speed Cell Sorting Masterclass',
+          description: 'Advanced fluorophore compensation, panel design for immunophenotyping, gating strategies with FlowJo, and aseptic sorting of primary T cells.',
+          instructor: 'NCBS Central Flow Cytometry Core Facility',
+          date: '2026-11-28',
+          time: '09:30 AM - 04:30 PM IST',
+          duration: '2 Days Hybrid Intensive',
+          format: 'Hybrid',
+          venue: 'National Centre for Biological Sciences (NCBS-TIFR), Bellary Road, Bengaluru 560065',
+          registrationDeadline: '2026-11-22',
+          registrationLink: 'https://www.ncbs.res.in/facilities/fcc',
+          availability: 'Open (18/25 Seats)',
+          status: 'upcoming',
+          fees: '₹2,000 (Research Scholars)',
+          capacity: 25,
+          imageUrl: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&w=800&q=80',
+          featured: false,
+          skillsCovered: ['Multicolor FlowJo', 'Antibody Conjugation', 'Cell Sorting', 'Gating Analysis']
+        });
+      }
+    } catch (e) {
+      console.error('[BIO-NEXA DB] Workshop migration note:', e);
     }
 
     const courseCount = (this.db.prepare('SELECT COUNT(*) as count FROM courses').get() as any).count;

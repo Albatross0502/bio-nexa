@@ -348,9 +348,9 @@ export class AutomatedJobManager {
           error: result.error || 'HTTP 404 Not Found'
         });
 
-        // Flag in database
+        // Flag in database as Link Unavailable per Phase 07 specification
         bionexaDb.updateJob(j.id, {
-          verificationStatus: 'Flagged'
+          verificationStatus: 'Link Unavailable'
         });
       }
     }
@@ -479,7 +479,7 @@ export class AutomatedJobManager {
           source: candidate.source,
           publicationDate: candidate.publicationDate,
           expiryDate: candidate.expiryDate,
-          verificationStatus: 'Pending Review', // Never automatically verified!
+          verificationStatus: 'Pending Verification', // Never automatically verified!
           isActive: !isExp,
           isApproved: false, // Requires Admin Approval!
           featured: false,

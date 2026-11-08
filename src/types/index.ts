@@ -13,11 +13,19 @@ export interface User {
   cvUrl?: string;
 }
 
+export type JobVerificationStatus = 
+  | 'Pending Verification'
+  | 'Verified'
+  | 'Rejected'
+  | 'Expired'
+  | 'Link Unavailable';
+
 export interface Job {
   id: string;
   slug: string;
   title: string;
   company: string;
+  employer?: string;
   companyLogo?: string;
   location: string;
   type: 'Full-time' | 'Contract' | 'Project-based';
@@ -38,6 +46,13 @@ export interface Job {
     isExternal: boolean;
   };
   applicationUrl?: string;
+  originalJobUrl?: string;
+  publicationDate?: string;
+  expiryDate?: string;
+  lastVerificationDate?: string;
+  verificationStatus?: JobVerificationStatus;
+  verificationNotes?: string;
+  isVerified?: boolean;
   featured?: boolean;
 }
 

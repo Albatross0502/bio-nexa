@@ -18,6 +18,7 @@ export interface AdminJob {
   id: string;
   title: string;
   company: string;
+  employer?: string;
   sector: string;
   location: string;
   type: string;
@@ -29,27 +30,47 @@ export interface AdminJob {
   requirements: string[];
   skills: string[];
   deadline: string;
+  expiryDate?: string;
+  publicationDate?: string;
   applicationUrl: string;
+  originalJobUrl?: string;
   status: string;
   featured: boolean;
   isApproved: boolean;
   isExpired: boolean;
   sourceName?: string;
+  originalSource?: string;
+  sourceUrl?: string;
+  postedDate?: string;
+  verificationStatus?: string;
+  lastVerificationDate?: string;
+  verificationNotes?: string;
 }
 
 export interface AdminWorkshop {
   id: string;
   title: string;
+  name?: string;
   organizer: string;
+  instructor?: string;
   location: string;
+  venue?: string;
   workMode: string;
+  format?: 'Online' | 'Offline' | 'Hybrid';
   startDate: string;
   endDate: string;
+  date?: string;
+  time?: string;
   duration: string;
   fees: string;
   capacity: number;
   registrationUrl: string;
+  registrationLink?: string;
+  registrationDeadline?: string;
+  availability?: string;
   description: string;
+  imageUrl?: string;
+  featured?: boolean;
   skillsCovered: string[];
   status: string;
   isApproved: boolean;
@@ -252,6 +273,17 @@ class AdminApiClient {
     return data.workshop;
   }
 
+  public async quickUpdateWorkshop(id: string, updates: { status?: string; availability?: string; featured?: boolean }): Promise<AdminWorkshop> {
+    const res = await fetch(`/api/admin/workshops/${encodeURIComponent(id)}/quick`, {
+      method: 'PATCH',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates)
+    });
+    if (!res.ok) throw new Error('Failed to quickly update workshop');
+    const data = await res.json();
+    return data.workshop;
+  }
+
   public async deleteWorkshop(id: string): Promise<void> {
     const res = await fetch(`/api/admin/workshops/${encodeURIComponent(id)}`, {
       method: 'DELETE',
@@ -307,11 +339,16 @@ class AdminApiClient {
 
   // --- Job Verification Records ---
 
-  public async verifyJob(id: string, status: string = 'Verified', notes: string = ''): Promise<AdminJob> {
+  public async verifyJob(
+    id: string, 
+    status: string = 'Verified', 
+    notes: string = '', 
+    lastVerificationDate?: string
+  ): Promise<AdminJob> {
     const res = await fetch(`/api/admin/jobs/${encodeURIComponent(id)}/verify`, {
       method: 'POST',
       headers: this.getHeaders(),
-      body: JSON.stringify({ status, notes })
+      body: JSON.stringify({ status, notes, lastVerificationDate })
     });
     if (!res.ok) throw new Error('Failed to record job verification');
     const data = await res.json();

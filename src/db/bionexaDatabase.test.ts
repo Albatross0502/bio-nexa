@@ -48,7 +48,8 @@ test('BionexaDatabase initializes tables and manages Job lifecycle', () => {
 
   // 4. Verify job with audit record
   const verified = db.verifyJob('test-job-1', 'admin@bionexa.org', 'Verified', 'Verified with HR department');
-  assert.equal(verified, true);
+  assert.ok(verified);
+  assert.equal(verified?.verificationStatus, 'Verified');
 
   const auditRecords = db.getVerificationRecords('test-job-1');
   assert.equal(auditRecords.length, 1);

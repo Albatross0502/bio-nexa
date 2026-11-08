@@ -28,6 +28,7 @@ import {
 import { WelcomeLandingPage } from './components/welcome/WelcomeLandingPage';
 import { OpportunitiesPortal } from './components/opportunities/OpportunitiesPortal';
 import { JobDetailPage } from './components/jobs/JobDetailPage';
+import { WorkshopsPage } from './components/workshops/WorkshopsPage';
 import { NotFoundPage } from './components/pages/NotFoundPage';
 import { parseRoute } from './utils/routeMatcher';
 
@@ -73,7 +74,7 @@ const MainContent: React.FC = () => {
       case 'opportunity-detail':
         return <JobDetailPage jobId={parsed.params.id || ''} />;
       case 'workshops':
-        return <OpportunitiesPortal initialType="workshop" />;
+        return <WorkshopsPage />;
       case 'internships':
         return <OpportunitiesPortal initialType="internship" />;
       case 'courses':

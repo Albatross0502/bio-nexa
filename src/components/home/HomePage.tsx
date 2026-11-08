@@ -27,6 +27,7 @@ import { opportunityStore } from '../../services/opportunities/opportunityStore'
 import { Opportunity, OpportunityType } from '../../types/opportunity';
 import { OpportunityCard } from '../opportunities/OpportunityCard';
 import { OpportunityDetailModal } from '../opportunities/OpportunityDetailModal';
+import { WorkshopCard, UnifiedWorkshop } from '../workshops/WorkshopCard';
 
 export const HomePage: React.FC = () => {
   const { navigate, isItemSaved, toggleSaveItem, addToast } = useApp();
@@ -55,6 +56,18 @@ export const HomePage: React.FC = () => {
 
   // 04. WORKSHOPS Sub-filter
   const [workshopModeFilter, setWorkshopModeFilter] = useState<string>('all');
+  const [dbWorkshops, setDbWorkshops] = useState<UnifiedWorkshop[]>([]);
+
+  useEffect(() => {
+    fetch('/api/workshops')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && Array.isArray(d.workshops) && d.workshops.length > 0) {
+          setDbWorkshops(d.workshops);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Subscribe to reactive Opportunity Store
   useEffect(() => {
@@ -106,8 +119,7 @@ export const HomePage: React.FC = () => {
     return activeOpportunities.filter(opp => {
       // Category filter
       if (allOppCategory !== 'all') {
-        if (allOppCategory === 'job' && opp.type !== 'job' && opp.type !== 'biotech_job') return false;
-        if (allOppCategory === 'biotech_job' && opp.type !== 'biotech_job') return false;
+        if (allOppCategory === 'biotech_job' && opp.type !== 'job' && opp.type !== 'biotech_job') return false;
         if (allOppCategory === 'internship' && opp.type !== 'internship') return false;
         if (allOppCategory === 'workshop' && opp.type !== 'workshop') return false;
         if (allOppCategory === 'course' && opp.type !== 'course') return false;
@@ -167,17 +179,49 @@ export const HomePage: React.FC = () => {
   }, [activeOpportunities, internshipModeFilter]);
 
   // Section 04: Workshops
-  const workshopsList = useMemo(() => {
-    return activeOpportunities
-      .filter(opp => opp.type === 'workshop')
-      .filter(opp => {
-        if (workshopModeFilter === 'all') return true;
-        if (workshopModeFilter === 'online') return opp.workMode === 'Remote' || opp.workshopDetails?.mode?.toLowerCase() === 'online';
-        if (workshopModeFilter === 'offline') return opp.workMode === 'On-site' || opp.workshopDetails?.mode?.toLowerCase() === 'offline';
-        if (workshopModeFilter === 'hybrid') return opp.workMode === 'Hybrid' || opp.workshopDetails?.mode?.toLowerCase() === 'hybrid';
-        return true;
-      });
-  }, [activeOpportunities, workshopModeFilter]);
+  const workshopsList: UnifiedWorkshop[] = useMemo(() => {
+    let list: UnifiedWorkshop[] = [];
+    if (dbWorkshops.length > 0) {
+      list = dbWorkshops;
+    } else {
+      list = activeOpportunities
+        .filter((opp) => opp.type === 'workshop')
+        .map((w) => ({
+          id: w.id,
+          title: w.title,
+          description: w.description,
+          instructor: w.organization || 'Senior Faculty Lead',
+          organizer: w.organization,
+          date: w.workshopDetails?.dates?.split(' to ')[0] || w.postedDate || '2026-12-01',
+          time: '09:30 AM - 04:30 PM IST',
+          duration: w.workshopDetails?.duration || '3 Days Intensive',
+          format:
+            (w.workMode as string) === 'In-Person' || (w.workMode as string) === 'On-site'
+              ? 'Offline'
+              : (w.workMode as string) === 'Hybrid'
+              ? 'Hybrid'
+              : 'Online',
+          venue: w.location || 'Online Live Portal',
+          registrationDeadline: w.deadline || '2026-12-05',
+          registrationUrl: w.workshopDetails?.registrationUrl || w.applicationUrl,
+          availability: 'Open (30/40 Seats)',
+          status: 'upcoming',
+          fees: w.workshopDetails?.fees || '₹1,500 Subsidized',
+          imageUrl: 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80',
+          featured: true,
+          skillsCovered: w.skills || ['Hands-on Wet Lab', 'Protocol Optimization']
+        }));
+    }
+
+    return list.filter((opp) => {
+      if (workshopModeFilter === 'all') return true;
+      const fmt = (opp.format || opp.workMode || '').toLowerCase();
+      if (workshopModeFilter === 'online') return fmt === 'online' || fmt === 'remote';
+      if (workshopModeFilter === 'offline') return fmt === 'offline' || fmt === 'in-person' || fmt === 'on-site';
+      if (workshopModeFilter === 'hybrid') return fmt === 'hybrid';
+      return true;
+    });
+  }, [dbWorkshops, activeOpportunities, workshopModeFilter]);
 
   // Section 05: Courses
   const coursesList = useMemo(() => {
@@ -357,8 +401,7 @@ export const HomePage: React.FC = () => {
           <div className="flex flex-wrap items-center gap-2">
             {[
               { id: 'all', label: 'All Opportunities', count: activeOpportunities.length },
-              { id: 'biotech_job', label: 'Biotech Jobs', count: biotechJobs.length },
-              { id: 'job', label: 'All Jobs', count: activeOpportunities.filter(o => o.type === 'job' || o.type === 'biotech_job').length },
+              { id: 'biotech_job', label: 'Biotechnology Jobs', count: activeOpportunities.filter(o => o.type === 'job' || o.type === 'biotech_job').length },
               { id: 'internship', label: 'Internships', count: internshipsList.length },
               { id: 'workshop', label: 'Workshops', count: workshopsList.length },
               { id: 'course', label: 'Courses', count: coursesList.length },
@@ -742,14 +785,14 @@ export const HomePage: React.FC = () => {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {workshopsList.map((wrk) => (
-            <OpportunityCard
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {workshopsList.slice(0, 6).map((wrk) => (
+            <WorkshopCard
               key={wrk.id}
-              opportunity={wrk}
-              onSelect={(selected) => setSelectedOpportunity(selected)}
+              workshop={wrk}
+              onSelectDetails={() => navigate('/workshops')}
               isBookmarked={isItemSaved(wrk.id)}
-              onToggleBookmark={(id) => toggleSaveItem(wrk.id, wrk.title)}
+              onToggleBookmark={(id, title) => toggleSaveItem(id, title)}
             />
           ))}
         </div>

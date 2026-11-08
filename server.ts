@@ -190,11 +190,14 @@ app.post('/api/jobs/submit', (req: Request, res: Response) => {
       salary: sanitizeString(body.salary || 'Competitive / Disclosed on Interview'),
       applicationUrl,
       source: sanitizeString(body.source || 'Direct Employer Submission'),
+      originalJobUrl: sanitizeString(body.originalJobUrl || body.applicationUrl),
       publicationDate: new Date().toISOString().split('T')[0],
       expiryDate: sanitizeString(body.expiryDate || body.deadline || ''),
-      verificationStatus: 'Pending Review',
+      lastVerificationDate: '',
+      verificationStatus: 'Pending Verification',
+      verificationNotes: 'Submitted for administrator verification.',
       isActive: true,
-      isApproved: false, // Requires Admin Moderation
+      isApproved: false, // Requires Admin Verification before publishing as verified
       featured: false,
       responsibilities: Array.isArray(body.responsibilities) ? body.responsibilities : [],
       requirements: Array.isArray(body.requirements) ? body.requirements : [],
@@ -211,10 +214,52 @@ app.post('/api/jobs/submit', (req: Request, res: Response) => {
   }
 });
 
-// GET /api/workshops
-app.get('/api/workshops', (_req: Request, res: Response) => {
+// POST /api/jobs/:id/report (Public Report This Job)
+app.post('/api/jobs/:id/report', (req: Request, res: Response) => {
   try {
-    const workshops = bionexaDb.getWorkshops(true);
+    const { id } = req.params;
+    const { reason, details, reportedBy } = req.body;
+    const job = bionexaDb.getJobById(id);
+    if (!job) {
+      res.status(404).json({ error: 'Not Found', message: 'Job listing not found.' });
+      return;
+    }
+
+    const reportId = `rep-${Date.now()}`;
+    const reportRecord = {
+      id: reportId,
+      jobId: id,
+      jobTitle: job.title,
+      employer: job.employer,
+      reason: sanitizeString(reason || 'Suspicious Listing'),
+      details: sanitizeString(details || ''),
+      reportedBy: sanitizeString(reportedBy || 'Candidate Visitor'),
+      date: new Date().toISOString()
+    };
+
+    const existingReports = bionexaDb.getContent('candidate_job_reports', []);
+    bionexaDb.setContent('candidate_job_reports', [reportRecord, ...(Array.isArray(existingReports) ? existingReports : [])]);
+
+    res.json({
+      success: true,
+      message: 'Thank you for reporting. BIO-NEXA moderators will review this listing and destination URL within 24 hours.',
+      reportId
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Internal Server Error', message: err.message });
+  }
+});
+
+// GET /api/workshops
+app.get('/api/workshops', (req: Request, res: Response) => {
+  try {
+    const { status, format, featured, search } = req.query;
+    const workshops = bionexaDb.getWorkshops({
+      status: typeof status === 'string' ? status : undefined,
+      format: typeof format === 'string' ? format : undefined,
+      featured: featured === 'true' ? true : featured === 'false' ? false : undefined,
+      search: typeof search === 'string' ? search : undefined,
+    });
     res.json({ success: true, count: workshops.length, workshops });
   } catch (err: any) {
     res.status(500).json({ error: 'Internal Server Error', message: err.message });
@@ -389,6 +434,7 @@ function formatJobForAdmin(j: DbJob) {
     id: j.id,
     title: j.title,
     company: j.employer,
+    employer: j.employer,
     sector: j.sector,
     location: j.location,
     type: j.employmentType,
@@ -400,13 +446,19 @@ function formatJobForAdmin(j: DbJob) {
     requirements: j.requirements,
     skills: j.skills,
     deadline: j.expiryDate,
+    expiryDate: j.expiryDate,
+    publicationDate: j.publicationDate,
     applicationUrl: j.applicationUrl,
+    originalJobUrl: j.originalJobUrl || j.applicationUrl,
     status: j.isActive ? 'Active' : 'Expired',
     featured: j.featured,
     isApproved: j.isApproved,
     isExpired: !j.isActive,
     sourceName: j.source,
-    verificationStatus: j.verificationStatus
+    originalSource: j.source,
+    verificationStatus: j.verificationStatus,
+    lastVerificationDate: j.lastVerificationDate,
+    verificationNotes: j.verificationNotes
   };
 }
 
@@ -414,18 +466,29 @@ function formatWorkshopForAdmin(w: DbWorkshop) {
   return {
     id: w.id,
     title: w.name,
+    name: w.name,
     organizer: w.instructor,
+    instructor: w.instructor,
     location: w.venue,
-    workMode: 'Hybrid',
+    venue: w.venue,
+    workMode: w.format,
+    format: w.format,
     startDate: w.date,
     endDate: w.date,
-    duration: w.duration,
-    fees: w.fees,
-    capacity: w.capacity,
+    date: w.date,
+    time: w.time || '09:30 AM - 04:30 PM IST',
+    duration: w.duration || '1 Day',
+    fees: w.fees || 'Free',
+    capacity: w.capacity || 50,
     registrationUrl: w.registrationLink,
+    registrationLink: w.registrationLink,
+    registrationDeadline: w.registrationDeadline || '',
+    availability: w.availability || 'Open',
     description: w.description,
-    skillsCovered: w.skillsCovered,
-    status: w.status,
+    imageUrl: w.imageUrl || '',
+    featured: Boolean(w.featured),
+    skillsCovered: w.skillsCovered || [],
+    status: w.status || 'upcoming',
     isApproved: true
   };
 }
@@ -503,6 +566,10 @@ app.post('/api/admin/jobs', requireAdminAuth, (req: Request, res: Response) => {
       return;
     }
 
+    const verificationStatus = body.verificationStatus || 'Verified';
+    const isApproved = verificationStatus === 'Verified' || verificationStatus === 'Link Unavailable';
+    const isActive = verificationStatus !== 'Expired' && verificationStatus !== 'Rejected';
+
     const job = bionexaDb.createJob({
       title,
       employer,
@@ -515,14 +582,17 @@ app.post('/api/admin/jobs', requireAdminAuth, (req: Request, res: Response) => {
       responsibilities: Array.isArray(body.responsibilities) ? body.responsibilities : [],
       requirements: Array.isArray(body.requirements) ? body.requirements : [],
       skills: Array.isArray(body.skills) ? body.skills : [],
-      expiryDate: sanitizeString(body.deadline || '2026-12-31'),
+      expiryDate: sanitizeString(body.deadline || body.expiryDate || '2026-12-31'),
       applicationUrl,
-      publicationDate: new Date().toISOString().split('T')[0],
-      verificationStatus: 'Verified',
-      isActive: true,
-      isApproved: true,
+      originalJobUrl: sanitizeString(body.originalJobUrl || body.sourceUrl || applicationUrl),
+      publicationDate: sanitizeString(body.publicationDate || new Date().toISOString().split('T')[0]),
+      lastVerificationDate: sanitizeString(body.lastVerificationDate || (verificationStatus === 'Verified' ? new Date().toISOString().split('T')[0] : '')),
+      verificationStatus,
+      verificationNotes: sanitizeString(body.verificationNotes || 'Verified by administrator before publishing.'),
+      isActive,
+      isApproved,
       featured: Boolean(body.featured),
-      source: sanitizeString(body.sourceName || 'BIO-NEXA Verified Listing')
+      source: sanitizeString(body.sourceName || body.originalSource || 'BIO-NEXA Verified Listing')
     });
 
     res.status(201).json({ success: true, job: formatJobForAdmin(job) });
@@ -550,6 +620,12 @@ app.put('/api/admin/jobs/:id', requireAdminAuth, (req: Request, res: Response) =
     if (Array.isArray(body.requirements)) updates.requirements = body.requirements;
     if (Array.isArray(body.skills)) updates.skills = body.skills;
     if (body.deadline || body.expiryDate) updates.expiryDate = sanitizeString(body.deadline || body.expiryDate);
+    if (body.publicationDate) updates.publicationDate = sanitizeString(body.publicationDate);
+    if (body.originalJobUrl) updates.originalJobUrl = sanitizeString(body.originalJobUrl);
+    if (body.source || body.sourceName) updates.source = sanitizeString(body.source || body.sourceName);
+    if (body.verificationStatus) updates.verificationStatus = body.verificationStatus;
+    if (body.lastVerificationDate !== undefined) updates.lastVerificationDate = sanitizeString(body.lastVerificationDate);
+    if (body.verificationNotes !== undefined) updates.verificationNotes = sanitizeString(body.verificationNotes);
     if (body.applicationUrl) {
       const url = sanitizeString(body.applicationUrl);
       if (!isValidHttpUrl(url)) {
@@ -600,7 +676,10 @@ const handleJobStatusUpdate = (req: Request, res: Response) => {
     const updates: Partial<DbJob> = {};
     if (isApproved !== undefined) updates.isApproved = Boolean(isApproved);
     if (isExpired !== undefined) updates.isActive = !isExpired;
-    if (status === 'Expired' || status === 'expired') updates.isActive = false;
+    if (status === 'Expired' || status === 'expired') {
+      updates.isActive = false;
+      updates.verificationStatus = 'Expired';
+    }
     if (status === 'Active' || status === 'active') updates.isActive = true;
 
     const updated = bionexaDb.updateJob(id, updates);
@@ -622,14 +701,15 @@ app.put('/api/admin/jobs/:id/status', requireAdminAuth, handleJobStatusUpdate);
 app.post('/api/admin/jobs/:id/verify', requireAdminAuth, (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { status, notes } = req.body;
+    const { status, notes, lastVerificationDate } = req.body;
     const adminUser = (req as any).adminUser;
 
     const verified = bionexaDb.verifyJob(
       id,
       adminUser?.email || 'admin@bionexa.org',
       status || 'Verified',
-      notes || 'Verified through official portal check'
+      notes || 'Verified through official portal check',
+      lastVerificationDate
     );
 
     if (!verified) {
@@ -638,7 +718,7 @@ app.post('/api/admin/jobs/:id/verify', requireAdminAuth, (req: Request, res: Res
     }
 
     const updated = bionexaDb.getJobById(id)!;
-    res.json({ success: true, job: formatJobForAdmin(updated), message: 'Job verified and recorded in audit log.' });
+    res.json({ success: true, job: formatJobForAdmin(updated), message: `Job marked as "${updated.verificationStatus}" and recorded in audit log.` });
   } catch (err: any) {
     res.status(500).json({ error: 'Database Error', message: err.message });
   }
@@ -665,19 +745,32 @@ app.post('/api/admin/workshops', requireAdminAuth, (req: Request, res: Response)
       return;
     }
 
+    let format: 'Online' | 'Offline' | 'Hybrid' = 'Online';
+    if (body.format === 'Offline' || body.workMode === 'Offline' || body.workMode === 'In-Person') format = 'Offline';
+    else if (body.format === 'Hybrid' || body.workMode === 'Hybrid') format = 'Hybrid';
+
+    let status = 'upcoming';
+    if (body.status === 'ongoing' || body.status === 'completed' || body.status === 'upcoming') {
+      status = body.status;
+    }
+
     const ws = bionexaDb.createWorkshop({
       name,
       description: sanitizeString(body.description || 'Hands-on scientific workshop.'),
-      instructor: sanitizeString(body.organizer || body.instructor || 'BIO-NEXA Faculty'),
+      instructor: sanitizeString(body.instructor || body.organizer || 'BIO-NEXA Faculty'),
       date: sanitizeString(body.startDate || body.date || '2026-12-01'),
-      time: '09:00 AM - 05:00 PM IST',
-      venue: sanitizeString(body.location || body.venue || 'Hybrid / Online'),
+      time: sanitizeString(body.time || '09:30 AM - 04:30 PM IST'),
+      duration: sanitizeString(body.duration || '2 Days Intensive'),
+      format,
+      venue: sanitizeString(body.venue || body.location || (format === 'Online' ? 'Online Live Portal' : 'Main Biotechnology Lab')),
+      registrationDeadline: sanitizeString(body.registrationDeadline || body.deadline || ''),
       registrationLink,
-      availability: 'Open',
-      status: 'active',
+      availability: sanitizeString(body.availability || 'Open'),
+      status,
       fees: sanitizeString(body.fees || 'Free / Subsidized'),
-      duration: sanitizeString(body.duration || '2 Days'),
       capacity: Number(body.capacity) || 50,
+      imageUrl: sanitizeString(body.imageUrl || ''),
+      featured: Boolean(body.featured),
       skillsCovered: Array.isArray(body.skillsCovered) ? body.skillsCovered : []
     });
 
@@ -696,9 +789,17 @@ app.put('/api/admin/workshops/:id', requireAdminAuth, (req: Request, res: Respon
     const updates: Partial<DbWorkshop> = {};
     if (body.title || body.name) updates.name = sanitizeString(body.title || body.name);
     if (body.description) updates.description = sanitizeString(body.description);
-    if (body.organizer || body.instructor) updates.instructor = sanitizeString(body.organizer || body.instructor);
+    if (body.organizer || body.instructor) updates.instructor = sanitizeString(body.instructor || body.organizer);
     if (body.startDate || body.date) updates.date = sanitizeString(body.startDate || body.date);
-    if (body.location || body.venue) updates.venue = sanitizeString(body.location || body.venue);
+    if (body.time) updates.time = sanitizeString(body.time);
+    if (body.location || body.venue) updates.venue = sanitizeString(body.venue || body.location);
+    if (body.format || body.workMode) {
+      const mode = body.format || body.workMode;
+      if (mode === 'Offline' || mode === 'In-Person') updates.format = 'Offline';
+      else if (mode === 'Hybrid') updates.format = 'Hybrid';
+      else updates.format = 'Online';
+    }
+    if (body.registrationDeadline !== undefined) updates.registrationDeadline = sanitizeString(body.registrationDeadline);
     if (body.registrationUrl || body.registrationLink) {
       const url = sanitizeString(body.registrationUrl || body.registrationLink);
       if (!isValidHttpUrl(url)) {
@@ -709,9 +810,12 @@ app.put('/api/admin/workshops/:id', requireAdminAuth, (req: Request, res: Respon
     }
     if (body.duration) updates.duration = sanitizeString(body.duration);
     if (body.fees) updates.fees = sanitizeString(body.fees);
-    if (body.capacity) updates.capacity = Number(body.capacity);
+    if (body.capacity !== undefined) updates.capacity = Number(body.capacity);
     if (Array.isArray(body.skillsCovered)) updates.skillsCovered = body.skillsCovered;
     if (body.status) updates.status = body.status;
+    if (body.availability) updates.availability = sanitizeString(body.availability);
+    if (body.imageUrl !== undefined) updates.imageUrl = sanitizeString(body.imageUrl);
+    if (body.featured !== undefined) updates.featured = Boolean(body.featured);
 
     const updated = bionexaDb.updateWorkshop(id, updates);
     if (!updated) {
@@ -719,6 +823,27 @@ app.put('/api/admin/workshops/:id', requireAdminAuth, (req: Request, res: Respon
       return;
     }
 
+    res.json({ success: true, workshop: formatWorkshopForAdmin(updated) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
+// PATCH /api/admin/workshops/:id/quick (Quick Toggle Featured / Status / Availability)
+app.patch('/api/admin/workshops/:id/quick', requireAdminAuth, (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const body = req.body;
+    const updates: Partial<DbWorkshop> = {};
+    if (body.status !== undefined) updates.status = body.status;
+    if (body.availability !== undefined) updates.availability = body.availability;
+    if (body.featured !== undefined) updates.featured = Boolean(body.featured);
+
+    const updated = bionexaDb.updateWorkshop(id, updates);
+    if (!updated) {
+      res.status(404).json({ error: 'Not Found', message: 'Workshop not found.' });
+      return;
+    }
     res.json({ success: true, workshop: formatWorkshopForAdmin(updated) });
   } catch (err: any) {
     res.status(500).json({ error: 'Database Error', message: err.message });

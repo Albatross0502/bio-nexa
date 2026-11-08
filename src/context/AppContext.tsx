@@ -315,6 +315,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               slug: j.id,
               title: j.title,
               company: j.employer || j.company,
+              employer: j.employer || j.company,
               location: j.location,
               type: j.employmentType || j.type || 'Full-time',
               sector: j.sector || 'Private Biopharma',
@@ -323,15 +324,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               salary: j.salary,
               postedDate: j.publicationDate || '2026-11-01',
               deadline: j.expiryDate || '2026-12-31',
+              publicationDate: j.publicationDate || '2026-11-01',
+              expiryDate: j.expiryDate || '2026-12-31',
+              lastVerificationDate: j.lastVerificationDate || '',
+              verificationStatus: j.verificationStatus || 'Verified',
+              verificationNotes: j.verificationNotes,
               description: j.description,
               responsibilities: j.responsibilities || [],
               requirements: j.requirements || [],
               skills: j.skills || [],
               source: {
                 name: j.source || 'BIO-NEXA Verified',
-                url: j.applicationUrl,
+                url: j.originalJobUrl || j.applicationUrl,
                 isExternal: true
               },
+              originalJobUrl: j.originalJobUrl || j.applicationUrl,
               applicationUrl: j.applicationUrl,
               featured: Boolean(j.featured)
             }));

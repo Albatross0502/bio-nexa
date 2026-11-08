@@ -27,7 +27,10 @@ import {
   ChevronRight,
   Eye,
   Server,
-  HardDrive
+  HardDrive,
+  Star,
+  Upload,
+  Image as ImageIcon
 } from 'lucide-react';
 import {
   adminApi,
@@ -53,7 +56,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
   // Active Management Tab
   const [activeTab, setActiveTab] = useState<'jobs' | 'workshops' | 'courses' | 'content' | 'sheets' | 'sources' | 'backups' | 'automation'>('jobs');
-  const [jobFilterTab, setJobFilterTab] = useState<'all' | 'pending' | 'approved' | 'expired'>('all');
+  const [jobFilterTab, setJobFilterTab] = useState<'all' | 'pending' | 'verified' | 'unverified' | 'broken' | 'expired'>('all');
   const [isLoading, setIsLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [backups, setBackups] = useState<any[]>([]);
@@ -72,8 +75,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   const [isJobModalOpen, setIsJobModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<AdminJob | null>(null);
 
+  // Phase 07 Verification Modal state
+  const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
+  const [verifyingJob, setVerifyingJob] = useState<AdminJob | null>(null);
+
   const [isWorkshopModalOpen, setIsWorkshopModalOpen] = useState(false);
   const [editingWorkshop, setEditingWorkshop] = useState<AdminWorkshop | null>(null);
+  const [workshopImagePreview, setWorkshopImagePreview] = useState<string>('');
+  const [workshopStatusFilter, setWorkshopStatusFilter] = useState<string>('all');
+  const [workshopFormatFilter, setWorkshopFormatFilter] = useState<string>('all');
 
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<AdminCourse | null>(null);
@@ -178,6 +188,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
         .filter(Boolean),
       deadline: String(formData.get('deadline') || '2026-12-31').trim(),
       applicationUrl: String(formData.get('applicationUrl') || '').trim(),
+      originalJobUrl: String(formData.get('originalJobUrl') || formData.get('applicationUrl') || '').trim(),
+      employer: String(formData.get('employer') || formData.get('company') || '').trim(),
+      sourceName: String(formData.get('sourceName') || 'BIO-NEXA Portal Direct').trim(),
+      verificationStatus: (formData.get('verificationStatus') as any) || 'Pending Verification',
+      verificationNotes: String(formData.get('verificationNotes') || '').trim(),
       status: String(formData.get('status') || 'Active'),
       featured: formData.get('featured') === 'on'
     };
@@ -259,27 +274,84 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   // Workshops Handlers
   // -------------------------------------------------------------
 
+  const handleOpenCreateWorkshop = () => {
+    setEditingWorkshop(null);
+    setWorkshopImagePreview('https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80');
+    setIsWorkshopModalOpen(true);
+  };
+
+  const handleOpenEditWorkshop = (ws: AdminWorkshop) => {
+    setEditingWorkshop(ws);
+    setWorkshopImagePreview(ws.imageUrl || 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80');
+    setIsWorkshopModalOpen(true);
+  };
+
+  const handleToggleWorkshopFeatured = async (workshop: AdminWorkshop) => {
+    try {
+      const nextFeatured = !workshop.featured;
+      const updated = await adminApi.quickUpdateWorkshop(workshop.id, { featured: nextFeatured });
+      setWorkshops(workshops.map((w) => (w.id === workshop.id ? updated : w)));
+      addToast(`"${updated.title}" is now ${nextFeatured ? 'featured on homepage' : 'removed from featured'}.`, 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Error updating featured status.', 'error');
+    }
+  };
+
+  const handleChangeWorkshopStatus = async (workshop: AdminWorkshop, newStatus: string) => {
+    try {
+      const updated = await adminApi.quickUpdateWorkshop(workshop.id, { status: newStatus });
+      setWorkshops(workshops.map((w) => (w.id === workshop.id ? updated : w)));
+      addToast(`Status updated to "${newStatus}".`, 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Error updating status.', 'error');
+    }
+  };
+
+  const handleChangeWorkshopAvailability = async (workshop: AdminWorkshop, newAvail: string) => {
+    try {
+      const updated = await adminApi.quickUpdateWorkshop(workshop.id, { availability: newAvail });
+      setWorkshops(workshops.map((w) => (w.id === workshop.id ? updated : w)));
+      addToast(`Availability updated to "${newAvail}".`, 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Error updating availability.', 'error');
+    }
+  };
+
   const handleSaveWorkshop = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
 
+    const format = String(formData.get('format') || formData.get('workMode') || 'Online') as 'Online' | 'Offline' | 'Hybrid';
+    const status = String(formData.get('status') || 'upcoming');
+    const featured = formData.get('featured') === 'on' || formData.get('featured') === 'true';
+
     const workshopPayload: Partial<AdminWorkshop> = {
       title: String(formData.get('title') || '').trim(),
+      name: String(formData.get('title') || '').trim(),
       organizer: String(formData.get('organizer') || '').trim(),
-      location: String(formData.get('location') || '').trim(),
-      workMode: String(formData.get('workMode') || 'online'),
+      instructor: String(formData.get('instructor') || formData.get('organizer') || '').trim(),
+      location: String(formData.get('venue') || formData.get('location') || '').trim(),
+      venue: String(formData.get('venue') || formData.get('location') || '').trim(),
+      workMode: format,
+      format,
       startDate: String(formData.get('startDate') || '2026-12-10').trim(),
       endDate: String(formData.get('endDate') || '2026-12-15').trim(),
-      duration: String(formData.get('duration') || '3 Days Hands-on').trim(),
+      date: String(formData.get('startDate') || '2026-12-10').trim(),
+      time: String(formData.get('time') || '09:30 AM - 04:30 PM IST').trim(),
+      duration: String(formData.get('duration') || '2 Days Intensive').trim(),
       fees: String(formData.get('fees') || 'Free').trim(),
-      capacity: Number(formData.get('capacity') || 100),
+      capacity: Number(formData.get('capacity') || 50),
       registrationUrl: String(formData.get('registrationUrl') || '').trim(),
+      registrationDeadline: String(formData.get('registrationDeadline') || '').trim(),
+      availability: String(formData.get('availability') || 'Open').trim(),
       description: String(formData.get('description') || '').trim(),
+      imageUrl: workshopImagePreview || String(formData.get('imageUrl') || '').trim(),
+      featured,
       skillsCovered: String(formData.get('skillsCovered') || '')
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean),
-      status: String(formData.get('status') || 'active')
+      status
     };
 
     try {
@@ -409,9 +481,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
   // Filtered views
   const filteredJobs = jobs.filter((j) => {
-    if (jobFilterTab === 'pending' && j.isApproved) return false;
-    if (jobFilterTab === 'approved' && !j.isApproved) return false;
-    if (jobFilterTab === 'expired' && !j.isExpired) return false;
+    if (jobFilterTab === 'pending' && j.isApproved && j.verificationStatus !== 'Pending Verification') return false;
+    if (jobFilterTab === 'verified' && j.verificationStatus !== 'Verified') return false;
+    if (jobFilterTab === 'unverified' && j.verificationStatus !== 'Pending Verification' && j.verificationStatus !== 'Rejected') return false;
+    if (jobFilterTab === 'broken' && j.verificationStatus !== 'Link Unavailable') return false;
+    if (jobFilterTab === 'expired' && !j.isExpired && j.verificationStatus !== 'Expired') return false;
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
@@ -421,12 +495,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
     );
   });
 
-  const filteredWorkshops = workshops.filter(
-    (w) =>
-      !searchQuery ||
-      w.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      w.organizer.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredWorkshops = workshops.filter((w) => {
+    if (workshopStatusFilter !== 'all') {
+      const curStatus = (w.status || 'upcoming').toLowerCase();
+      if (curStatus !== workshopStatusFilter.toLowerCase()) return false;
+    }
+    if (workshopFormatFilter !== 'all') {
+      const curFormat = (w.format || w.workMode || 'Online').toLowerCase();
+      if (curFormat !== workshopFormatFilter.toLowerCase()) return false;
+    }
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      (w.title || '').toLowerCase().includes(q) ||
+      (w.organizer || '').toLowerCase().includes(q) ||
+      (w.instructor || '').toLowerCase().includes(q) ||
+      (w.location || '').toLowerCase().includes(q) ||
+      (w.venue || '').toLowerCase().includes(q)
+    );
+  });
 
   const filteredCourses = courses.filter(
     (c) =>
@@ -590,10 +677,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
               {/* Status & Moderation Filter Chips */}
               <div className="flex flex-wrap items-center gap-2">
                 {[
-                  ['all', `All Listings (${jobs.length})`],
-                  ['pending', `Pending Approval (${jobs.filter((j) => !j.isApproved).length})`],
-                  ['approved', `Approved & Live (${jobs.filter((j) => j.isApproved && !j.isExpired).length})`],
-                  ['expired', `Expired (${jobs.filter((j) => j.isExpired).length})`]
+                  ['all', `All (${jobs.length})`],
+                  ['pending', `Pending Audit (${jobs.filter((j) => j.verificationStatus === 'Pending Verification' || !j.isApproved).length})`],
+                  ['verified', `Verified (${jobs.filter((j) => j.verificationStatus === 'Verified').length})`],
+                  ['unverified', `Unverified (${jobs.filter((j) => j.verificationStatus === 'Pending Verification' || j.verificationStatus === 'Rejected').length})`],
+                  ['broken', `Broken Links (${jobs.filter((j) => j.verificationStatus === 'Link Unavailable').length})`],
+                  ['expired', `Expired (${jobs.filter((j) => j.isExpired || j.verificationStatus === 'Expired').length})`]
                 ].map(([tabKey, label]: any) => (
                   <button
                     key={tabKey}
@@ -618,7 +707,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                         <th className="py-3 px-4">Title &amp; Company</th>
                         <th className="py-3 px-4">Sector &amp; Location</th>
                         <th className="py-3 px-4">Salary / Deadline</th>
-                        <th className="py-3 px-4">Status &amp; Verification</th>
+                        <th className="py-3 px-4">Verification Audit</th>
                         <th className="py-3 px-4 text-right">Actions</th>
                       </tr>
                     </thead>
@@ -645,27 +734,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                               <div className="text-[11px] text-slate-400">Deadline: {job.deadline}</div>
                             </td>
                             <td className="py-3 px-4">
-                              <div className="flex items-center gap-2">
-                                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                  job.isExpired ? 'bg-rose-100 text-rose-800' :
-                                  job.status === 'Active' ? 'bg-emerald-100 text-emerald-800' :
-                                  'bg-slate-100 text-slate-700'
-                                }`}>
-                                  {job.isExpired ? 'Expired' : job.status}
-                                </span>
-                                {job.isApproved ? (
-                                  <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-0.5">
-                                    <CheckCircle2 className="w-3 h-3" />
-                                    <span>Approved</span>
+                              <div className="flex flex-col gap-1 items-start">
+                                {job.verificationStatus === 'Verified' ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100/70 dark:bg-emerald-950 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                    <span>Verified</span>
+                                  </span>
+                                ) : job.verificationStatus === 'Pending Verification' ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 dark:text-amber-300 bg-amber-100/70 dark:bg-amber-950 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-800">
+                                    <Clock className="w-3 h-3 text-amber-600" />
+                                    <span>Pending Audit</span>
+                                  </span>
+                                ) : job.verificationStatus === 'Link Unavailable' ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-700 dark:text-slate-300 bg-slate-200 dark:bg-slate-800 px-2 py-0.5 rounded-full border border-slate-300 dark:border-slate-700">
+                                    <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                    <span>Link Broken</span>
+                                  </span>
+                                ) : job.verificationStatus === 'Expired' || job.isExpired ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 dark:text-rose-300 bg-rose-100/70 dark:bg-rose-950 px-2 py-0.5 rounded-full border border-rose-300 dark:border-rose-800">
+                                    <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                    <span>Expired</span>
                                   </span>
                                 ) : (
-                                  <span className="text-[10px] text-amber-600 font-bold flex items-center gap-0.5">
-                                    <Clock className="w-3 h-3" />
-                                    <span>Pending</span>
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 dark:text-rose-300 bg-rose-100/70 dark:bg-rose-950 px-2 py-0.5 rounded-full border border-rose-300 dark:border-rose-800">
+                                    <XCircle className="w-3 h-3 text-rose-600" />
+                                    <span>{job.verificationStatus || 'Unverified'}</span>
                                   </span>
                                 )}
+                                <div className="text-[10px] text-slate-400">
+                                  Source: {job.sourceName || 'Direct'} · Verified: {job.lastVerificationDate || 'Never'}
+                                </div>
                               </div>
-                              <div className="text-[10px] text-slate-400 mt-0.5">ID: {job.id}</div>
                             </td>
                             <td className="py-3 px-4 text-right">
                               <div className="flex items-center justify-end gap-1.5">
@@ -685,23 +784,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="p-1.5 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-teal-50"
-                                    title="Test Application Link"
+                                    title="Test Application Link Destination"
                                   >
                                     <ExternalLink className="w-3.5 h-3.5" />
                                   </a>
                                 )}
 
-                                {/* Direct Approve Button for Pending Feeds */}
-                                {!job.isApproved && (
-                                  <button
-                                    onClick={() => handleToggleJobApproval(job.id, false)}
-                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold shadow-xs transition-all flex items-center gap-1 cursor-pointer"
-                                    title="Approve & Publish to public portal"
-                                  >
-                                    <CheckCircle2 className="w-3 h-3" />
-                                    <span>Approve</span>
-                                  </button>
-                                )}
+                                {/* Audit & Verify Dedicated Modal */}
+                                <button
+                                  onClick={() => {
+                                    setVerifyingJob(job);
+                                    setIsVerificationModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1 bg-teal-50 dark:bg-teal-950/60 hover:bg-teal-100 text-teal-700 dark:text-teal-300 rounded-lg text-[11px] font-bold border border-teal-200 dark:border-teal-800 transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="Audit Employer, Source & Destination"
+                                >
+                                  <FileCheck className="w-3 h-3 text-teal-600 dark:text-teal-400" />
+                                  <span>Verify</span>
+                                </button>
 
                                 {/* Status Switch */}
                                 <button
@@ -714,15 +814,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                                   title={job.isExpired ? 'Reopen listing' : 'Mark expired'}
                                 >
                                   {job.isExpired ? 'Reopen' : 'Expire'}
-                                </button>
-
-                                {/* Audit & Verification Action */}
-                                <button
-                                  onClick={() => handleVerifyJob(job.id, job.title)}
-                                  className="p-1.5 text-slate-500 hover:text-emerald-600 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/40"
-                                  title="Audit & Verify Official Source"
-                                >
-                                  <FileCheck className="w-3.5 h-3.5" />
                                 </button>
 
                                 {/* Edit Job */}
@@ -768,69 +859,252 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
           {/* ========================================================= */}
           {activeTab === 'workshops' && (
             <div className="space-y-4 text-xs">
+              {/* Header & Controls */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
                 <div>
-                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                    Biotechnology Workshops &amp; Training Programs
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <span>Biotechnology Workshops &amp; Training Programs</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300">
+                      {workshops.length} Managed Programs
+                    </span>
                   </h2>
                   <p className="text-slate-500 text-[11px] mt-0.5">
-                    Schedule hands-on dry/wet lab training, update enrollment fees, registration links, and seat limits.
+                    Schedule hands-on lab training, update enrollment fees, registration links, format, and toggle featured programs on the homepage.
                   </p>
                 </div>
-                <button
-                  onClick={() => {
-                    setEditingWorkshop(null);
-                    setIsWorkshopModalOpen(true);
-                  }}
-                  className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Add Workshop</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleOpenCreateWorkshop}
+                    className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer text-xs"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Schedule Workshop</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Workshops Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Stats Bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Workshops</span>
+                  <span className="text-lg font-bold font-mono text-slate-900 dark:text-white">{workshops.length}</span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Upcoming</span>
+                  <span className="text-lg font-bold font-mono text-sky-600 dark:text-sky-400">
+                    {workshops.filter(w => (w.status || 'upcoming').toLowerCase() === 'upcoming').length}
+                  </span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Ongoing</span>
+                  <span className="text-lg font-bold font-mono text-teal-600 dark:text-teal-400">
+                    {workshops.filter(w => (w.status || '').toLowerCase() === 'ongoing').length}
+                  </span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Completed</span>
+                  <span className="text-lg font-bold font-mono text-slate-500">
+                    {workshops.filter(w => (w.status || '').toLowerCase() === 'completed').length}
+                  </span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Homepage Featured</span>
+                  <span className="text-lg font-bold font-mono text-amber-500">
+                    {workshops.filter(w => w.featured).length}
+                  </span>
+                </div>
+              </div>
+
+              {/* Sub-Filters: Status & Format */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-slate-400 font-semibold text-[11px]">Status:</span>
+                  {[
+                    { id: 'all', label: 'All' },
+                    { id: 'upcoming', label: 'Upcoming' },
+                    { id: 'ongoing', label: 'Ongoing' },
+                    { id: 'completed', label: 'Completed' },
+                  ].map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => setWorkshopStatusFilter(s.id)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                        workshopStatusFilter === s.id
+                          ? 'bg-[#0B2A5B] text-white shadow-2xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-slate-400 font-semibold text-[11px]">Format:</span>
+                  {[
+                    { id: 'all', label: 'All Formats' },
+                    { id: 'Online', label: 'Online' },
+                    { id: 'Offline', label: 'Offline' },
+                    { id: 'Hybrid', label: 'Hybrid' },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      onClick={() => setWorkshopFormatFilter(f.id)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                        workshopFormatFilter === f.id
+                          ? 'bg-purple-700 text-white shadow-2xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Workshops Cards Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredWorkshops.map((w) => (
-                  <div key={w.id} className="p-5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 flex flex-col justify-between">
+                  <div
+                    key={w.id}
+                    className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between overflow-hidden relative group hover:border-[#14A3A0]/60 transition-all"
+                  >
                     <div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-teal-600 uppercase text-[10px]">{w.workMode}</span>
-                        <span className="font-mono text-[10px] text-emerald-600 font-bold">{w.fees}</span>
-                      </div>
-                      <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1">{w.title}</h3>
-                      <div className="text-slate-500 text-[11px] mt-1">{w.organizer} · {w.location}</div>
-                      <div className="text-slate-600 dark:text-slate-300 text-xs mt-2 line-clamp-2">{w.description}</div>
-                      
-                      <div className="flex flex-wrap gap-1 text-[10px] mt-2">
-                        {w.skillsCovered.slice(0, 3).map((s) => (
-                          <span key={s} className="px-2 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 rounded">
-                            {s}
+                      {/* Thumbnail Media */}
+                      <div className="h-32 w-full bg-slate-100 dark:bg-slate-800 relative overflow-hidden">
+                        <img
+                          src={w.imageUrl || 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80'}
+                          alt={w.title}
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent" />
+
+                        {/* Top Badges */}
+                        <div className="absolute top-2 left-2 right-2 flex items-center justify-between">
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold text-white backdrop-blur-md ${
+                              (w.format || w.workMode) === 'Offline'
+                                ? 'bg-emerald-600/90'
+                                : (w.format || w.workMode) === 'Hybrid'
+                                ? 'bg-purple-600/90'
+                                : 'bg-blue-600/90'
+                            }`}
+                          >
+                            {w.format || w.workMode || 'Online'}
                           </span>
-                        ))}
+
+                          <button
+                            type="button"
+                            onClick={() => handleToggleWorkshopFeatured(w)}
+                            className={`p-1.5 rounded-full backdrop-blur-md transition-colors ${
+                              w.featured
+                                ? 'bg-amber-500 text-white shadow-xs'
+                                : 'bg-slate-900/60 text-slate-300 hover:text-amber-400'
+                            }`}
+                            title={w.featured ? 'Featured on Homepage (Click to unfeature)' : 'Click to feature on homepage'}
+                          >
+                            <Star className={`w-3.5 h-3.5 ${w.featured ? 'fill-current' : ''}`} />
+                          </button>
+                        </div>
+
+                        {/* Bottom Thumbnail Info */}
+                        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] text-white font-mono">
+                          <span>{w.duration || '2 Days'}</span>
+                          <span className="font-bold text-emerald-300">{w.fees || 'Free'}</span>
+                        </div>
+                      </div>
+
+                      {/* Content */}
+                      <div className="p-4 space-y-3">
+                        <div>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                            {w.organizer} {w.instructor && `· ${w.instructor}`}
+                          </div>
+                          <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-0.5 line-clamp-2">
+                            {w.title}
+                          </h3>
+                        </div>
+
+                        <div className="space-y-1 text-[11px] text-slate-600 dark:text-slate-300">
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-slate-400">Schedule:</span>
+                            <span className="font-semibold text-slate-700 dark:text-slate-200">
+                              {w.startDate || w.date} ({w.time || '09:30 AM'})
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-slate-400">Venue:</span>
+                            <span className="truncate max-w-[150px] font-medium" title={w.venue || w.location}>
+                              {w.venue || w.location || 'Online'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-slate-400">Deadline:</span>
+                            <span className="font-mono text-slate-700 dark:text-slate-200">
+                              {w.registrationDeadline || 'Open'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Status & Availability Quick Selectors */}
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 grid grid-cols-2 gap-2 text-[10px]">
+                          <div>
+                            <label className="text-[9px] font-bold text-slate-400 block mb-0.5 uppercase">Status</label>
+                            <select
+                              value={(w.status || 'upcoming').toLowerCase()}
+                              onChange={(e) => handleChangeWorkshopStatus(w, e.target.value)}
+                              className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-800 dark:text-slate-200 focus:outline-none"
+                            >
+                              <option value="upcoming">Upcoming</option>
+                              <option value="ongoing">Ongoing</option>
+                              <option value="completed">Completed</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="text-[9px] font-bold text-slate-400 block mb-0.5 uppercase">Availability</label>
+                            <select
+                              value={w.availability || 'Open'}
+                              onChange={(e) => handleChangeWorkshopAvailability(w, e.target.value)}
+                              className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-800 dark:text-slate-200 focus:outline-none"
+                            >
+                              <option value="Open">Open</option>
+                              <option value="Filling Fast">Filling Fast</option>
+                              <option value="Waitlist">Waitlist</option>
+                              <option value="Closed">Closed</option>
+                            </select>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
-                      <span className="text-slate-400">Timeline: <strong>{w.startDate} to {w.endDate}</strong></span>
-                      <div className="flex items-center gap-1.5">
-                        {w.registrationUrl && (
+                    {/* Card Actions */}
+                    <div className="p-3 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                      <div className="flex items-center gap-1">
+                        {w.registrationUrl ? (
                           <a
                             href={w.registrationUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="p-1.5 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-slate-100"
-                            title="Test Registration Link"
+                            className="p-1.5 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-white dark:hover:bg-slate-700 transition-colors"
+                            title="Open Registration Destination in New Tab"
                           >
                             <ExternalLink className="w-3.5 h-3.5" />
                           </a>
+                        ) : (
+                          <span className="text-[10px] text-amber-500">No URL</span>
                         )}
+                        <span className="text-[10px] text-slate-400">
+                          {w.featured ? '★ Featured' : ''}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
                         <button
-                          onClick={() => {
-                            setEditingWorkshop(w);
-                            setIsWorkshopModalOpen(true);
-                          }}
-                          className="px-2.5 py-1 text-slate-600 hover:text-sky-600 rounded-lg hover:bg-slate-100 font-bold"
+                          onClick={() => handleOpenEditWorkshop(w)}
+                          className="px-2.5 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-200 rounded-lg font-bold border border-slate-200 dark:border-slate-600 transition-colors"
                         >
                           Edit
                         </button>
@@ -842,7 +1116,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                               title: w.title
                             })
                           }
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50"
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
                           title="Delete Workshop"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -1359,18 +1633,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="block font-bold text-slate-700 dark:text-slate-300">
-                  Official Application URL * (Employer Portal)
-                </label>
-                <input
-                  type="url"
-                  name="applicationUrl"
-                  required
-                  defaultValue={editingJob?.applicationUrl}
-                  placeholder="https://company.com/careers/job-opening"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    Official Application Destination URL * (Employer Portal)
+                  </label>
+                  <input
+                    type="url"
+                    name="applicationUrl"
+                    required
+                    defaultValue={editingJob?.applicationUrl}
+                    placeholder="https://company.com/careers/job-opening"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    Original Job Source URL (Notification / Feed)
+                  </label>
+                  <input
+                    type="url"
+                    name="originalJobUrl"
+                    defaultValue={editingJob?.originalJobUrl || editingJob?.applicationUrl}
+                    placeholder="https://csir.res.in/notifications/advt-01-2026.pdf"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    Original Source Name
+                  </label>
+                  <input
+                    type="text"
+                    name="sourceName"
+                    defaultValue={editingJob?.sourceName || 'Direct Employer Careers Portal'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    Verification Audit Status
+                  </label>
+                  <select
+                    name="verificationStatus"
+                    defaultValue={editingJob?.verificationStatus || 'Pending Verification'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-bold"
+                  >
+                    <option value="Pending Verification">Pending Verification (Audit Required)</option>
+                    <option value="Verified">Verified (Employer &amp; URL Confirmed)</option>
+                    <option value="Rejected">Rejected (Unverified / Non-compliant)</option>
+                    <option value="Expired">Expired (Application Deadline Passed)</option>
+                    <option value="Link Unavailable">Link Unavailable (Broken / 404)</option>
+                  </select>
+                </div>
               </div>
 
               <div className="space-y-1">
@@ -1412,6 +1730,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 </div>
               </div>
 
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
+                  Verification Notes / Audit Log
+                </label>
+                <input
+                  type="text"
+                  name="verificationNotes"
+                  defaultValue={editingJob?.verificationNotes || ''}
+                  placeholder="e.g. Cross-checked with official HR notification on March 2026."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+
               <div className="flex items-center justify-between pt-2">
                 <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-700 dark:text-slate-300">
                   <input
@@ -1445,21 +1776,278 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       )}
 
       {/* ========================================================= */}
+      {/* PHASE 07 — DEDICATED JOB VERIFICATION & AUDIT MODAL        */}
+      {/* ========================================================= */}
+      {isVerificationModalOpen && verifyingJob && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 flex items-center justify-center">
+                  <FileCheck className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                    Job Verification &amp; Application Destination Audit
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Verify employer credentials and test application destination before publishing as Verified.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsVerificationModalOpen(false);
+                  setVerifyingJob(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const form = e.currentTarget;
+                const status = (form.elements.namedItem('verificationStatus') as HTMLSelectElement).value;
+                const notes = (form.elements.namedItem('verificationNotes') as HTMLTextAreaElement).value;
+                const lastVerificationDate = (form.elements.namedItem('lastVerificationDate') as HTMLInputElement).value;
+
+                try {
+                  const updated = await adminApi.verifyJob(verifyingJob.id, status, notes, lastVerificationDate);
+                  setJobs(jobs.map((j) => (j.id === verifyingJob.id ? updated : j)));
+                  addToast(`Audit decision saved for "${verifyingJob.title}": Status set to ${status}.`, 'success');
+                  setIsVerificationModalOpen(false);
+                  setVerifyingJob(null);
+                } catch (err: any) {
+                  addToast(err.message || 'Failed to update verification status.', 'error');
+                }
+              }}
+              className="space-y-4"
+            >
+              {/* Job Summary Banner */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div className="font-bold text-slate-900 dark:text-slate-100 text-sm">
+                  {verifyingJob.title}
+                </div>
+                <div className="text-xs text-teal-600 font-semibold mt-0.5">
+                  {verifyingJob.company} · {verifyingJob.location} · {verifyingJob.salary}
+                </div>
+              </div>
+
+              {/* 8 Verification Attributes Review Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    1. Employer Identity
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={verifyingJob.employer || verifyingJob.company}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-medium"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    2. Original Listing Source
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={verifyingJob.sourceName || 'Direct Submission'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* URLs Review & Interactive Test */}
+              <div className="space-y-2">
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-700 dark:text-slate-300">
+                      3. Application Destination URL
+                    </label>
+                    {verifyingJob.applicationUrl && (
+                      <a
+                        href={verifyingJob.applicationUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] font-bold text-teal-600 hover:underline flex items-center gap-1"
+                      >
+                        <span>Test Destination in New Tab</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    disabled
+                    value={verifyingJob.applicationUrl || 'No application URL specified'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono text-[11px]"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="font-bold text-slate-700 dark:text-slate-300">
+                      4. Original Listing / Notification Source URL
+                    </label>
+                    {(verifyingJob.originalJobUrl || verifyingJob.sourceUrl) && (
+                      <a
+                        href={verifyingJob.originalJobUrl || verifyingJob.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] font-bold text-[#0B2A5B] dark:text-sky-400 hover:underline flex items-center gap-1"
+                      >
+                        <span>Verify Original Source Link</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    disabled
+                    value={verifyingJob.originalJobUrl || verifyingJob.sourceUrl || verifyingJob.applicationUrl}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono text-[11px]"
+                  />
+                </div>
+              </div>
+
+              {/* Dates & Status Decisions */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    5. Publication Date
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={verifyingJob.publicationDate || verifyingJob.postedDate || 'Active'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    6. Application Expiry Date
+                  </label>
+                  <input
+                    type="text"
+                    disabled
+                    value={verifyingJob.expiryDate || verifyingJob.deadline}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-medium"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    7. Last Verification Date *
+                  </label>
+                  <input
+                    type="date"
+                    name="lastVerificationDate"
+                    required
+                    defaultValue={verifyingJob.lastVerificationDate || new Date().toISOString().split('T')[0]}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Status Decision Picker */}
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
+                  8. Verification Status Decision *
+                </label>
+                <select
+                  name="verificationStatus"
+                  defaultValue={verifyingJob.verificationStatus || 'Verified'}
+                  className="w-full px-3 py-2.5 rounded-xl border-2 border-teal-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-bold text-xs focus:outline-none"
+                >
+                  <option value="Verified">Verified — Legitimate employer identity &amp; application destination confirmed</option>
+                  <option value="Pending Verification">Pending Verification — Needs additional review or candidate verification</option>
+                  <option value="Rejected">Rejected — Inaccurate, fraudulent, fee-charging, or unauthorized listing</option>
+                  <option value="Expired">Expired — Applications closed or deadline exceeded</option>
+                  <option value="Link Unavailable">Link Unavailable — Destination URL is broken, 404, or unreachable</option>
+                </select>
+              </div>
+
+              {/* Verification Audit Notes */}
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
+                  Audit Notes &amp; Verification Evidence
+                </label>
+                <textarea
+                  rows={2}
+                  name="verificationNotes"
+                  defaultValue={verifyingJob.verificationNotes || 'Official career page confirmed by administrator. Zero candidate fees required.'}
+                  placeholder="Record your verification steps (e.g. checked CSIR careers website; confirmed recruitment portal is operational without charging fees)..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+
+              {/* Candidate Protection Warning */}
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Legal &amp; Trust Requirement:</strong> Only mark as "Verified" if the employer identity and application destination have actually been tested. Never mark an opportunity as verified without auditing.
+                </span>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsVerificationModalOpen(false);
+                    setVerifyingJob(null);
+                  }}
+                  className="px-4 py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 text-white font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Save Verification Audit</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
       {/* ADD / EDIT WORKSHOP MODAL                                 */}
       {/* ========================================================= */}
       {isWorkshopModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
-          <div className="w-full max-w-xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto text-xs">
+          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 sm:p-7 space-y-4 max-h-[92vh] overflow-y-auto text-xs">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                {editingWorkshop ? `Edit Workshop: ${editingWorkshop.title}` : 'Schedule New Workshop'}
-              </h3>
-              <button onClick={() => setIsWorkshopModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 block">
+                  Workshop Management
+                </span>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  {editingWorkshop ? `Edit Workshop: ${editingWorkshop.title}` : 'Schedule New Hands-on Workshop'}
+                </h3>
+              </div>
+              <button
+                onClick={() => {
+                  setIsWorkshopModalOpen(false);
+                  setEditingWorkshop(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleSaveWorkshop} className="space-y-4">
+              {/* Workshop Title */}
               <div className="space-y-1">
                 <label className="block font-bold text-slate-700 dark:text-slate-300">Workshop Title *</label>
                 <input
@@ -1467,11 +2055,91 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   name="title"
                   required
                   defaultValue={editingWorkshop?.title}
-                  placeholder="e.g. National Hands-on Bootcamp on CRISPR-Cas9"
+                  placeholder="e.g. National Hands-on Bootcamp on CRISPR-Cas9 & Base Editing"
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                 />
               </div>
 
+              {/* Image Selection: URL, Presets & File Upload */}
+              <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Workshop Banner Image</span>
+                  </label>
+                  <label className="px-2.5 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 border border-slate-200 dark:border-slate-600 rounded-lg text-[10px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs">
+                    <Upload className="w-3 h-3 text-teal-500" />
+                    <span>Upload Image File</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            if (event.target?.result) {
+                              setWorkshopImagePreview(event.target.result as string);
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {/* Direct URL input */}
+                <input
+                  type="url"
+                  name="imageUrl"
+                  value={workshopImagePreview}
+                  onChange={(e) => setWorkshopImagePreview(e.target.value)}
+                  placeholder="Paste banner image URL or select a preset below..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-[11px] focus:outline-none"
+                />
+
+                {/* Presets */}
+                <div className="space-y-1">
+                  <span className="text-[10px] text-slate-500 font-medium block">Or choose a biotech training preset:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { name: 'CRISPR Gene Editing', url: 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80' },
+                      { name: 'NGS Bioinformatics', url: 'https://images.unsplash.com/photo-1507668077129-56e32842fceb?auto=format&fit=crop&w=800&q=80' },
+                      { name: 'Fermentation Bioprocess', url: 'https://images.unsplash.com/photo-1582719471384-894fbb16e074?auto=format&fit=crop&w=800&q=80' },
+                      { name: 'Flow Cytometry', url: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&w=800&q=80' },
+                      { name: 'GMP Cleanroom', url: 'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80' },
+                      { name: 'Drug Discovery', url: 'https://images.unsplash.com/photo-1530497610245-94d3c16cda28?auto=format&fit=crop&w=800&q=80' }
+                    ].map((preset) => (
+                      <button
+                        type="button"
+                        key={preset.name}
+                        onClick={() => setWorkshopImagePreview(preset.url)}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all ${
+                          workshopImagePreview === preset.url
+                            ? 'bg-teal-600 text-white border-teal-600 shadow-2xs'
+                            : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {preset.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Preview Thumbnail */}
+                {workshopImagePreview && (
+                  <div className="relative h-24 w-full rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-900">
+                    <img src={workshopImagePreview} alt="Preview" className="w-full h-full object-cover" />
+                    <span className="absolute bottom-1 right-2 text-[9px] bg-slate-950/80 px-2 py-0.5 rounded text-white font-mono">
+                      Image Preview
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Organizer Institute & Instructor */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Organizer Institute *</label>
@@ -1479,43 +2147,144 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     type="text"
                     name="organizer"
                     required
-                    defaultValue={editingWorkshop?.organizer}
-                    placeholder="e.g. CSIR-IGIB"
+                    defaultValue={editingWorkshop?.organizer || 'CSIR-IGIB'}
+                    placeholder="e.g. CSIR-IGIB, IISc, Biocon Academy"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Location / Mode</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Lead Instructor / Faculty *</label>
                   <input
                     type="text"
-                    name="location"
-                    defaultValue={editingWorkshop?.location || 'New Delhi (Hybrid)'}
+                    name="instructor"
+                    required
+                    defaultValue={editingWorkshop?.instructor || editingWorkshop?.organizer || 'Lead Research Scientist'}
+                    placeholder="e.g. Dr. Debojyoti Chakraborty, Senior Principal Scientist"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
               </div>
 
+              {/* Format & Venue / Meeting Logistics */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Start Date</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Format *</label>
+                  <select
+                    name="format"
+                    defaultValue={editingWorkshop?.format || editingWorkshop?.workMode || 'Online'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-semibold"
+                  >
+                    <option value="Online">Online Live Virtual</option>
+                    <option value="Offline">Offline Hands-on Lab</option>
+                    <option value="Hybrid">Hybrid (Lab &amp; Streaming)</option>
+                  </select>
+                </div>
+                <div className="sm:col-span-2 space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Venue or Meeting Logistics *</label>
+                  <input
+                    type="text"
+                    name="venue"
+                    required
+                    defaultValue={editingWorkshop?.venue || editingWorkshop?.location || 'CSIR-IGIB South Campus, Mathura Road, New Delhi'}
+                    placeholder="e.g. IISc Campus, Bengaluru or Virtual Live Gateway"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Schedule: Date, Time & Duration */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Date *</label>
                   <input
                     type="date"
                     name="startDate"
-                    defaultValue={editingWorkshop?.startDate || '2026-12-10'}
+                    required
+                    defaultValue={editingWorkshop?.startDate || editingWorkshop?.date || '2026-12-10'}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">End Date</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Session Time</label>
+                  <input
+                    type="text"
+                    name="time"
+                    defaultValue={editingWorkshop?.time || '09:30 AM - 04:30 PM IST'}
+                    placeholder="09:30 AM - 04:30 PM IST"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-mono"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Duration</label>
+                  <input
+                    type="text"
+                    name="duration"
+                    defaultValue={editingWorkshop?.duration || '3 Days Intensive'}
+                    placeholder="e.g. 3 Days Intensive Lab"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Registration Deadline & Registration Destination URL */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    Registration Deadline
+                  </label>
                   <input
                     type="date"
-                    name="endDate"
-                    defaultValue={editingWorkshop?.endDate || '2026-12-15'}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                    name="registrationDeadline"
+                    defaultValue={editingWorkshop?.registrationDeadline || '2026-12-05'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-mono"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Registration Fees</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">
+                    Registration URL * (Original Portal / Destination)
+                  </label>
+                  <input
+                    type="url"
+                    name="registrationUrl"
+                    required
+                    defaultValue={editingWorkshop?.registrationUrl || editingWorkshop?.registrationLink}
+                    placeholder="https://www.igib.res.in/training"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none text-[11px]"
+                  />
+                </div>
+              </div>
+
+              {/* Status, Availability, Fees & Capacity */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Program Status *</label>
+                  <select
+                    name="status"
+                    defaultValue={(editingWorkshop?.status || 'upcoming').toLowerCase()}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
+                  >
+                    <option value="upcoming">Upcoming</option>
+                    <option value="ongoing">Ongoing</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Availability *</label>
+                  <select
+                    name="availability"
+                    defaultValue={editingWorkshop?.availability || 'Open'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
+                  >
+                    <option value="Open">Open</option>
+                    <option value="Filling Fast">Filling Fast</option>
+                    <option value="Waitlist">Waitlist</option>
+                    <option value="Closed">Closed</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Fees</label>
                   <input
                     type="text"
                     name="fees"
@@ -1523,45 +2292,82 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
+
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Capacity (Seats)</label>
+                  <input
+                    type="number"
+                    name="capacity"
+                    defaultValue={editingWorkshop?.capacity || 40}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
               </div>
 
-              <div className="space-y-1">
-                <label className="block font-bold text-slate-700 dark:text-slate-300">
-                  Registration URL * (Google Form or Portal)
-                </label>
+              {/* Featured on Homepage Checkbox */}
+              <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+                  <div>
+                    <div className="font-bold text-slate-900 dark:text-slate-100">Feature on Homepage</div>
+                    <div className="text-[10px] text-slate-500">
+                      Promote this workshop prominently in Section 04 of the homepage directory.
+                    </div>
+                  </div>
+                </div>
                 <input
-                  type="url"
-                  name="registrationUrl"
-                  required
-                  defaultValue={editingWorkshop?.registrationUrl}
-                  placeholder="https://forms.gle/... or institute portal"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                  type="checkbox"
+                  name="featured"
+                  defaultChecked={editingWorkshop?.featured || false}
+                  className="w-4 h-4 accent-amber-500 cursor-pointer"
                 />
               </div>
 
+              {/* Description */}
               <div className="space-y-1">
-                <label className="block font-bold text-slate-700 dark:text-slate-300">Description</label>
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Workshop Description &amp; Scope *</label>
                 <textarea
-                  rows={2}
+                  rows={3}
                   name="description"
+                  required
                   defaultValue={editingWorkshop?.description}
+                  placeholder="Comprehensive hands-on training details, practical equipment used, and prerequisites..."
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              {/* Skills Covered */}
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
+                  Skills Covered (comma separated)
+                </label>
+                <input
+                  type="text"
+                  name="skillsCovered"
+                  defaultValue={editingWorkshop?.skillsCovered?.join(', ') || 'CRISPR-Cas9, Guide RNA Design, Transfection, Off-target Analysis'}
+                  placeholder="e.g. RNA-Seq, Python, FastQC, Differential Expression"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none text-[11px]"
+                />
+              </div>
+
+              {/* Modal Actions */}
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setIsWorkshopModalOpen(false)}
-                  className="px-4 py-2 text-slate-500 hover:bg-slate-100 rounded-xl"
+                  onClick={() => {
+                    setIsWorkshopModalOpen(false);
+                    setEditingWorkshop(null);
+                  }}
+                  className="px-4 py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl shadow-xs cursor-pointer"
+                  className="px-5 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
-                  {editingWorkshop ? 'Save Changes' : 'Schedule Workshop'}
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{editingWorkshop ? 'Save Workshop Changes' : 'Schedule Workshop'}</span>
                 </button>
               </div>
             </form>
