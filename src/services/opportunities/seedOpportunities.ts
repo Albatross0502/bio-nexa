@@ -542,11 +542,11 @@ export const SEED_OPPORTUNITIES: Opportunity[] = [
     attributionRequirements: 'Government of Rajasthan State Portal'
   },
 
-  // 16. COURSE: Bio-Nexa Academy - Hands-On Bioprocess Engineering & Fermentation Technology
+  // 16. COURSE: Bio-Inexa Academy - Hands-On Bioprocess Engineering & Fermentation Technology
   {
     id: 'opp-course-1',
     title: 'Industrial Bioprocess Engineering & Fermentation Technology Masterclass',
-    organization: 'Biocon Academy & Bio-Nexa',
+    organization: 'Biocon Academy & Bio-Inexa',
     organizationLogo: 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=120&h=120&q=80',
     description: 'Comprehensive 8-module masterclass covering fed-batch microbial cultivation, DO/pH cascade automation, scale-up equations, single-use bioreactor systems, and downstream purification protocols.',
     type: 'course',
@@ -566,8 +566,8 @@ export const SEED_OPPORTUNITIES: Opportunity[] = [
     workMode: 'Remote',
     deadline: '2026-12-31',
     postedDate: '2026-11-01',
-    sourceName: 'Bio-Nexa Academy Verified Programs',
-    sourceUrl: 'https://bio-nexa.netlify.app/courses?id=course-1',
+    sourceName: 'Bio-Inexa Academy Verified Programs',
+    sourceUrl: 'https://bio-inexa-0.netlify.app/courses?id=course-1',
     applicationUrl: '/courses?id=course-1',
     registrationUrl: '/courses?id=course-1',
     sourceId: 'bionexa-crs-01',
@@ -576,7 +576,7 @@ export const SEED_OPPORTUNITIES: Opportunity[] = [
     isApproved: true,
     featured: true,
     courseDetails: {
-      provider: 'Biocon Academy & Bio-Nexa',
+      provider: 'Biocon Academy & Bio-Inexa',
       duration: '6 Weeks',
       lessonsCount: 8,
       fees: 'Free',
@@ -612,8 +612,8 @@ export const SEED_OPPORTUNITIES: Opportunity[] = [
     workMode: 'Remote',
     deadline: '2026-12-31',
     postedDate: '2026-11-02',
-    sourceName: 'Bio-Nexa Academy & IBAB Open Syllabus',
-    sourceUrl: 'https://bio-nexa.netlify.app/courses?id=course-2',
+    sourceName: 'Bio-Inexa Academy & IBAB Open Syllabus',
+    sourceUrl: 'https://bio-inexa-0.netlify.app/courses?id=course-2',
     applicationUrl: '/courses?id=course-2',
     registrationUrl: '/courses?id=course-2',
     sourceId: 'bionexa-crs-02',
@@ -622,7 +622,7 @@ export const SEED_OPPORTUNITIES: Opportunity[] = [
     isApproved: true,
     featured: true,
     courseDetails: {
-      provider: 'IBAB Bengaluru & Bio-Nexa',
+      provider: 'IBAB Bengaluru & Bio-Inexa',
       duration: '4 Weeks',
       lessonsCount: 6,
       fees: 'Free',
@@ -638,7 +638,7 @@ export const SEED_OPPORTUNITIES: Opportunity[] = [
   {
     id: 'opp-course-3',
     title: 'CRISPR-Cas9 Gene Editing Protocols & Molecular Diagnostics Certification',
-    organization: 'CSIR-IGIB & Bio-Nexa Academy',
+    organization: 'CSIR-IGIB & Bio-Inexa Academy',
     organizationLogo: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&w=120&h=120&q=80',
     description: 'Master sgRNA design principles, Cas9 endonuclease ribonucleoprotein (RNP) complexes, off-target detection with CIRCLE-seq, and SHERLOCK Cas13 lateral flow diagnostics.',
     type: 'course',
@@ -658,8 +658,8 @@ export const SEED_OPPORTUNITIES: Opportunity[] = [
     workMode: 'Remote',
     deadline: '2026-12-31',
     postedDate: '2026-11-03',
-    sourceName: 'Bio-Nexa Academy Molecular Science Division',
-    sourceUrl: 'https://bio-nexa.netlify.app/courses?id=course-3',
+    sourceName: 'Bio-Inexa Academy Molecular Science Division',
+    sourceUrl: 'https://bio-inexa-0.netlify.app/courses?id=course-3',
     applicationUrl: '/courses?id=course-3',
     registrationUrl: '/courses?id=course-3',
     sourceId: 'bionexa-crs-03',
@@ -668,7 +668,7 @@ export const SEED_OPPORTUNITIES: Opportunity[] = [
     isApproved: true,
     featured: true,
     courseDetails: {
-      provider: 'CSIR-IGIB Faculty & Bio-Nexa',
+      provider: 'CSIR-IGIB Faculty & Bio-Inexa',
       duration: '5 Weeks',
       lessonsCount: 5,
       fees: 'Free',

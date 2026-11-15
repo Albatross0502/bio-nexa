@@ -342,7 +342,7 @@ class OpportunityStore {
       status: 'Active',
       isApproved: false, // Strictly Pending Admin Moderation
       dataCollectionTimestamp: new Date().toISOString(),
-      attributionRequirements: 'Direct submission to BIO-NEXA portal pending administrator verification',
+      attributionRequirements: 'Direct submission to BIO-INEXA portal pending administrator verification',
       isDirectSubmission: true,
       workshopDetails: candidate.workshopDetails
     };

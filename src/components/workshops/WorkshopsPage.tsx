@@ -321,7 +321,7 @@ export const WorkshopsPage: React.FC = () => {
 
           <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 bg-teal-50 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/60 px-3 py-1 rounded-xl">
             <ShieldCheck className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400 shrink-0" />
-            <span>BIO-NEXA verified: All registrations link directly to authentic organizers.</span>
+            <span>BIO-INEXA verified: All registrations link directly to authentic organizers.</span>
           </div>
         </div>
 

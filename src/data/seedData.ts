@@ -1084,5 +1084,5 @@ export const SEED_CERTIFICATE: Certificate = {
   courseTitle: 'CRISPR-Cas9 & Precision Gene Editing: Theory to Bench Protocol',
   issueDate: '2026-11-02',
   score: 100,
-  verificationCode: 'VERIFIED-AUTHENTIC-BIO-NEXA-ACADEMY'
+  verificationCode: 'VERIFIED-AUTHENTIC-BIO-INEXA-ACADEMY'
 };

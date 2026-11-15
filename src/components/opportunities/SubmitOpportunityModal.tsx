@@ -81,7 +81,7 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
     }
 
     if (!legalConsentAccepted) {
-      setError('Please confirm authorization, accuracy, and compliance with BIO-NEXA Terms before submitting.');
+      setError('Please confirm authorization, accuracy, and compliance with BIO-INEXA Terms before submitting.');
       return;
     }
 
@@ -172,7 +172,7 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
             </div>
             <h4 className="text-xl font-bold text-slate-900 dark:text-white">Submission Received!</h4>
             <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto">
-              Your opportunity has been successfully queued for BIO-NEXA verification. Once reviewed by our moderation team, it will appear in public listings.
+              Your opportunity has been successfully queued for BIO-INEXA verification. Once reviewed by our moderation team, it will appear in public listings.
             </p>
             <div className="pt-4">
               <button
@@ -526,7 +526,7 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
                 className="mt-0.5 accent-teal-600 cursor-pointer"
               />
               <span className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
-                I confirm that I am authorized to submit this listing, the destination URL points to the official organization portal, no illegal candidate application fees are charged, and the submission respects third-party trademarks and BIO-NEXA&apos;s{' '}
+                I confirm that I am authorized to submit this listing, the destination URL points to the official organization portal, no illegal candidate application fees are charged, and the submission respects third-party trademarks and BIO-INEXA&apos;s{' '}
                 <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-bold text-teal-700 dark:text-teal-300 underline">
                   Terms &amp; Conditions
                 </a>

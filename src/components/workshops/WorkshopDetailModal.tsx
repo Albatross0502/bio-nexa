@@ -105,7 +105,7 @@ export const WorkshopDetailModal: React.FC<WorkshopDetailModalProps> = ({ worksh
         <div className="p-6 sm:p-7 space-y-5 overflow-y-auto">
           <div>
             <span className="text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 block mb-1">
-              {workshop.organizer || workshop.instructor || 'BIO-NEXA Academy'}
+              {workshop.organizer || workshop.instructor || 'BIO-INEXA Academy'}
             </span>
             <h2 id="workshop-modal-title" className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white leading-snug">
               {title}

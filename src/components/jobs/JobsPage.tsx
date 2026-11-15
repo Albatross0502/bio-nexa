@@ -722,12 +722,12 @@ export const JobsPage: React.FC = () => {
           <span>Independent Platform Disclaimer &amp; Candidate Protection Guidelines</span>
         </div>
         <p className="leading-relaxed">
-          <strong>BIO-NEXA</strong> is an independent career-opportunity and academic directory. Unless explicitly indicated with an official partnership seal, BIO-NEXA does not act as a hiring agency or formal recruitment partner for listed entities. All job titles, employer logos, and trademarks belong to their respective registered owners.
+          <strong>BIO-INEXA</strong> is an independent career-opportunity and academic directory. Unless explicitly indicated with an official partnership seal, BIO-INEXA does not act as a hiring agency or formal recruitment partner for listed entities. All job titles, employer logos, and trademarks belong to their respective registered owners.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1 text-[11px]">
           <div className="p-2.5 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
             <strong className="text-slate-900 dark:text-slate-100 block mb-0.5">Zero Application Fees</strong>
-            BIO-NEXA and legitimate biotechnology employers never demand payment or processing fees for job applications or interviews.
+            BIO-INEXA and legitimate biotechnology employers never demand payment or processing fees for job applications or interviews.
           </div>
           <div className="p-2.5 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
             <strong className="text-slate-900 dark:text-slate-100 block mb-0.5">Original Employer Portals</strong>
@@ -735,7 +735,7 @@ export const JobsPage: React.FC = () => {
           </div>
           <div className="p-2.5 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700">
             <strong className="text-slate-900 dark:text-slate-100 block mb-0.5">Audited Verification</strong>
-            Only opportunities audited by BIO-NEXA administrators display the "Verified" seal. Unaudited listings show "Pending Audit".
+            Only opportunities audited by BIO-INEXA administrators display the "Verified" seal. Unaudited listings show "Pending Audit".
           </div>
         </div>
       </div>
@@ -897,7 +897,7 @@ export const JobsPage: React.FC = () => {
                     <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
                       External Application Notice
                     </h3>
-                    <p className="text-xs text-slate-500">Leaving BIO-NEXA for Employer Portal</p>
+                    <p className="text-xs text-slate-500">Leaving BIO-INEXA for Employer Portal</p>
                   </div>
                 </div>
                 <button
@@ -952,8 +952,8 @@ export const JobsPage: React.FC = () => {
                   <span>Applicant Protection Guarantee</span>
                 </div>
                 <ul className="space-y-1 text-[11px] list-disc list-inside">
-                  <li>Never pay fees for applications, exams, or interview scheduling. BIO-NEXA never collects hiring charges.</li>
-                  <li>BIO-NEXA is an independent platform and does not guarantee interview selection or hiring outcomes.</li>
+                  <li>Never pay fees for applications, exams, or interview scheduling. BIO-INEXA never collects hiring charges.</li>
+                  <li>BIO-INEXA is an independent platform and does not guarantee interview selection or hiring outcomes.</li>
                   <li>Verify all communications match the official employer domain ({destination.domain}).</li>
                 </ul>
               </div>

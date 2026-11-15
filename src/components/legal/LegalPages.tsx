@@ -53,7 +53,7 @@ const InlineComplianceForm: React.FC<InlineComplianceFormProps> = ({
   description,
   subCategories,
   targetLabel = 'Listing Title, Page Route, or URL',
-  targetPlaceholder = 'e.g. https://bio-nexa.netlify.app/jobs/job-1 or Organization Name',
+  targetPlaceholder = 'e.g. https://bio-inexa-0.netlify.app/jobs/job-1 or Organization Name',
   requireTarget = false,
   submitButtonLabel,
   consentLabel
@@ -304,7 +304,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
   const handleClearBrowserData = () => {
     const count = clearBioNexaLocalData();
     setConsentState(null);
-    addToast(`Cleared ${count} local BIO-NEXA browser storage keys from this device.`, 'success');
+    addToast(`Cleared ${count} local BIO-INEXA browser storage keys from this device.`, 'success');
   };
 
   const currentMeta = POLICY_SECTIONS.find((s) => s.id === activeSection) || POLICY_SECTIONS[0];
@@ -349,7 +349,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
             </button>
           </div>
           <p className="leading-relaxed text-[11px]">
-            These policies accurately reflect BIO-NEXA&apos;s live technical operations without invented corporate registration numbers, physical office addresses, certifications, or fake affiliations. Bracketed placeholders (e.g., <strong>[Verified Indian Legal Entity Name]</strong>, <strong>[Physical Correspondence Address]</strong>, <strong>[Appointed Grievance Officer]</strong>) <strong>must be completed and reviewed by a qualified Indian legal professional</strong> before public commercial launch in India.
+            These policies accurately reflect BIO-INEXA&apos;s live technical operations without invented corporate registration numbers, physical office addresses, certifications, or fake affiliations. Bracketed placeholders (e.g., <strong>[Verified Indian Legal Entity Name]</strong>, <strong>[Physical Correspondence Address]</strong>, <strong>[Appointed Grievance Officer]</strong>) <strong>must be completed and reviewed by a qualified Indian legal professional</strong> before public commercial launch in India.
           </p>
         </div>
 
@@ -358,7 +358,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
           <div className="pt-2 space-y-5 border-t border-slate-200 dark:border-slate-800">
             <div className="space-y-2">
               <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                Operational Architecture Audit (How BIO-NEXA Actually Operates)
+                Operational Architecture Audit (How BIO-INEXA Actually Operates)
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {OPERATIONAL_FACT_SHEET.map((fact) => (
@@ -466,7 +466,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   A. Privacy Policy (aligned with India&apos;s DPDP Act, 2023 &amp; IT Rules)
                 </h2>
                 <p className="text-xs text-slate-500 mt-1">
-                  Applies to all visitors accessing BIO-NEXA from India or worldwide.
+                  Applies to all visitors accessing BIO-INEXA from India or worldwide.
                 </p>
               </div>
 
@@ -475,7 +475,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   1. Data Fiduciary Identity &amp; Operational Scope
                 </h3>
                 <p>
-                  BIO-NEXA is currently operated as an independent life-sciences opportunity discovery and educational information portal (<span className="font-mono text-xs">council@bio-nexa.org</span>). Unlike commercial recruitment portals, <strong>BIO-NEXA does not require public visitors to create server-side accounts or upload CVs to our servers</strong> in order to search jobs, internships, workshops, courses, or research articles.
+                  BIO-INEXA is currently operated as an independent life-sciences opportunity discovery and educational information portal (<span className="font-mono text-xs">council@bio-inexa.org</span>). Unlike commercial recruitment portals, <strong>BIO-INEXA does not require public visitors to create server-side accounts or upload CVs to our servers</strong> in order to search jobs, internships, workshops, courses, or research articles.
                 </p>
                 <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200">
                   <strong>[Legal Counsel Placeholder — Required Before Commercial Launch]:</strong> Exact legal Data Fiduciary entity name (Individual / Partnership / LLP / Company / Section 8 Trust) and verified registered Indian physical address must be populated here by counsel.
@@ -494,7 +494,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                     <strong>Candidate Listing Reports, DPDP Requests &amp; Takedowns:</strong> When you report a suspicious job (<code className="text-xs">/api/jobs/:id/report</code>) or submit a DPDP privacy, grievance, or content removal request (<code className="text-xs">/api/compliance/request</code>), we collect your name, email address, optional organization, target URL, and issue description solely to investigate, verify, remove inaccurate content, and respond to you.
                   </li>
                   <li>
-                    <strong>Device-Local Browser Storage (Student / Company Demo State, Bookmarks &amp; Theme):</strong> Dashboard profile edits, saved bookmarks, locally simulated applications, Academy quiz progress, discussion drafts, contact notes, and newsletter input in the current architecture remain strictly inside your own browser&apos;s <code className="text-xs">localStorage</code> / <code className="text-xs">sessionStorage</code>—they are not transmitted to BIO-NEXA backend servers.
+                    <strong>Device-Local Browser Storage (Student / Company Demo State, Bookmarks &amp; Theme):</strong> Dashboard profile edits, saved bookmarks, locally simulated applications, Academy quiz progress, discussion drafts, contact notes, and newsletter input in the current architecture remain strictly inside your own browser&apos;s <code className="text-xs">localStorage</code> / <code className="text-xs">sessionStorage</code>—they are not transmitted to BIO-INEXA backend servers.
                   </li>
                   <li>
                     <strong>Optional Welcome Telemetry Ping:</strong> Clicking <strong>ENTER</strong> on the Welcome Landing Screen sends one session-level HTTP GET ping to a configured Google Apps Script endpoint for aggregate entry counting, <em>only if</em> you have not selected <strong>Essential Only</strong> or enabled browser Do-Not-Track.
@@ -515,10 +515,10 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                 <ul className="list-disc pl-5 space-y-1.5">
                   <li><strong>Google Apps Script / Google Sheets:</strong> Optional welcome-entry ping and public sheet synchronization (opt-out available in Cookies &amp; Tracking).</li>
                   <li><strong>Google Fonts &amp; YouTube:</strong> Web typography assets across pages and embedded YouTube protocol lessons on <code className="text-xs">/courses</code>.</li>
-                  <li><strong>External Application &amp; Course Portals:</strong> Clicking external &ldquo;Apply Now&rdquo; or &ldquo;Register&rdquo; buttons redirects you off BIO-NEXA to independent employers, government agencies (DBT, CSIR, SWAYAM, NPTEL, EMBL-EBI), or licensed job partners (e.g., Adzuna).</li>
+                  <li><strong>External Application &amp; Course Portals:</strong> Clicking external &ldquo;Apply Now&rdquo; or &ldquo;Register&rdquo; buttons redirects you off BIO-INEXA to independent employers, government agencies (DBT, CSIR, SWAYAM, NPTEL, EMBL-EBI), or licensed job partners (e.g., Adzuna).</li>
                 </ul>
                 <p>
-                  <strong>Zero Sale or Brokerage of Personal Data:</strong> BIO-NEXA never sells, rents, or trades user personal data to data brokers, spam marketers, or unauthorized recruiters.
+                  <strong>Zero Sale or Brokerage of Personal Data:</strong> BIO-INEXA never sells, rents, or trades user personal data to data brokers, spam marketers, or unauthorized recruiters.
                 </p>
               </section>
 
@@ -530,7 +530,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   Under the <strong>Digital Personal Data Protection Act, 2023 (DPDP Act)</strong>, we process submitted personal data based on your explicit affirmative consent (Section 6) and legitimate statutory/compliance obligations (such as fraud takedown and security rate limiting). As a Data Principal, you have the right to:
                 </p>
                 <ul className="list-disc pl-5 space-y-1">
-                  <li><strong>Right to Access (Sec. 11):</strong> Request a summary of personal data held by BIO-NEXA servers about you.</li>
+                  <li><strong>Right to Access (Sec. 11):</strong> Request a summary of personal data held by BIO-INEXA servers about you.</li>
                   <li><strong>Right to Correction &amp; Erasure (Sec. 12):</strong> Request correction of inaccurate details or deletion of grievance/report records, plus instant self-service wiping of browser-local data under <button type="button" onClick={() => handleSelectSection(POLICY_SECTIONS[4])} className="text-[#0B2A5B] dark:text-sky-300 font-bold underline cursor-pointer">Cookies &amp; Tracking</button>.</li>
                   <li><strong>Right to Withdraw Consent (Sec. 6(4)):</strong> Switch to <strong>Essential Only</strong> at any time with effect as easy as giving consent.</li>
                   <li><strong>Right of Grievance Redressal &amp; Nomination (Sec. 13–14):</strong> Submit a formal complaint via Section F (<button type="button" onClick={() => handleSelectSection(POLICY_SECTIONS[5])} className="text-[#0B2A5B] dark:text-sky-300 font-bold underline cursor-pointer">Grievance &amp; Contact</button>), before escalating to the Data Protection Board of India once operationalized.</li>
@@ -558,10 +558,10 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
 
               <section className="space-y-2">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                  1. Role of BIO-NEXA (Informational Publisher &amp; Aggregator Only)
+                  1. Role of BIO-INEXA (Informational Publisher &amp; Aggregator Only)
                 </h3>
                 <p>
-                  BIO-NEXA acts strictly as an <strong>informational biotechnology aggregator, educational directory, and digital publisher</strong>. BIO-NEXA is <strong>not</strong> a licensed recruitment agency, staffing intermediary, placement consultant, employment exchange, university, or statutory accreditation authority. Publishing a job, internship, fellowship, workshop, or course listing does not establish an employment, agency, fiduciary, or institutional partnership between BIO-NEXA and the listed employer or applicant.
+                  BIO-INEXA acts strictly as an <strong>informational biotechnology aggregator, educational directory, and digital publisher</strong>. BIO-INEXA is <strong>not</strong> a licensed recruitment agency, staffing intermediary, placement consultant, employment exchange, university, or statutory accreditation authority. Publishing a job, internship, fellowship, workshop, or course listing does not establish an employment, agency, fiduciary, or institutional partnership between BIO-INEXA and the listed employer or applicant.
                 </p>
               </section>
 
@@ -570,7 +570,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   2. Educational Modules &amp; No Invented Accreditations
                 </h3>
                 <p>
-                  Interactive quizzes, protocols, and browser-generated completion IDs within BIO-NEXA Academy represent informal self-assessment progress on this website and do <strong>not</strong> constitute UGC/AICTE/DBT university degrees, government diplomas, or accredited laboratory licenses. External courses listed in our Courses Directory are governed solely by the respective provider&apos;s own enrollment and credentialing terms.
+                  Interactive quizzes, protocols, and browser-generated completion IDs within BIO-INEXA Academy represent informal self-assessment progress on this website and do <strong>not</strong> constitute UGC/AICTE/DBT university degrees, government diplomas, or accredited laboratory licenses. External courses listed in our Courses Directory are governed solely by the respective provider&apos;s own enrollment and credentialing terms.
                 </p>
               </section>
 
@@ -579,7 +579,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   3. Employer Submissions &amp; Prohibited Listings
                 </h3>
                 <p>
-                  Anyone submitting opportunities to BIO-NEXA represents and warrants that: (a) they are legally authorized by the hiring organization or organizer to publish the opening, (b) the vacancy is genuine and currently open, (c) the listing does not charge illegal application, security, or training fees from job seekers, and (d) the text and link do not infringe third-party copyrights, trademarks, or Indian law (including IT Rules, 2021 Rule 3(1)(b)).
+                  Anyone submitting opportunities to BIO-INEXA represents and warrants that: (a) they are legally authorized by the hiring organization or organizer to publish the opening, (b) the vacancy is genuine and currently open, (c) the listing does not charge illegal application, security, or training fees from job seekers, and (d) the text and link do not infringe third-party copyrights, trademarks, or Indian law (including IT Rules, 2021 Rule 3(1)(b)).
                 </p>
               </section>
 
@@ -597,7 +597,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   5. Limitation of Liability &amp; Indian Governing Law
                 </h3>
                 <p>
-                  Information is provided &ldquo;as available&rdquo; for educational convenience. BIO-NEXA makes no guarantee of interview selection, hiring outcome, stipend disbursement, or uninterrupted availability of external websites. These Terms are governed by the laws of the Republic of India.
+                  Information is provided &ldquo;as available&rdquo; for educational convenience. BIO-INEXA makes no guarantee of interview selection, hiring outcome, stipend disbursement, or uninterrupted availability of external websites. These Terms are governed by the laws of the Republic of India.
                 </p>
                 <div className="p-3 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200">
                   <strong>[Legal Counsel Placeholder]:</strong> Exclusive territorial court jurisdiction (e.g., Courts at [City, State, India]) must be specified by legal counsel to match the operator&apos;s registered place of business.
@@ -626,19 +626,19 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   <span>What &ldquo;Verified Listing&rdquo; Means — And Does Not Mean</span>
                 </div>
                 <p>
-                  When a vacancy shows a <strong>Verified</strong> badge on BIO-NEXA, it means a platform moderator checked at the recorded verification date that: (1) the destination URL resolved to a recognizable institutional, corporate, or government domain, and (2) the summary matched the cited source notification. It is <strong>NOT</strong> an official government certification, background check of employer solvency, guarantee of job availability, or endorsement of working conditions.
+                  When a vacancy shows a <strong>Verified</strong> badge on BIO-INEXA, it means a platform moderator checked at the recorded verification date that: (1) the destination URL resolved to a recognizable institutional, corporate, or government domain, and (2) the summary matched the cited source notification. It is <strong>NOT</strong> an official government certification, background check of employer solvency, guarantee of job availability, or endorsement of working conditions.
                 </p>
               </div>
 
               <ul className="list-disc pl-5 space-y-2">
                 <li>
-                  <strong>No Employment Guarantees:</strong> BIO-NEXA cannot guarantee interviews, shortlisting, stipends, or placement outcomes. Final eligibility, deadlines, reservation/relaxation rules, and selection criteria are controlled solely by the hiring institution.
+                  <strong>No Employment Guarantees:</strong> BIO-INEXA cannot guarantee interviews, shortlisting, stipends, or placement outcomes. Final eligibility, deadlines, reservation/relaxation rules, and selection criteria are controlled solely by the hiring institution.
                 </li>
                 <li>
                   <strong>Third-Party Sources:</strong> Listings originate from public scientific gazettes (DBT, CSIR, FSSAI, AIIMS, ICAR), institutional sheets, licensed developer APIs (Adzuna when enabled), and moderated employer submissions. Always confirm the full official advertisement PDF/portal before applying.
                 </li>
                 <li>
-                  <strong>Zero-Fee Anti-Fraud Warning:</strong> Neither BIO-NEXA nor legitimate biotech employers charge candidates registration deposits, offer-letter fees, laptop charges, or recruitment commissions. Report any fee demand immediately using Section G.
+                  <strong>Zero-Fee Anti-Fraud Warning:</strong> Neither BIO-INEXA nor legitimate biotech employers charge candidates registration deposits, offer-letter fees, laptop charges, or recruitment commissions. Report any fee demand immediately using Section G.
                 </li>
                 <li>
                   <strong>Browser-Local Application Notes:</strong> Any &ldquo;Quick Apply&rdquo; or status tracker entries in the local Student/Company demo view remain inside your device browser only—they do <strong>not</strong> transmit applications to third-party HR systems unless you complete your application on the employer&apos;s official external portal.
@@ -664,10 +664,10 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
               <section className="space-y-2">
                 <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
                   <ExternalLink className="w-4 h-4 text-[#14A3A0]" />
-                  <span>Leaving BIO-NEXA Domains</span>
+                  <span>Leaving BIO-INEXA Domains</span>
                 </h3>
                 <p>
-                  BIO-NEXA provides direct outbound links to official university career pages, government recruitment websites, biotechnology companies, scientific DOI resolvers (<code className="text-xs">doi.org</code>), course hosts (e.g., SWAYAM, NPTEL, EMBL-EBI, Biocon Academy, NCBI), workshop organizers, and external job search portals (e.g., LinkedIn, Naukri, Google Jobs, WorkIndia). Once you leave BIO-NEXA, our Terms and Privacy Policy no longer apply; you are subject to the destination website&apos;s own terms, security practices, and cookie policies.
+                  BIO-INEXA provides direct outbound links to official university career pages, government recruitment websites, biotechnology companies, scientific DOI resolvers (<code className="text-xs">doi.org</code>), course hosts (e.g., SWAYAM, NPTEL, EMBL-EBI, Biocon Academy, NCBI), workshop organizers, and external job search portals (e.g., LinkedIn, Naukri, Google Jobs, WorkIndia). Once you leave BIO-INEXA, our Terms and Privacy Policy no longer apply; you are subject to the destination website&apos;s own terms, security practices, and cookie policies.
                 </p>
               </section>
 
@@ -677,7 +677,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   <span>Workshops &amp; Courses Payment Independence</span>
                 </h3>
                 <p>
-                  <strong>BIO-NEXA does not collect, hold, process, or intermediate any financial payments</strong> on this website. Displayed workshop or course fees (such as cohort fees, conference registration charges, or optional exam fees) are informational summaries sourced from the provider portal and are subject to change without notice. Any financial transaction occurs strictly between you and the external course or workshop organizer on their authorized registration gateway.
+                  <strong>BIO-INEXA does not collect, hold, process, or intermediate any financial payments</strong> on this website. Displayed workshop or course fees (such as cohort fees, conference registration charges, or optional exam fees) are informational summaries sourced from the provider portal and are subject to change without notice. Any financial transaction occurs strictly between you and the external course or workshop organizer on their authorized registration gateway.
                 </p>
               </section>
 
@@ -765,7 +765,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
               {/* Exact Inventory Table */}
               <div className="space-y-2">
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  Actual Storage &amp; Network Calls Audited in BIO-NEXA
+                  Actual Storage &amp; Network Calls Audited in BIO-INEXA
                 </h3>
                 <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-700">
                   <table className="w-full text-left border-collapse text-xs">
@@ -820,7 +820,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   </div>
                   <p className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
                     <Mail className="w-3.5 h-3.5 text-[#14A3A0]" />
-                    <span>General Liaison: <strong>council@bio-nexa.org</strong></span>
+                    <span>General Liaison: <strong>council@bio-inexa.org</strong></span>
                   </p>
                   <p className="text-slate-600 dark:text-slate-400">
                     Registered Legal Entity &amp; Indian Postal Address: <span className="font-mono text-amber-700 dark:text-amber-300">[TO BE INSERTED UPON ENTITY REGISTRATION &amp; COUNSEL REVIEW]</span>
@@ -836,7 +836,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                     Name / Designation: <span className="font-mono">[APPOINTED OFFICER NAME — PENDING LAUNCH APPOINTMENT]</span>
                   </p>
                   <p className="text-amber-900 dark:text-amber-200">
-                    Operational Intake: Use the encrypted tracking form below or email <strong>council@bio-nexa.org</strong>. Target acknowledgement within <strong>24 hours</strong> and resolution within <strong>15 days</strong> under IT Rules, 2021.
+                    Operational Intake: Use the encrypted tracking form below or email <strong>council@bio-inexa.org</strong>. Target acknowledgement within <strong>24 hours</strong> and resolution within <strong>15 days</strong> under IT Rules, 2021.
                   </p>
                 </div>
               </div>
@@ -856,7 +856,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                 targetPlaceholder="e.g. email used when reporting a job or submitting a listing"
                 requireTarget={false}
                 submitButtonLabel="Submit Privacy / Grievance Request"
-                consentLabel="I consent to BIO-NEXA processing the details entered in this form solely to verify my identity (where needed) and resolve my privacy request or grievance under Indian law."
+                consentLabel="I consent to BIO-INEXA processing the details entered in this form solely to verify my identity (where needed) and resolve my privacy request or grievance under Indian law."
               />
             </div>
           )}
@@ -900,7 +900,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
               <InlineComplianceForm
                 requestType="job_report"
                 heading="Report a Suspicious, Expired, or Inaccurate Listing"
-                description="All reports are stored in BIO-NEXA's moderation database with a tracking reference for audit."
+                description="All reports are stored in BIO-INEXA's moderation database with a tracking reference for audit."
                 subCategories={[
                   'Demanded Application Fee / Fraudulent Recruiter',
                   'Suspicious or Unofficial Redirect URL',
@@ -908,11 +908,11 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   'Expired Deadline Still Shown Active',
                   'Misleading Qualification, Salary, or Fee Claim'
                 ]}
-                targetLabel="Listing Title & BIO-NEXA or External URL *"
+                targetLabel="Listing Title & BIO-INEXA or External URL *"
                 targetPlaceholder="e.g. Research Associate at XYZ Labs — https://..."
                 requireTarget={true}
                 submitButtonLabel="Submit Listing Report"
-                consentLabel="I confirm this listing report is submitted in good faith based on direct observation, and I consent to BIO-NEXA storing this report to investigate and suspend non-compliant listings."
+                consentLabel="I confirm this listing report is submitted in good faith based on direct observation, and I consent to BIO-INEXA storing this report to investigate and suspend non-compliant listings."
               />
             </div>
           )}
@@ -937,7 +937,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   <span>No Unauthorized Publications Pledge</span>
                 </h3>
                 <p>
-                  BIO-NEXA respects third-party intellectual property and employer hiring autonomy. Public job/course feeds require verified official source URLs or direct institutional authorization. If your organization identifies an unauthorized job vacancy, an outdated stipend/deadline, an unapproved logo/trademark usage, or copyright material requiring removal or correction, notify us below.
+                  BIO-INEXA respects third-party intellectual property and employer hiring autonomy. Public job/course feeds require verified official source URLs or direct institutional authorization. If your organization identifies an unauthorized job vacancy, an outdated stipend/deadline, an unapproved logo/trademark usage, or copyright material requiring removal or correction, notify us below.
                 </p>
               </section>
 
@@ -958,7 +958,7 @@ export const LegalCompliancePage: React.FC<LegalCompliancePageProps> = ({ initia
                   'Correct Course / Workshop Dates, Fees, or Registration Link',
                   'Update or Remove Institutional Attribution'
                 ]}
-                targetLabel="Exact BIO-NEXA Page URL or Listing Title *"
+                targetLabel="Exact BIO-INEXA Page URL or Listing Title *"
                 targetPlaceholder="e.g. /courses or /jobs/job-1"
                 requireTarget={true}
                 submitButtonLabel="Submit Takedown / Correction Notice"

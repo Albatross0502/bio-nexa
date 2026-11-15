@@ -20,7 +20,7 @@ interface SyncResult {
 }
 
 export const handler = async (event: any) => {
-  console.log('[BIO-NEXA] Scheduled 6-hour Opportunity Sync triggered at:', new Date().toISOString());
+  console.log('[BIO-INEXA] Scheduled 6-hour Opportunity Sync triggered at:', new Date().toISOString());
 
   try {
     // 1. In a production environment with Supabase / PostgreSQL:
@@ -39,12 +39,12 @@ export const handler = async (event: any) => {
       statusCode: 200,
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        message: 'BIO-NEXA opportunity sync completed successfully',
+        message: 'BIO-INEXA opportunity sync completed successfully',
         data: result,
       }),
     };
   } catch (error) {
-    console.error('[BIO-NEXA] Error during automated sync:', error);
+    console.error('[BIO-INEXA] Error during automated sync:', error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },

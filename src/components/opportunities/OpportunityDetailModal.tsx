@@ -367,7 +367,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
               <span className="text-slate-500 font-mono text-[11px]">ID: {opportunity.id}</span>
             </div>
             <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
-              Aggregated from legitimate public portal: <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.source?.name || opportunity.sourceName || 'Official Source'}</span>. BIO-NEXA never charges candidates for applying or viewing opportunities.
+              Aggregated from legitimate public portal: <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.source?.name || opportunity.sourceName || 'Official Source'}</span>. BIO-INEXA never charges candidates for applying or viewing opportunities.
             </p>
             {(opportunity.source?.originalUrl || opportunity.sourceUrl) && (
               <a

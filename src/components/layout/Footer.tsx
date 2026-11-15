@@ -24,11 +24,11 @@ export const Footer: React.FC = () => {
             <div className="flex items-center gap-3">
               <img
                 src="/assets/img/logo.jpeg"
-                alt="BIO-NEXA Logo"
+                alt="BIO-INEXA Logo"
                 className="h-10 w-auto object-contain rounded bg-white p-0.5"
               />
               <div>
-                <span className="text-xl font-bold tracking-tight text-white">BIO-NEXA</span>
+                <span className="text-xl font-bold tracking-tight text-white">BIO-INEXA</span>
                 <p className="text-xs font-medium text-teal-400">
                   Connecting Science. Creating Careers.
                 </p>
@@ -215,7 +215,7 @@ export const Footer: React.FC = () => {
                   onClick={() => navigate('/about')}
                   className="hover:text-teal-400 transition-colors"
                 >
-                  About BIO-NEXA Mission
+                  About BIO-INEXA Mission
                 </button>
               </li>
               <li>
@@ -303,7 +303,7 @@ export const Footer: React.FC = () => {
               BIOTECHNOLOGY · INTERNSHIP · EDUCATION · CAREERS
             </span>
             <span className="hidden sm:inline">|</span>
-            <span>&copy; {new Date().getFullYear()} BIO-NEXA. Informational Discovery Platform.</span>
+            <span>&copy; {new Date().getFullYear()} BIO-INEXA. Informational Discovery Platform.</span>
           </div>
           <div className="flex items-center gap-6">
             <button

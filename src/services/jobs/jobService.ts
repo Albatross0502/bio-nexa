@@ -110,7 +110,7 @@ export function mapJobToUnified(job: Job): UnifiedJob {
     applicationUrl,
     lastVerificationDate: lastVerDate,
     verificationStatus,
-    verificationNotes: job.verificationNotes || (isVerified ? 'Employer identity and application link audited by BIO-NEXA team.' : undefined),
+    verificationNotes: job.verificationNotes || (isVerified ? 'Employer identity and application link audited by BIO-INEXA team.' : undefined),
     status,
     isExpired,
     isClosed: false,
@@ -375,7 +375,7 @@ export function parseApplicationDestination(job: UnifiedJob): ApplicationDestina
   } else if (hasFeeKeywords) {
     warningMessage = 'CRITICAL WARNING: This destination references fee or payment terms. Legitimate life science employers never charge registration, interview, or processing fees.';
   } else if (!job.isVerified) {
-    warningMessage = 'This listing is pending audit by BIO-NEXA administrators. Verify employer credentials before submitting personal documents.';
+    warningMessage = 'This listing is pending audit by BIO-INEXA administrators. Verify employer credentials before submitting personal documents.';
   }
 
   return {

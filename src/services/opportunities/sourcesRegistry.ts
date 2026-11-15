@@ -76,7 +76,7 @@ export const DATA_SOURCES_REGISTRY: OpportunityDataSource[] = [
     lastSuccessfulSync: new Date().toISOString(),
     recordsSyncedCount: 38,
     syncFrequency: 'Real-time via Admin Moderation',
-    documentationUrl: 'https://bio-nexa.netlify.app/opportunities?tab=submit',
+    documentationUrl: 'https://bio-inexa-0.netlify.app/opportunities?tab=submit',
     complianceNotes: 'Full explicit permission granted by submitting employers, subject to admin verification.'
   },
   {
@@ -92,7 +92,7 @@ export const DATA_SOURCES_REGISTRY: OpportunityDataSource[] = [
     lastSuccessfulSync: new Date().toISOString(),
     recordsSyncedCount: 19,
     syncFrequency: 'Real-time via Admin Moderation',
-    documentationUrl: 'https://bio-nexa.netlify.app/workshops',
+    documentationUrl: 'https://bio-inexa-0.netlify.app/workshops',
     complianceNotes: 'Certificate claims strictly verified before public listing.'
   },
   {
@@ -118,7 +118,7 @@ export const DATA_SOURCES_REGISTRY: OpportunityDataSource[] = [
     method: 'prefiltered_search_fallback',
     permissionStatus: 'search_fallback_only',
     healthStatus: 'Fallback Active',
-    attributionText: 'Original vacancy hosted on LinkedIn. BIO-NEXA provides pre-filtered legal search redirection.',
+    attributionText: 'Original vacancy hosted on LinkedIn. BIO-INEXA provides pre-filtered legal search redirection.',
     rateLimitInfo: 'No scraping executed; direct user referral link.',
     lastSuccessfulSync: new Date().toISOString(),
     recordsSyncedCount: 0,

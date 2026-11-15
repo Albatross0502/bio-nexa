@@ -220,12 +220,12 @@ export const WelcomeLandingPage: React.FC<WelcomeLandingPageProps> = ({ onEnter 
           SECTION 2: TOP BRANDING SECTION
       ========================================================================== */}
       <header className="relative z-10 w-full pt-6 sm:pt-8 md:pt-10 px-4 flex flex-col items-center">
-        <h1 className="sr-only">BIO-NEXA | Connecting Science. Creating Careers.</h1>
+        <h1 className="sr-only">BIO-INEXA | Connecting Science. Creating Careers.</h1>
         <div className="flex flex-col items-center max-w-2xl mx-auto transition-transform hover:scale-[1.01] duration-300">
-          {/* Pristine Transparent BIO-NEXA Brand Logo */}
+          {/* Pristine Transparent BIO-INEXA Brand Logo */}
           <img
             src="/assets/img/logo-transparent.png"
-            alt="BIO-NEXA - Connecting Science. Creating Careers."
+            alt="BIO-INEXA - Connecting Science. Creating Careers."
             className="h-20 sm:h-24 md:h-28 w-auto object-contain select-none filter drop-shadow-[0_2px_8px_rgba(11,42,91,0.08)]"
             loading="eager"
             fetchPriority="high"
@@ -256,7 +256,7 @@ export const WelcomeLandingPage: React.FC<WelcomeLandingPageProps> = ({ onEnter 
             <div className="relative w-56 h-56 sm:w-68 sm:h-68 md:w-76 md:h-76 lg:w-84 lg:h-84 flex items-center justify-center animate-[float_4s_ease-in-out_infinite]">
               <img
                 src="/assets/img/bionexa-robot-bust.png"
-                alt="BIO-NEXA 3D Biotech Guide Robot"
+                alt="BIO-INEXA 3D Biotech Guide Robot"
                 className="w-full h-full object-contain rounded-3xl filter drop-shadow-[0_16px_36px_rgba(31,111,178,0.22)] select-none"
                 loading="eager"
               />
@@ -298,11 +298,11 @@ export const WelcomeLandingPage: React.FC<WelcomeLandingPageProps> = ({ onEnter 
                   </span>
                 </h2>
 
-                {/* Hi, welcome to BIO-NEXA! */}
+                {/* Hi, welcome to BIO-INEXA! */}
                 <p className="text-xl sm:text-2xl md:text-[25px] font-bold text-slate-900 leading-snug">
                   Hi, welcome to{' '}
                   <span className="text-[#1A73E8] font-extrabold tracking-tight">
-                    BIO-NEXA
+                    BIO-INEXA
                   </span>
                   !
                 </p>
@@ -343,7 +343,7 @@ export const WelcomeLandingPage: React.FC<WelcomeLandingPageProps> = ({ onEnter 
               type="button"
               onClick={handleBioNexaEnter}
               disabled={isEntering}
-              aria-label="Enter BIO-NEXA website"
+              aria-label="Enter BIO-INEXA website"
               className={`group relative inline-flex items-center justify-center gap-3 px-14 sm:px-18 md:px-22 py-4 sm:py-5 rounded-full text-2xl sm:text-3xl md:text-4xl font-extrabold text-white tracking-wide transition-all duration-300 cursor-pointer select-none ${
                 isEntering
                   ? 'opacity-85 scale-95 cursor-wait'

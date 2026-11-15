@@ -59,7 +59,7 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ onSuccess, onC
             <Shield className="w-7 h-7 text-teal-300" />
           </div>
           <h2 className="text-xl font-bold tracking-tight text-white">
-            BIO-NEXA Operations Portal
+            BIO-INEXA Operations Portal
           </h2>
           <p className="text-xs text-slate-300 mt-1 max-w-xs mx-auto">
             Restricted administrative area. Server-side session verification required.

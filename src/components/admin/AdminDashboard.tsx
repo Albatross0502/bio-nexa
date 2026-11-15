@@ -218,7 +218,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       applicationUrl: String(formData.get('applicationUrl') || '').trim(),
       originalJobUrl: String(formData.get('originalJobUrl') || formData.get('applicationUrl') || '').trim(),
       employer: String(formData.get('employer') || formData.get('company') || '').trim(),
-      sourceName: String(formData.get('sourceName') || 'BIO-NEXA Portal Direct').trim(),
+      sourceName: String(formData.get('sourceName') || 'BIO-INEXA Portal Direct').trim(),
       verificationStatus: (formData.get('verificationStatus') as any) || 'Pending Verification',
       verificationNotes: String(formData.get('verificationNotes') || '').trim(),
       status: String(formData.get('status') || 'Active'),
@@ -657,7 +657,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
             <span>Private Master Administration Console</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white mt-1">
-            BIO-NEXA Portal Management
+            BIO-INEXA Portal Management
           </h1>
           <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
             Manage live jobs, workshops, academy courses, and website highlights securely without touching source code.
@@ -1711,7 +1711,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   </h2>
                 </div>
                 <p className="text-slate-500 text-[11px]">
-                  Synchronize your 19-column Google Sheet directly with BIO-NEXA without redeploying code.
+                  Synchronize your 19-column Google Sheet directly with BIO-INEXA without redeploying code.
                 </p>
                 <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl font-mono text-[11px] text-slate-700 dark:text-slate-300">
                   Endpoint: {googleSheetsSync.getConfig().scriptUrl || 'Default Embedded Endpoint Active'}
@@ -1730,7 +1730,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   Data Sources &amp; Compliance Registry ({DATA_SOURCES.length})
                 </h2>
                 <p className="text-slate-500 text-[11px]">
-                  BIO-NEXA operates strictly under Section 6 &amp; 11 legal standards: no unauthorized web scraping, no bypass of authentication walls, and 100% adherence to platform terms of service.
+                  BIO-INEXA operates strictly under Section 6 &amp; 11 legal standards: no unauthorized web scraping, no bypass of authentication walls, and 100% adherence to platform terms of service.
                 </p>
               </div>
 
@@ -1770,7 +1770,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                       </h2>
                     </div>
                     <p className="text-slate-500 mt-1">
-                      BIO-NEXA utilizes an embedded, ACID-compliant SQLite engine (<code className="font-mono text-teal-700 bg-teal-50 dark:bg-teal-950/60 dark:text-teal-300 px-1 py-0.5 rounded">bionexa.db</code>) with WAL journal mode, parameterized SQL queries, foreign-key relational integrity, and zero external network latency.
+                      BIO-INEXA utilizes an embedded, ACID-compliant SQLite engine (<code className="font-mono text-teal-700 bg-teal-50 dark:bg-teal-950/60 dark:text-teal-300 px-1 py-0.5 rounded">bionexa.db</code>) with WAL journal mode, parameterized SQL queries, foreign-key relational integrity, and zero external network latency.
                     </p>
                   </div>
 

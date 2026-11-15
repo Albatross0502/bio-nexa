@@ -40,7 +40,7 @@ export const CommunityPage: React.FC = () => {
     addDiscussion({
       title: newTopicTitle,
       authorName: currentUser.name,
-      authorRole: currentUser.title || 'BIO-NEXA Member',
+      authorRole: currentUser.title || 'BIO-INEXA Member',
       category: newTopicCategory,
       content: newTopicContent
     });

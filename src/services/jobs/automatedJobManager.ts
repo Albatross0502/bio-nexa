@@ -110,7 +110,7 @@ export const AUTHORIZED_SOURCES: AuthorizedFeedConfig[] = [
   },
   {
     id: 'feed-google-sheets',
-    name: 'BIO-NEXA Institutional Collaborative Google Sheet',
+    name: 'BIO-INEXA Institutional Collaborative Google Sheet',
     category: 'Verified Partner Institutions',
     provider: 'Google Apps Script Web App Endpoint',
     endpointUrl: 'https://script.google.com/macros/s/exec',

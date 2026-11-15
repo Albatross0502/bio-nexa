@@ -176,10 +176,10 @@ export const CoursesPage: React.FC = () => {
       {/* Page Header */}
       <div className="border-b border-slate-200 dark:border-slate-800 pb-5">
         <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-          Biotechnology Courses &amp; BIO-NEXA Academy
+          Biotechnology Courses &amp; BIO-INEXA Academy
         </h1>
         <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-          Discover biotechnology educational courses across 9 core life science disciplines alongside BIO-NEXA Academy interactive modules.
+          Discover biotechnology educational courses across 9 core life science disciplines alongside BIO-INEXA Academy interactive modules.
         </p>
       </div>
 
@@ -472,14 +472,14 @@ export const CoursesPage: React.FC = () => {
         )}
       </section>
 
-      {/* Interactive Course Player Stage (Preserved BIO-NEXA Academy Player) */}
+      {/* Interactive Course Player Stage (Preserved BIO-INEXA Academy Player) */}
       <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
         <div>
           <span className="text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">
             Interactive Learning Lab
           </span>
           <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">
-            BIO-NEXA Academy Video &amp; Protocol Modules
+            BIO-INEXA Academy Video &amp; Protocol Modules
           </h2>
         </div>
 
@@ -784,7 +784,7 @@ export const CoursesPage: React.FC = () => {
                     </div>
                     <p className="text-xs text-slate-600 dark:text-slate-300">
                       {calculateScore() >= 60
-                        ? 'Great work! You met the 60% passing benchmark for this BIO-NEXA self-assessment module.'
+                        ? 'Great work! You met the 60% passing benchmark for this BIO-INEXA self-assessment module.'
                         : 'You scored below the 60% benchmark. Review the key concepts and retake the quiz.'}
                     </p>
 
@@ -793,7 +793,7 @@ export const CoursesPage: React.FC = () => {
                         <div className="p-4 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl border border-emerald-300 dark:border-emerald-800 inline-block text-left text-xs max-w-md w-full">
                           <div className="flex items-center gap-1.5 font-bold text-emerald-800 dark:text-emerald-300">
                             <ShieldCheck className="w-4 h-4" />
-                            <span>BIO-NEXA Module Completion Record</span>
+                            <span>BIO-INEXA Module Completion Record</span>
                           </div>
                           <div className="mt-1 font-mono text-slate-700 dark:text-slate-300">
                             Record ID: <strong className="text-slate-900 dark:text-white">{earnedCertificate.certificateNumber}</strong>

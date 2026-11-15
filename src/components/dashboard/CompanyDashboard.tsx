@@ -216,7 +216,7 @@ export const CompanyDashboard: React.FC = () => {
               Create a New Biotechnology Opening
             </h2>
             <p className="text-slate-500 mt-0.5">
-              Publish directly to the BIO-NEXA career network visible to thousands of vetted scholars.
+              Publish directly to the BIO-INEXA career network visible to thousands of vetted scholars.
             </p>
           </div>
 

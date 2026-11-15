@@ -109,12 +109,12 @@ const DEMO_USERS: Record<'student' | 'company' | 'admin', User> = {
   },
   admin: {
     id: 'user-adm-1',
-    name: 'Bio-Nexa Admin Team',
-    email: 'admin@bio-nexa.org',
+    name: 'BIO-INEXA Admin Team',
+    email: 'admin@bionexa.org',
     role: 'admin',
     avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=120&h=120&q=80',
     title: 'Platform System Administrator & Moderator',
-    institution: 'BIO-NEXA National Council',
+    institution: 'BIO-INEXA National Council',
     bio: 'Managing data feeds, compliance verification, moderation, and institutional partnerships.'
   }
 };
@@ -334,7 +334,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               requirements: j.requirements || [],
               skills: j.skills || [],
               source: {
-                name: j.source || 'BIO-NEXA Verified',
+                name: j.source || 'BIO-INEXA Verified',
                 url: j.originalJobUrl || j.applicationUrl,
                 isExternal: true
               },
@@ -496,7 +496,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       courseTitle: course.title,
       issueDate: new Date().toISOString().split('T')[0],
       score,
-      verificationCode: `VERIFIED-BIO-NEXA-${Math.random().toString(36).substring(2, 9).toUpperCase()}`
+      verificationCode: `VERIFIED-BIO-INEXA-${Math.random().toString(36).substring(2, 9).toUpperCase()}`
     };
     setCertificates((prev) => [newCert, ...prev]);
     addToast(`Congratulations! Certificate #${newCert.certificateNumber} generated.`, 'success');
@@ -519,7 +519,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const reply = {
       id: 'rep-' + Date.now(),
       authorName: currentUser.name,
-      authorRole: currentUser.title || 'BIO-NEXA Member',
+      authorRole: currentUser.title || 'BIO-INEXA Member',
       content: replyContent,
       createdAt: new Date().toISOString().split('T')[0],
       upvotes: 0
@@ -566,7 +566,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       status: 'Pending'
     };
     setReports((prev) => [newReport, ...prev]);
-    addToast('Thank you. Item reported to BIO-NEXA moderators for review.', 'info');
+    addToast('Thank you. Item reported to BIO-INEXA moderators for review.', 'info');
   };
 
   const resolveReport = (id: string, newStatus: ReportItem['status']) => {
@@ -588,11 +588,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return false;
     }
     if (newsletterEmails.includes(email)) {
-      addToast('You are already subscribed to BIO-NEXA weekly dispatches!', 'info');
+      addToast('You are already subscribed to BIO-INEXA weekly dispatches!', 'info');
       return true;
     }
     setNewsletterEmails((prev) => [...prev, email]);
-    addToast('Subscribed! Welcome to the BIO-NEXA scientific career briefing.', 'success');
+    addToast('Subscribed! Welcome to the BIO-INEXA scientific career briefing.', 'success');
     return true;
   };
 

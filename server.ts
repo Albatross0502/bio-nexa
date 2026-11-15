@@ -63,7 +63,7 @@ const MASTER_ADMIN: AdminUser = {
   id: 'admin-master-001',
   username: ADMIN_USERNAME,
   email: 'admin@bionexa.org',
-  name: 'BIO-NEXA Operations Admin',
+  name: 'BIO-INEXA Operations Admin',
   role: 'admin'
 };
 
@@ -74,9 +74,9 @@ try {
     SEED_OPPORTUNITIES.filter((o) => o.type === 'workshop'),
     SEED_COURSES
   );
-  console.log('[BIO-NEXA DB] Database initialized and verified.');
+  console.log('[BIO-INEXA DB] Database initialized and verified.');
 } catch (err) {
-  console.error('[BIO-NEXA DB] Seeding error:', err);
+  console.error('[BIO-INEXA DB] Seeding error:', err);
 }
 
 // -------------------------------------------------------------
@@ -265,7 +265,7 @@ app.post('/api/jobs/:id/report', (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      message: 'Thank you for reporting. BIO-NEXA moderators will review this listing and destination URL within 24 hours.',
+      message: 'Thank you for reporting. BIO-INEXA moderators will review this listing and destination URL within 24 hours.',
       reportId
     });
   } catch (err: any) {
@@ -678,7 +678,7 @@ app.post('/api/admin/jobs', requireAdminAuth, (req: Request, res: Response) => {
       isActive,
       isApproved,
       featured: Boolean(body.featured),
-      source: sanitizeString(body.sourceName || body.originalSource || 'BIO-NEXA Verified Listing')
+      source: sanitizeString(body.sourceName || body.originalSource || 'BIO-INEXA Verified Listing')
     });
 
     res.status(201).json({ success: true, job: formatJobForAdmin(job) });
@@ -886,7 +886,7 @@ app.post('/api/admin/workshops', requireAdminAuth, (req: Request, res: Response)
     const ws = bionexaDb.createWorkshop({
       name,
       description: sanitizeString(body.description || 'Hands-on scientific workshop.'),
-      instructor: sanitizeString(body.instructor || body.organizer || 'BIO-NEXA Faculty'),
+      instructor: sanitizeString(body.instructor || body.organizer || 'BIO-INEXA Faculty'),
       date: sanitizeString(body.startDate || body.date || '2026-12-01'),
       time: sanitizeString(body.time || '09:30 AM - 04:30 PM IST'),
       duration: sanitizeString(body.duration || '2 Days Intensive'),
@@ -1440,9 +1440,9 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[BIO-NEXA] Secure Server running at http://0.0.0.0:${PORT}`);
-    console.log(`[BIO-NEXA] Admin credentials configured for: ${ADMIN_USERNAME}`);
-    console.log(`[BIO-NEXA] Database engine active with WAL journaling and atomic backups.`);
+    console.log(`[BIO-INEXA] Secure Server running at http://0.0.0.0:${PORT}`);
+    console.log(`[BIO-INEXA] Admin credentials configured for: ${ADMIN_USERNAME}`);
+    console.log(`[BIO-INEXA] Database engine active with WAL journaling and atomic backups.`);
     
     // Initial expiry audit on server boot
     try {

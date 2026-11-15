@@ -43,11 +43,11 @@ export const Navbar: React.FC = () => {
               handleNavClick('/');
             }}
             className="flex items-center gap-2 whitespace-nowrap shrink-0 group focus:outline-none"
-            aria-label="BIO-NEXA Home"
+            aria-label="BIO-INEXA Home"
           >
             <img
               src="/assets/img/logo.jpeg"
-              alt="BIO-NEXA Official Logo"
+              alt="BIO-INEXA Official Logo"
               className="h-9 w-auto object-contain rounded-xs shrink-0"
               onError={(e) => {
                 // Fallback if image path differs
@@ -56,7 +56,7 @@ export const Navbar: React.FC = () => {
             />
             <div className="flex flex-col">
               <span className="text-lg xl:text-xl font-bold tracking-tight text-[#0B2A5B] dark:text-sky-300">
-                BIO-NEXA
+                BIO-INEXA
               </span>
               <span className="text-[9px] uppercase tracking-wider font-semibold text-[#14A3A0] hidden 2xl:inline-block">
                 Connecting Science · Creating Careers
@@ -239,7 +239,7 @@ export const Navbar: React.FC = () => {
               onClick={() => handleNavClick('/about')}
               className="text-left px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
             >
-              About BIO-NEXA
+              About BIO-INEXA
             </button>
           </div>
         </div>

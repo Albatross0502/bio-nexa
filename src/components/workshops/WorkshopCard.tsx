@@ -66,7 +66,7 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
   const [imgError, setImgError] = useState(false);
 
   const title = workshop.title || workshop.name || 'Biotechnology Workshop';
-  const organizer = workshop.organizer || workshop.instructor || 'BIO-NEXA Academy';
+  const organizer = workshop.organizer || workshop.instructor || 'BIO-INEXA Academy';
   const instructor = workshop.instructor || organizer;
   const destinationUrl = workshop.registrationUrl || workshop.registrationLink || '';
   const hasValidUrl = isValidWorkshopRegistrationUrl(destinationUrl);

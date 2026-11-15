@@ -251,7 +251,7 @@ export class GoogleSheetsSyncService {
     if (!title) return null; // Title is required
 
     const categoryRaw = getVal('Category', 'category', 'Type');
-    const organization = getVal('Organization', 'organization', 'Company', 'Institution', 'Provider') || 'Bio-Nexa Partner';
+    const organization = getVal('Organization', 'organization', 'Company', 'Institution', 'Provider') || 'Bio-Inexa Partner';
     const description = getVal('Description', 'description', 'Details', 'Overview') || 'No detailed description provided.';
     const eligibility = getVal('Eligibility', 'eligibility', 'Eligible Candidates', 'Target Audience') || 'Relevant Life Science Degree';
     const qualification = getVal('Qualification', 'qualification', 'Degrees') || eligibility;

@@ -89,7 +89,7 @@ export const GoogleJobsSearchSection: React.FC<GoogleJobsSearchSectionProps> = (
             Discover Real Biotechnology Vacancies via Google Search
           </h2>
           <p className="mt-2 text-xs sm:text-sm text-slate-300 max-w-3xl leading-relaxed">
-            Expand your search beyond BIO-NEXA direct listings. Query aggregated life sciences vacancies indexed by Google Search across thousands of biopharma careers sites, CSIR institutes, hospital labs, and recruitment platforms.
+            Expand your search beyond BIO-INEXA direct listings. Query aggregated life sciences vacancies indexed by Google Search across thousands of biopharma careers sites, CSIR institutes, hospital labs, and recruitment platforms.
           </p>
         </div>
       </div>
@@ -318,7 +318,7 @@ export const GoogleJobsSearchSection: React.FC<GoogleJobsSearchSectionProps> = (
           <div className="flex items-center gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
             <span>
-              External Search Discovery · BIO-NEXA does not scrape Google nor claim an official Google affiliation.
+              External Search Discovery · BIO-INEXA does not scrape Google nor claim an official Google affiliation.
             </span>
           </div>
           <span>Google Search and Google Jobs are trademarks of Google LLC.</span>

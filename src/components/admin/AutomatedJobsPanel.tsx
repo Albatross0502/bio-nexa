@@ -300,7 +300,7 @@ export const AutomatedJobsPanel: React.FC<AutomatedJobsPanelProps> = ({
             <div className="space-y-1">
               <div className="font-bold text-xs">Section 6 &amp; 11 Architectural Guarantee</div>
               <p className="text-[11px] leading-relaxed text-teal-800 dark:text-teal-300">
-                • <strong>Never automatically mark imported jobs as verified:</strong> In compliance with BIO-NEXA governance, all newly ingested external opportunities enter the database with <code>isApproved: false</code> and <code>verificationStatus: &apos;Pending Review&apos;</code>. They only become visible to the public once reviewed or batch-approved.<br />
+                • <strong>Never automatically mark imported jobs as verified:</strong> In compliance with BIO-INEXA governance, all newly ingested external opportunities enter the database with <code>isApproved: false</code> and <code>verificationStatus: &apos;Pending Review&apos;</code>. They only become visible to the public once reviewed or batch-approved.<br />
                 • <strong>No unauthorized scraping:</strong> Feeds use legitimate public scientific gazettes, authorized employer career endpoints, or licensed developer APIs.<br />
                 • <strong>Graceful degradation:</strong> If an external partner endpoint is temporarily unreachable, valid existing listings are retained in the database while an incident is logged below.
               </p>
@@ -475,7 +475,7 @@ export const AutomatedJobsPanel: React.FC<AutomatedJobsPanelProps> = ({
               Authorized External Feeds &amp; Public Data Providers
             </h3>
             <p className="text-slate-500 text-[11px]">
-              BIO-NEXA connects exclusively with authorized, non-restricted data endpoints and legitimate scientific gazettes.
+              BIO-INEXA connects exclusively with authorized, non-restricted data endpoints and legitimate scientific gazettes.
             </p>
           </div>
 

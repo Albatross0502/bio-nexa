@@ -126,7 +126,7 @@ const MainContent: React.FC = () => {
         return (
           <NotFoundPage 
             title="404 - Page Not Found"
-            message={`The URL "${parsed.pathname}" does not correspond to any active BIO-NEXA scientific page or resource.`}
+            message={`The URL "${parsed.pathname}" does not correspond to any active BIO-INEXA scientific page or resource.`}
             requestedResource={parsed.pathname}
           />
         );

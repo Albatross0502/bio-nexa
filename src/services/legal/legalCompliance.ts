@@ -106,9 +106,9 @@ export interface OperationalAuditFact {
 
 export const OPERATIONAL_FACT_SHEET: OperationalAuditFact[] = [
   {
-    question: 'Who operates BIO-NEXA?',
+    question: 'Who operates BIO-INEXA?',
     finding:
-      'An independent educational and career-discovery web platform managed by the BIO-NEXA operator team (contactable at council@bio-nexa.org). No corporate entity registration (CIN/LLPIN), MSME number, or statutory educational accreditation is claimed in the codebase.',
+      'An independent educational and career-discovery web platform managed by the BIO-INEXA operator team (contactable at council@bio-inexa.org). No corporate entity registration (CIN/LLPIN), MSME number, or statutory educational accreditation is claimed in the codebase.',
     legalImplication:
       'Before commercial/public launch in India, the exact legal operator identity (sole proprietor, partnership, LLP, Section 8 non-profit, or private limited company) and verified Indian registered correspondence address must be inserted by Indian legal counsel.',
     requiresLegalReview: true
@@ -118,7 +118,7 @@ export const OPERATIONAL_FACT_SHEET: OperationalAuditFact[] = [
     finding:
       'Public browsing requires no registration. Visitor preferences, saved bookmarks, demo profile fields, local quiz progress, contact notes, and newsletter email inputs are stored in the visitor’s own browser (localStorage / sessionStorage). Server-side storage occurs only for: (1) employer-submitted listings pending moderation, (2) candidate listing reports, (3) DPDP/grievance/removal requests, and (4) authenticated Staff/Admin login sessions.',
     legalImplication:
-      'Under Section 5 & Section 6 of India’s DPDP Act, 2023, BIO-NEXA must provide a clear itemized notice before/at collection, gather explicit affirmative consent for non-essential telemetry or submissions, and avoid claiming server-side recruiter CV matchmaking where none exists.',
+      'Under Section 5 & Section 6 of India’s DPDP Act, 2023, BIO-INEXA must provide a clear itemized notice before/at collection, gather explicit affirmative consent for non-essential telemetry or submissions, and avoid claiming server-side recruiter CV matchmaking where none exists.',
     requiresLegalReview: false
   },
   {
@@ -142,21 +142,21 @@ export const OPERATIONAL_FACT_SHEET: OperationalAuditFact[] = [
     finding:
       'Yes. Listings combine public government notifications (e.g., DBT India, CSIR institutes, FSSAI, AIIMS, ICAR), institutional collaborative Google Sheets, optional licensed Adzuna API feeds, direct employer submissions (held in Pending Verification until admin approval), and outbound search query builders (LinkedIn, Naukri, WorkIndia, Google Jobs).',
     legalImplication:
-      'BIO-NEXA must attribute public/licensed sources accurately, respect third-party trademarks under the Trade Marks Act, 1999, avoid automated scraping of prohibited sites, never imply official employer affiliation unless explicitly authorized, and offer fast takedown under IT Rules, 2021.',
+      'BIO-INEXA must attribute public/licensed sources accurately, respect third-party trademarks under the Trade Marks Act, 1999, avoid automated scraping of prohibited sites, never imply official employer affiliation unless explicitly authorized, and offer fast takedown under IT Rules, 2021.',
     requiresLegalReview: false
   },
   {
     question: 'Do workshops or courses involve payments?',
     finding:
-      'BIO-NEXA does not process, collect, or intermediate payments, tuition fees, registration charges, or deposits. Where a third-party workshop or external course charges fees (e.g., provider cohort fees or SWAYAM exam fees), any payment is conducted exclusively on that external organization’s official website.',
+      'BIO-INEXA does not process, collect, or intermediate payments, tuition fees, registration charges, or deposits. Where a third-party workshop or external course charges fees (e.g., provider cohort fees or SWAYAM exam fees), any payment is conducted exclusively on that external organization’s official website.',
     legalImplication:
       'Must clearly disclaim any payment liability on third-party websites and strictly warn candidates against fraudulent recruitment fees.',
     requiresLegalReview: false
   },
   {
-    question: 'Is BIO-NEXA a publisher, aggregator, or recruitment intermediary?',
+    question: 'Is BIO-INEXA a publisher, aggregator, or recruitment intermediary?',
     finding:
-      'BIO-NEXA operates strictly as an informational discovery aggregator and educational content publisher redirecting candidates to external official application portals. It is not a licensed staffing/placement agency, recruitment broker, university, or statutory accreditation authority.',
+      'BIO-INEXA operates strictly as an informational discovery aggregator and educational content publisher redirecting candidates to external official application portals. It is not a licensed staffing/placement agency, recruitment broker, university, or statutory accreditation authority.',
     legalImplication:
       'Terms and Job Listing Disclaimers must explicitly state intermediary/aggregator status under IT Act Section 79 & IT Rules 2021, disclaim hiring outcomes, and define "Verified Listing" accurately as source-URL inspection rather than background/credit vetting.',
     requiresLegalReview: true
@@ -247,7 +247,7 @@ export const LEGAL_COUNSEL_REVIEW_CHECKLIST: LegalCounselChecklistItem[] = [
     area: 'Legal Entity & Registered Address (IT Rules, 2021 / DPDP Act Sec 5)',
     statusLabel: 'PLACEHOLDER — REQUIRES COMPLETION',
     actionRequired:
-      'Insert verified legal name of the proprietor, trust, LLP, or company operating BIO-NEXA along with a verified physical Indian address for service of legal notices.'
+      'Insert verified legal name of the proprietor, trust, LLP, or company operating BIO-INEXA along with a verified physical Indian address for service of legal notices.'
   },
   {
     id: 'lc-grievance-officer',

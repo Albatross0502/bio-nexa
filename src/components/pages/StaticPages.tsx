@@ -60,7 +60,7 @@ export const VerifyCertificatePage: React.FC = () => {
           <span>Official Public Registry</span>
         </div>
         <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-          Verify BIO-NEXA Academy Credentials
+          Verify BIO-INEXA Academy Credentials
         </h1>
         <p className="text-sm text-slate-600 dark:text-slate-400">
           Enter any candidate&apos;s unique Certificate Number to verify their biotechnology examination score, course completion, and institutional authenticity.
@@ -101,7 +101,7 @@ export const VerifyCertificatePage: React.FC = () => {
                       Authentic &amp; Validated
                     </span>
                     <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">
-                      BIO-NEXA Verified Credential
+                      BIO-INEXA Verified Credential
                     </h2>
                   </div>
                 </div>
@@ -171,7 +171,7 @@ export const AboutPage: React.FC = () => {
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-8 text-slate-700 dark:text-slate-300">
       <div className="border-b border-slate-200 dark:border-slate-800 pb-5">
         <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-          About BIO-NEXA
+          About BIO-INEXA
         </h1>
         <p className="text-sm text-teal-600 font-semibold mt-1">
           Connecting Science. Creating Careers.
@@ -180,14 +180,14 @@ export const AboutPage: React.FC = () => {
 
       <div className="space-y-4 text-sm leading-relaxed">
         <p>
-          <strong>BIO-NEXA</strong> is a premier, non-commercial digital platform built for students, research scholars, freshers, and life science professionals across India and worldwide.
+          <strong>BIO-INEXA</strong> is a premier, non-commercial digital platform built for students, research scholars, freshers, and life science professionals across India and worldwide.
         </p>
         <p>
-          Bridging the critical gap between academic university education and real-world biopharmaceutical industrial requirements, BIO-NEXA unifies curated job vacancies, summer research fellowships, national competitive exam preparations (CSIR NET Life Sciences, GATE Biotechnology, DBT-BET), structured course discovery, and PubMed literature discoveries into one coherent scientific umbrella.
+          Bridging the critical gap between academic university education and real-world biopharmaceutical industrial requirements, BIO-INEXA unifies curated job vacancies, summer research fellowships, national competitive exam preparations (CSIR NET Life Sciences, GATE Biotechnology, DBT-BET), structured course discovery, and PubMed literature discoveries into one coherent scientific umbrella.
         </p>
 
         <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 pt-4">
-          Core Pillars of BIO-NEXA
+          Core Pillars of BIO-INEXA
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
           <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1 text-xs">
@@ -235,7 +235,7 @@ export const ContactPage: React.FC = () => {
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-8">
       <div className="border-b border-slate-200 dark:border-slate-800 pb-5">
         <h1 className="text-3xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-          Contact BIO-NEXA Council
+          Contact BIO-INEXA Council
         </h1>
         <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
           Reach out for recruiter onboarding, institutional collaborations, or technical platform assistance.
@@ -259,7 +259,7 @@ export const ContactPage: React.FC = () => {
             </p>
             <p className="flex items-center gap-2">
               <Mail className="w-4 h-4 text-teal-600 shrink-0" />
-              <span>council@bio-nexa.org</span>
+              <span>council@bio-inexa.org</span>
             </p>
           </div>
 

@@ -91,7 +91,7 @@ export const NewsPage: React.FC = () => {
               <div className="text-sm text-slate-700 dark:text-slate-300 leading-relaxed space-y-4">
                 <p>{activeArticle.content}</p>
                 <p>
-                  As biotechnology innovation accelerates across Southeast Asia and India, centralized platforms like BIO-NEXA ensure researchers, trainees, and industrial stakeholders maintain immediate visibility into regulatory developments and intellectual property disclosures.
+                  As biotechnology innovation accelerates across Southeast Asia and India, centralized platforms like BIO-INEXA ensure researchers, trainees, and industrial stakeholders maintain immediate visibility into regulatory developments and intellectual property disclosures.
                 </p>
               </div>
 

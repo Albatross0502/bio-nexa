@@ -240,7 +240,7 @@ export const StudentDashboard: React.FC = () => {
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2 text-emerald-600 font-bold text-xs uppercase tracking-wider">
                     <ShieldCheck className="w-5 h-5 text-emerald-600" />
-                    <span>BIO-NEXA Academy Credential</span>
+                    <span>BIO-INEXA Academy Credential</span>
                   </div>
                   <span className="font-mono text-xs font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 px-2.5 py-1 rounded border border-emerald-200 dark:border-emerald-800">
                     Score: {cert.score}%

@@ -130,7 +130,7 @@ test('Compliance request validation enforces consent, target URL for reports/rem
     requesterName: 'HR Compliance Team',
     requesterEmail: 'hr@examplepharma.in',
     organization: 'Example Pharma Ltd',
-    targetTitleOrUrl: 'https://bio-nexa.netlify.app/jobs/job-99',
+    targetTitleOrUrl: 'https://bio-inexa-0.netlify.app/jobs/job-99',
     details: 'This recruitment window closed ahead of schedule; please unpublish immediately.',
     consentAccepted: true
   });

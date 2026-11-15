@@ -164,7 +164,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
     addReport('Job', `${job.title} (${job.company}) - ${reportReason}`, appReason);
     setIsReporting(false);
     setReportDetails('');
-    addToast('Report logged. BIO-NEXA Trust & Safety team will audit this vacancy within 24 hours.', 'info');
+    addToast('Report logged. BIO-INEXA Trust & Safety team will audit this vacancy within 24 hours.', 'info');
   };
 
   // Status Badge Rendering Helper
@@ -466,7 +466,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                 {job.lastVerificationDate || (job.isVerified ? '2026-11-07' : 'Pending Verification')}
               </div>
               <span className="text-[11px] text-slate-500 block">
-                {job.isVerified ? 'Audited by BIO-NEXA Operations' : 'Awaiting Administrative Audit'}
+                {job.isVerified ? 'Audited by BIO-INEXA Operations' : 'Awaiting Administrative Audit'}
               </span>
             </div>
 
@@ -490,7 +490,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                   Notice: This listing is currently Pending Administrative Verification
                 </h4>
                 <p className="text-amber-800 dark:text-amber-300">
-                  BIO-NEXA adheres to strict verification transparency. This vacancy was aggregated from public career bulletins but has not yet completed full editorial verification of employer identity and application destination. Always exercise caution and verify credentials directly on the employer website.
+                  BIO-INEXA adheres to strict verification transparency. This vacancy was aggregated from public career bulletins but has not yet completed full editorial verification of employer identity and application destination. Always exercise caution and verify credentials directly on the employer website.
                 </p>
               </div>
             </div>
@@ -603,7 +603,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
             <div className="bg-gradient-to-br from-slate-50 to-blue-50/40 dark:from-slate-900 dark:to-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-7 space-y-4 text-xs">
               <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white text-sm">
                 <ShieldAlert className="w-5 h-5 text-sky-600" />
-                <span>BIO-NEXA Candidate Protection &amp; Legal Disclaimers</span>
+                <span>BIO-INEXA Candidate Protection &amp; Legal Disclaimers</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-slate-600 dark:text-slate-300">
@@ -613,7 +613,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                     <span>Independent Opportunity Platform</span>
                   </h4>
                   <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-                    BIO-NEXA is an independent biotechnology career resource. Unless an explicit recruitment partnership is stated, BIO-NEXA is not affiliated with the hiring organization.
+                    BIO-INEXA is an independent biotechnology career resource. Unless an explicit recruitment partnership is stated, BIO-INEXA is not affiliated with the hiring organization.
                   </p>
                 </div>
 
@@ -623,7 +623,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                     <span>Strict Zero-Fee Policy</span>
                   </h4>
                   <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-                    BIO-NEXA never collects application fees on behalf of employers. Genuine life science employers do not charge applicants for interviews, tests, or placement.
+                    BIO-INEXA never collects application fees on behalf of employers. Genuine life science employers do not charge applicants for interviews, tests, or placement.
                   </p>
                 </div>
 
@@ -633,7 +633,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                     <span>No Employment Guarantee</span>
                   </h4>
                   <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-                    BIO-NEXA never promises employment, test clearance, or interview selection. All candidate evaluations rest entirely with the prospective employer.
+                    BIO-INEXA never promises employment, test clearance, or interview selection. All candidate evaluations rest entirely with the prospective employer.
                   </p>
                 </div>
 
@@ -655,7 +655,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                   className="inline-flex items-center gap-1 font-semibold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
                 >
                   <Flag className="w-3.5 h-3.5" />
-                  <span>Report This Job to BIO-NEXA Trust Team</span>
+                  <span>Report This Job to BIO-INEXA Trust Team</span>
                 </button>
               </div>
             </div>
@@ -732,7 +732,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                     className="w-full py-3 px-4 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-xs rounded-2xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5 text-sky-600" />
-                    <span>Quick Apply with BIO-NEXA CV</span>
+                    <span>Quick Apply with BIO-INEXA CV</span>
                   </button>
                 )}
               </div>
@@ -860,7 +860,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                 </div>
                 <ul className="space-y-1 list-disc list-inside text-[11px] text-rose-700 dark:text-rose-300">
                   <li>NEVER pay application fees, registration fees, or training costs.</li>
-                  <li>BIO-NEXA never collects funds on behalf of employers or guarantees selection.</li>
+                  <li>BIO-INEXA never collects funds on behalf of employers or guarantees selection.</li>
                   <li>Confirm the browser address bar matches the employer&apos;s verified domain.</li>
                 </ul>
               </div>
@@ -872,7 +872,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                   onClick={() => setIsRedirectModalOpen(false)}
                   className="px-4 py-2.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                 >
-                  Stay on BIO-NEXA
+                  Stay on BIO-INEXA
                 </button>
                 <button
                   type="button"
