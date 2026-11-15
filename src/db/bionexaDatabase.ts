@@ -1113,8 +1113,8 @@ export class BionexaDatabase {
           format: fmt,
           venue: `${w.location || 'Online'}`,
           registrationDeadline: '2026-12-05',
-          registrationLink: w.workshopDetails?.registrationUrl || w.applicationUrl || 'https://www.igib.res.in/training',
-          availability: 'Open (30/40 Seats)',
+          registrationLink: w.workshopDetails?.registrationUrl || w.applicationUrl || 'https://www.igib.res.in/',
+          availability: 'Open',
           status: 'upcoming',
           fees: w.workshopDetails?.fees || '₹1,500 (Subsidized Student Rate)',
           capacity: 40,
@@ -1125,10 +1125,49 @@ export class BionexaDatabase {
       }
     }
 
-    // Enrich existing workshop records with images, format, deadlines and featured flags if missing
+    // Enrich existing workshop records with images, format, deadlines, valid URLs, and featured flags
     try {
-      const rows = this.db.prepare('SELECT id, name, image_url, format, status FROM workshops').all() as any[];
+      const rows = this.db.prepare('SELECT id, name, image_url, format, status, registration_link, registration_deadline, availability FROM workshops').all() as any[];
+      const brokenSeedUrlReplacements: Record<string, string> = {
+        'https://csirhrdg.res.in/workshops/crispr2026': 'https://www.igib.res.in/',
+        'https://www.igib.res.in/training': 'https://www.igib.res.in/',
+        'https://bioinformatics.org/workshops/rnaseq-bootcamp': 'https://www.bioinformatics.org/',
+        'https://www.afsti.org/workshops/haccp-jaipur': 'https://www.afsti.org/',
+        'https://dst.gov.in/workshops/manuscript-writing-2026': 'https://dst.gov.in/',
+        'https://www.bioconacademy.com/programs': 'https://www.bioconacademy.com/'
+      };
+
       for (const row of rows) {
+        if (row.registration_link && brokenSeedUrlReplacements[row.registration_link]) {
+          this.db.prepare('UPDATE workshops SET registration_link = ? WHERE id = ?')
+            .run(brokenSeedUrlReplacements[row.registration_link], row.id);
+        }
+
+        if (row.id === 'opp-work-3' && row.registration_deadline === '2026-11-12') {
+          this.db.prepare('UPDATE workshops SET registration_deadline = ? WHERE id = ?')
+            .run('2026-12-15', row.id);
+        }
+
+        if (row.id === 'opp-work-2' && row.image_url === 'https://images.unsplash.com/photo-1507668077129-56e32842fceb?auto=format&fit=crop&w=800&q=80') {
+          this.db.prepare('UPDATE workshops SET image_url = ? WHERE id = ?')
+            .run('https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80', row.id);
+        }
+
+        if (row.id === 'opp-work-3' && row.image_url === 'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80') {
+          this.db.prepare('UPDATE workshops SET image_url = ? WHERE id = ?')
+            .run('https://images.unsplash.com/photo-1576086213369-97a306d36557?auto=format&fit=crop&w=800&q=80', row.id);
+        }
+
+        if (row.id === 'opp-work-3' && row.format === 'Online') {
+          this.db.prepare('UPDATE workshops SET format = ? WHERE id = ?')
+            .run('Offline', row.id);
+        }
+
+        if (row.status === 'completed' && row.availability && !row.availability.toLowerCase().includes('closed')) {
+          this.db.prepare('UPDATE workshops SET availability = ? WHERE id = ?')
+            .run('Closed', row.id);
+        }
+
         if (!row.image_url || !row.format || row.status === 'active') {
           let imageUrl = 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80';
           let format: WorkshopFormat = 'Offline';
@@ -1149,7 +1188,7 @@ export class BionexaDatabase {
             featured = 1;
             availability = 'Open (28/40 Seats)';
           } else if (row.id === 'opp-work-2' || row.name.includes('RNA-Seq')) {
-            imageUrl = 'https://images.unsplash.com/photo-1507668077129-56e32842fceb?auto=format&fit=crop&w=800&q=80';
+            imageUrl = 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80';
             format = 'Online';
             status = 'upcoming';
             deadline = '2026-12-14';
@@ -1158,14 +1197,14 @@ export class BionexaDatabase {
             featured = 1;
             availability = 'Filling Fast (8 Seats Left)';
           } else if (row.id === 'opp-work-3' || row.name.includes('HACCP')) {
-            imageUrl = 'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80';
-            format = 'Online';
+            imageUrl = 'https://images.unsplash.com/photo-1576086213369-97a306d36557?auto=format&fit=crop&w=800&q=80';
+            format = 'Offline';
             status = 'ongoing';
-            deadline = '2026-11-12';
+            deadline = '2026-12-15';
             time = '10:00 AM - 03:00 PM IST';
             duration = '1 Day Certification';
             featured = 1;
-            availability = 'Waitlist';
+            availability = 'Open';
           } else if (row.id === 'opp-work-4' || row.name.includes('Manuscript')) {
             imageUrl = 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80';
             format = 'Hybrid';
@@ -1206,7 +1245,7 @@ export class BionexaDatabase {
           format: 'Offline',
           venue: 'Biocon Academy Pilot Bioreactor Facility, Electronic City Phase 1, Bengaluru 560100',
           registrationDeadline: '2026-12-10',
-          registrationLink: 'https://www.bioconacademy.com/programs',
+          registrationLink: 'https://www.bioconacademy.com/',
           availability: 'Filling Fast (6 Seats Left)',
           status: 'upcoming',
           fees: '₹3,500 (Academic / Student Subsidized)',

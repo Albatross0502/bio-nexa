@@ -28,6 +28,14 @@ import { Opportunity, OpportunityType } from '../../types/opportunity';
 import { OpportunityCard } from '../opportunities/OpportunityCard';
 import { OpportunityDetailModal } from '../opportunities/OpportunityDetailModal';
 import { WorkshopCard, UnifiedWorkshop } from '../workshops/WorkshopCard';
+import { WorkshopDetailModal } from '../workshops/WorkshopDetailModal';
+import {
+  filterWorkshops,
+  getDefaultWorkshopImageForTitle,
+  mapApiWorkshopToUnified,
+  mapUnifiedWorkshopToOpportunity,
+  normalizeWorkshopFormat
+} from '../../services/workshops/workshopHelpers';
 
 export const HomePage: React.FC = () => {
   const { navigate, isItemSaved, toggleSaveItem, addToast } = useApp();
@@ -37,6 +45,7 @@ export const HomePage: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string>('Just now');
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null);
+  const [selectedWorkshop, setSelectedWorkshop] = useState<UnifiedWorkshop | null>(null);
 
   // Search & Global Filter State
   const [heroSearch, setHeroSearch] = useState('');
@@ -57,16 +66,22 @@ export const HomePage: React.FC = () => {
   // 04. WORKSHOPS Sub-filter
   const [workshopModeFilter, setWorkshopModeFilter] = useState<string>('all');
   const [dbWorkshops, setDbWorkshops] = useState<UnifiedWorkshop[]>([]);
+  const [dbWorkshopsLoaded, setDbWorkshopsLoaded] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
     fetch('/api/workshops')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
-        if (d && Array.isArray(d.workshops) && d.workshops.length > 0) {
-          setDbWorkshops(d.workshops);
+        if (isMounted && d && Array.isArray(d.workshops)) {
+          setDbWorkshops(d.workshops.map(mapApiWorkshopToUnified));
+          setDbWorkshopsLoaded(true);
         }
       })
       .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Subscribe to reactive Opportunity Store
@@ -109,10 +124,45 @@ export const HomePage: React.FC = () => {
     navigate(`/opportunities?q=${encodeURIComponent(query)}&loc=${encodeURIComponent(loc)}`);
   };
 
-  // Filter public, non-expired opportunities by default
+  // Unified list of workshops (live DB preferred, static store fallback)
+  const allWorkshops: UnifiedWorkshop[] = useMemo(() => {
+    if (dbWorkshopsLoaded) {
+      return dbWorkshops;
+    }
+    return opportunities
+      .filter((opp) => opp.isApproved && opp.type === 'workshop')
+      .map((w) => ({
+        id: w.id,
+        title: w.title,
+        description: w.description,
+        instructor: w.workshopDetails?.speakerOrTrainer || w.organization || 'Senior Faculty Lead',
+        organizer: w.organization,
+        date: w.workshopDetails?.dates?.split(' to ')[0] || w.postedDate || '2026-12-01',
+        time: '09:30 AM - 04:30 PM IST',
+        duration: w.workshopDetails?.duration || '3 Days Intensive',
+        format: normalizeWorkshopFormat(w.workshopDetails?.mode || w.workMode),
+        venue: w.location || 'Online Live Portal',
+        registrationDeadline: w.deadline || '2026-12-05',
+        registrationUrl: w.workshopDetails?.registrationUrl || w.applicationUrl,
+        availability: w.status === 'Closed' ? 'Closed' : 'Open',
+        status: w.status === 'Closed' ? 'completed' : 'upcoming',
+        fees: w.workshopDetails?.fees || w.fees || '₹1,500 Subsidized',
+        imageUrl: getDefaultWorkshopImageForTitle(w.title),
+        featured: Boolean(w.featured),
+        skillsCovered: w.skills || ['Hands-on Wet Lab', 'Protocol Optimization']
+      }));
+  }, [dbWorkshopsLoaded, dbWorkshops, opportunities]);
+
+  // Filter public, non-expired opportunities (merging live DB workshops)
   const activeOpportunities = useMemo(() => {
-    return opportunities.filter(o => o.isApproved && o.status !== 'Expired' && o.status !== 'Closed');
-  }, [opportunities]);
+    const nonWorkshopActive = opportunities.filter(
+      (o) => o.isApproved && o.type !== 'workshop' && o.status !== 'Expired' && o.status !== 'Closed'
+    );
+    const liveWorkshopsAsOpp = allWorkshops
+      .map(mapUnifiedWorkshopToOpportunity)
+      .filter((o) => o.status !== 'Closed' && o.status !== 'Expired');
+    return [...nonWorkshopActive, ...liveWorkshopsAsOpp];
+  }, [opportunities, allWorkshops]);
 
   // Section 01: All Opportunities filtered
   const filteredAllOpportunities = useMemo(() => {
@@ -178,50 +228,17 @@ export const HomePage: React.FC = () => {
       });
   }, [activeOpportunities, internshipModeFilter]);
 
-  // Section 04: Workshops
-  const workshopsList: UnifiedWorkshop[] = useMemo(() => {
-    let list: UnifiedWorkshop[] = [];
-    if (dbWorkshops.length > 0) {
-      list = dbWorkshops;
-    } else {
-      list = activeOpportunities
-        .filter((opp) => opp.type === 'workshop')
-        .map((w) => ({
-          id: w.id,
-          title: w.title,
-          description: w.description,
-          instructor: w.organization || 'Senior Faculty Lead',
-          organizer: w.organization,
-          date: w.workshopDetails?.dates?.split(' to ')[0] || w.postedDate || '2026-12-01',
-          time: '09:30 AM - 04:30 PM IST',
-          duration: w.workshopDetails?.duration || '3 Days Intensive',
-          format:
-            (w.workMode as string) === 'In-Person' || (w.workMode as string) === 'On-site'
-              ? 'Offline'
-              : (w.workMode as string) === 'Hybrid'
-              ? 'Hybrid'
-              : 'Online',
-          venue: w.location || 'Online Live Portal',
-          registrationDeadline: w.deadline || '2026-12-05',
-          registrationUrl: w.workshopDetails?.registrationUrl || w.applicationUrl,
-          availability: 'Open (30/40 Seats)',
-          status: 'upcoming',
-          fees: w.workshopDetails?.fees || '₹1,500 Subsidized',
-          imageUrl: 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80',
-          featured: true,
-          skillsCovered: w.skills || ['Hands-on Wet Lab', 'Protocol Optimization']
-        }));
-    }
-
-    return list.filter((opp) => {
-      if (workshopModeFilter === 'all') return true;
-      const fmt = (opp.format || opp.workMode || '').toLowerCase();
-      if (workshopModeFilter === 'online') return fmt === 'online' || fmt === 'remote';
-      if (workshopModeFilter === 'offline') return fmt === 'offline' || fmt === 'in-person' || fmt === 'on-site';
-      if (workshopModeFilter === 'hybrid') return fmt === 'hybrid';
-      return true;
+  // Section 04: Featured Workshops on Homepage
+  const featuredWorkshopsList: UnifiedWorkshop[] = useMemo(() => {
+    return filterWorkshops(allWorkshops, {
+      onlyFeatured: true,
+      format: workshopModeFilter
     });
-  }, [dbWorkshops, activeOpportunities, workshopModeFilter]);
+  }, [allWorkshops, workshopModeFilter]);
+
+  const activeWorkshopsCount = useMemo(() => {
+    return activeOpportunities.filter((o) => o.type === 'workshop').length;
+  }, [activeOpportunities]);
 
   // Section 05: Courses
   const coursesList = useMemo(() => {
@@ -238,7 +255,13 @@ export const HomePage: React.FC = () => {
         opportunity={selectedOpportunity}
         onClose={() => setSelectedOpportunity(null)}
         isBookmarked={selectedOpportunity ? isItemSaved(selectedOpportunity.id) : false}
-        onBookmarkToggle={(id) => selectedOpportunity && toggleSaveItem(selectedOpportunity.id, selectedOpportunity.title)}
+        onBookmarkToggle={(_id) => selectedOpportunity && toggleSaveItem(selectedOpportunity.id, selectedOpportunity.title)}
+      />
+
+      {/* Workshop Detail Modal */}
+      <WorkshopDetailModal
+        workshop={selectedWorkshop}
+        onClose={() => setSelectedWorkshop(null)}
       />
 
       {/* Hero Section */}
@@ -349,7 +372,7 @@ export const HomePage: React.FC = () => {
                   Workshops &amp; Courses
                 </span>
                 <span className="text-2xl font-bold font-mono text-[#1F6FB2] dark:text-sky-400 tabular-nums">
-                  {workshopsList.length + coursesList.length}
+                  {activeWorkshopsCount + coursesList.length}
                 </span>
                 <span className="text-xs text-slate-500 block mt-0.5">Hands-on Lab Training</span>
               </div>
@@ -403,7 +426,7 @@ export const HomePage: React.FC = () => {
               { id: 'all', label: 'All Opportunities', count: activeOpportunities.length },
               { id: 'biotech_job', label: 'Biotechnology Jobs', count: activeOpportunities.filter(o => o.type === 'job' || o.type === 'biotech_job').length },
               { id: 'internship', label: 'Internships', count: internshipsList.length },
-              { id: 'workshop', label: 'Workshops', count: workshopsList.length },
+              { id: 'workshop', label: 'Workshops', count: activeWorkshopsCount },
               { id: 'course', label: 'Courses', count: coursesList.length },
             ].map((cat) => (
               <button
@@ -511,21 +534,37 @@ export const HomePage: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredAllOpportunities.slice(0, 6).map((opp) => (
-              <OpportunityCard
-                key={opp.id}
-                opportunity={opp}
-                onSelect={(selected) => {
-                  if (selected.type === 'job' || selected.type === 'biotech_job') {
-                    navigate(`/jobs/${selected.id}`);
-                  } else {
-                    setSelectedOpportunity(selected);
-                  }
-                }}
-                isBookmarked={isItemSaved(opp.id)}
-                onToggleBookmark={(id) => toggleSaveItem(opp.id, opp.title)}
-              />
-            ))}
+            {filteredAllOpportunities.slice(0, 6).map((opp) => {
+              if (opp.type === 'workshop') {
+                const matchedWs = allWorkshops.find((w) => w.id === opp.id);
+                if (matchedWs) {
+                  return (
+                    <WorkshopCard
+                      key={matchedWs.id}
+                      workshop={matchedWs}
+                      onSelectDetails={(ws) => setSelectedWorkshop(ws)}
+                      isBookmarked={isItemSaved(matchedWs.id)}
+                      onToggleBookmark={(id, title) => toggleSaveItem(id, title)}
+                    />
+                  );
+                }
+              }
+              return (
+                <OpportunityCard
+                  key={opp.id}
+                  opportunity={opp}
+                  onSelect={(selected) => {
+                    if (selected.type === 'job' || selected.type === 'biotech_job') {
+                      navigate(`/jobs/${selected.id}`);
+                    } else {
+                      setSelectedOpportunity(selected);
+                    }
+                  }}
+                  isBookmarked={isItemSaved(opp.id)}
+                  onToggleBookmark={(_id) => toggleSaveItem(opp.id, opp.title)}
+                />
+              );
+            })}
           </div>
         )}
 
@@ -755,26 +794,28 @@ export const HomePage: React.FC = () => {
           </div>
 
           <button
+            type="button"
             onClick={() => navigate('/workshops')}
-            className="inline-flex items-center gap-1 text-sm font-bold text-purple-700 dark:text-purple-400 hover:underline shrink-0"
+            className="inline-flex items-center gap-1 text-sm font-bold text-purple-700 dark:text-purple-400 hover:underline shrink-0 cursor-pointer"
           >
-            <span>All Workshops ({workshopsList.length})</span>
+            <span>All Workshops ({allWorkshops.length})</span>
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
         {/* Workshop Mode Filter */}
-        <div className="flex items-center gap-2 mb-6 text-xs">
+        <div className="flex flex-wrap items-center gap-2 mb-6 text-xs">
           {[
-            { id: 'all', label: 'All Workshops' },
+            { id: 'all', label: 'Featured Workshops' },
             { id: 'online', label: 'Online Live Webinars' },
             { id: 'offline', label: 'Offline Hands-on Labs' },
             { id: 'hybrid', label: 'Hybrid Sessions' }
           ].map((mode) => (
             <button
               key={mode.id}
+              type="button"
               onClick={() => setWorkshopModeFilter(mode.id)}
-              className={`px-3 py-1.5 rounded-xl font-semibold transition-colors ${
+              className={`px-3 py-1.5 rounded-xl font-semibold transition-colors cursor-pointer ${
                 workshopModeFilter === mode.id
                   ? 'bg-purple-700 text-white shadow-xs'
                   : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
@@ -785,17 +826,44 @@ export const HomePage: React.FC = () => {
           ))}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {workshopsList.slice(0, 6).map((wrk) => (
-            <WorkshopCard
-              key={wrk.id}
-              workshop={wrk}
-              onSelectDetails={() => navigate('/workshops')}
-              isBookmarked={isItemSaved(wrk.id)}
-              onToggleBookmark={(id, title) => toggleSaveItem(id, title)}
-            />
-          ))}
-        </div>
+        {featuredWorkshopsList.length === 0 ? (
+          <div className="p-10 text-center bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 space-y-3">
+            <Calendar className="w-8 h-8 mx-auto text-slate-400" />
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+              No featured workshops match this format right now.
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              {workshopModeFilter !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setWorkshopModeFilter('all')}
+                  className="px-4 py-2 text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-xl hover:bg-slate-200 cursor-pointer"
+                >
+                  Show Featured Workshops
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => navigate('/workshops')}
+                className="px-4 py-2 text-xs font-bold bg-[#0B2A5B] text-white rounded-xl hover:bg-blue-900 cursor-pointer"
+              >
+                Browse All {allWorkshops.length} Workshops
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {featuredWorkshopsList.slice(0, 6).map((wrk) => (
+              <WorkshopCard
+                key={wrk.id}
+                workshop={wrk}
+                onSelectDetails={(selected) => setSelectedWorkshop(selected)}
+                isBookmarked={isItemSaved(wrk.id)}
+                onToggleBookmark={(id, title) => toggleSaveItem(id, title)}
+              />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* ============================================================== */}

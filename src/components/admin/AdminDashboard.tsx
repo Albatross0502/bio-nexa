@@ -45,6 +45,15 @@ import { useApp } from '../../context/AppContext';
 import { googleSheetsSync } from '../../services/opportunities/googleSheetsSync';
 import { DATA_SOURCES } from '../../services/opportunities/sourcesRegistry';
 import { AutomatedJobsPanel } from './AutomatedJobsPanel';
+import {
+  DEFAULT_WORKSHOP_IMAGE,
+  isValidWorkshopImageUrl,
+  isValidWorkshopRegistrationUrl,
+  normalizeAvailabilityOption,
+  normalizeWorkshopFormat,
+  normalizeWorkshopStatus,
+  toDateInputValue
+} from '../../services/workshops/workshopHelpers';
 
 interface AdminDashboardProps {
   adminUser: AdminUser;
@@ -82,6 +91,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   const [isWorkshopModalOpen, setIsWorkshopModalOpen] = useState(false);
   const [editingWorkshop, setEditingWorkshop] = useState<AdminWorkshop | null>(null);
   const [workshopImagePreview, setWorkshopImagePreview] = useState<string>('');
+  const [workshopRegUrlDraft, setWorkshopRegUrlDraft] = useState<string>('');
+  const [isUploadingWorkshopImage, setIsUploadingWorkshopImage] = useState(false);
   const [workshopStatusFilter, setWorkshopStatusFilter] = useState<string>('all');
   const [workshopFormatFilter, setWorkshopFormatFilter] = useState<string>('all');
 
@@ -276,13 +287,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
   const handleOpenCreateWorkshop = () => {
     setEditingWorkshop(null);
-    setWorkshopImagePreview('https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80');
+    setWorkshopImagePreview(DEFAULT_WORKSHOP_IMAGE);
+    setWorkshopRegUrlDraft('');
     setIsWorkshopModalOpen(true);
   };
 
   const handleOpenEditWorkshop = (ws: AdminWorkshop) => {
     setEditingWorkshop(ws);
-    setWorkshopImagePreview(ws.imageUrl || 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80');
+    setWorkshopImagePreview(ws.imageUrl || DEFAULT_WORKSHOP_IMAGE);
+    setWorkshopRegUrlDraft(ws.registrationUrl || ws.registrationLink || '');
     setIsWorkshopModalOpen(true);
   };
 
@@ -321,8 +334,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
 
-    const format = String(formData.get('format') || formData.get('workMode') || 'Online') as 'Online' | 'Offline' | 'Hybrid';
-    const status = String(formData.get('status') || 'upcoming');
+    const registrationUrl = String(formData.get('registrationUrl') || workshopRegUrlDraft || '').trim();
+    if (!isValidWorkshopRegistrationUrl(registrationUrl)) {
+      addToast('Please provide a valid Registration URL starting with http:// or https://.', 'error');
+      return;
+    }
+
+    const imageUrl = (workshopImagePreview || String(formData.get('imageUrl') || '').trim()).trim();
+    if (imageUrl && !isValidWorkshopImageUrl(imageUrl)) {
+      addToast('Workshop banner image must be a valid URL or uploaded image.', 'error');
+      return;
+    }
+
+    const format = normalizeWorkshopFormat(String(formData.get('format') || formData.get('workMode') || 'Online'));
+    const status = normalizeWorkshopStatus(String(formData.get('status') || 'upcoming'));
     const featured = formData.get('featured') === 'on' || formData.get('featured') === 'true';
 
     const workshopPayload: Partial<AdminWorkshop> = {
@@ -341,11 +366,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       duration: String(formData.get('duration') || '2 Days Intensive').trim(),
       fees: String(formData.get('fees') || 'Free').trim(),
       capacity: Number(formData.get('capacity') || 50),
-      registrationUrl: String(formData.get('registrationUrl') || '').trim(),
+      registrationUrl,
       registrationDeadline: String(formData.get('registrationDeadline') || '').trim(),
       availability: String(formData.get('availability') || 'Open').trim(),
       description: String(formData.get('description') || '').trim(),
-      imageUrl: workshopImagePreview || String(formData.get('imageUrl') || '').trim(),
+      imageUrl,
       featured,
       skillsCovered: String(formData.get('skillsCovered') || '')
         .split(',')
@@ -996,7 +1021,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                           <button
                             type="button"
                             onClick={() => handleToggleWorkshopFeatured(w)}
-                            className={`p-1.5 rounded-full backdrop-blur-md transition-colors ${
+                            aria-label={w.featured ? `Unfeature ${w.title} from homepage` : `Feature ${w.title} on homepage`}
+                            className={`p-1.5 rounded-full backdrop-blur-md transition-colors cursor-pointer ${
                               w.featured
                                 ? 'bg-amber-500 text-white shadow-xs'
                                 : 'bg-slate-900/60 text-slate-300 hover:text-amber-400'
@@ -1018,7 +1044,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                       <div className="p-4 space-y-3">
                         <div>
                           <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                            {w.organizer} {w.instructor && `· ${w.instructor}`}
+                            {w.organizer} {w.instructor && w.instructor !== w.organizer && `· ${w.instructor}`}
                           </div>
                           <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-0.5 line-clamp-2">
                             {w.title}
@@ -1053,7 +1079,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                           <div>
                             <label className="text-[9px] font-bold text-slate-400 block mb-0.5 uppercase">Status</label>
                             <select
-                              value={(w.status || 'upcoming').toLowerCase()}
+                              aria-label={`Status for ${w.title}`}
+                              value={normalizeWorkshopStatus(w.status)}
                               onChange={(e) => handleChangeWorkshopStatus(w, e.target.value)}
                               className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-800 dark:text-slate-200 focus:outline-none"
                             >
@@ -1066,7 +1093,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                           <div>
                             <label className="text-[9px] font-bold text-slate-400 block mb-0.5 uppercase">Availability</label>
                             <select
-                              value={w.availability || 'Open'}
+                              aria-label={`Availability for ${w.title}`}
+                              value={normalizeAvailabilityOption(w.availability)}
                               onChange={(e) => handleChangeWorkshopAvailability(w, e.target.value)}
                               className="w-full px-2 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-800 dark:text-slate-200 focus:outline-none"
                             >
@@ -1088,6 +1116,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                             href={w.registrationUrl}
                             target="_blank"
                             rel="noopener noreferrer"
+                            aria-label={`Open registration portal for ${w.title}`}
                             className="p-1.5 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-white dark:hover:bg-slate-700 transition-colors"
                             title="Open Registration Destination in New Tab"
                           >
@@ -1103,12 +1132,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
                       <div className="flex items-center gap-1.5">
                         <button
+                          type="button"
                           onClick={() => handleOpenEditWorkshop(w)}
-                          className="px-2.5 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-200 rounded-lg font-bold border border-slate-200 dark:border-slate-600 transition-colors"
+                          className="px-2.5 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-200 rounded-lg font-bold border border-slate-200 dark:border-slate-600 transition-colors cursor-pointer"
                         >
                           Edit
                         </button>
                         <button
+                          type="button"
                           onClick={() =>
                             setDeleteConfirm({
                               type: 'workshop',
@@ -1116,7 +1147,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                               title: w.title
                             })
                           }
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                          aria-label={`Delete ${w.title}`}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
                           title="Delete Workshop"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -2036,11 +2068,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 </h3>
               </div>
               <button
+                type="button"
+                aria-label="Close workshop modal"
                 onClick={() => {
                   setIsWorkshopModalOpen(false);
                   setEditingWorkshop(null);
                 }}
-                className="text-slate-400 hover:text-slate-600 p-1"
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -2060,7 +2094,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 />
               </div>
 
-              {/* Image Selection: URL, Presets & File Upload */}
+              {/* Image Selection: URL, Presets & Server File Upload */}
               <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700">
                 <div className="flex items-center justify-between">
                   <label className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
@@ -2069,34 +2103,47 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   </label>
                   <label className="px-2.5 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 border border-slate-200 dark:border-slate-600 rounded-lg text-[10px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs">
                     <Upload className="w-3 h-3 text-teal-500" />
-                    <span>Upload Image File</span>
+                    <span>{isUploadingWorkshopImage ? 'Uploading...' : 'Upload Image File'}</span>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      disabled={isUploadingWorkshopImage}
                       className="hidden"
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            if (event.target?.result) {
-                              setWorkshopImagePreview(event.target.result as string);
-                            }
-                          };
-                          reader.readAsDataURL(file);
+                        if (!file) return;
+                        if (file.size > 5 * 1024 * 1024) {
+                          addToast('Image must be 5 MB or smaller.', 'error');
+                          return;
                         }
+                        const reader = new FileReader();
+                        reader.onload = async (event) => {
+                          const dataUrl = event.target?.result;
+                          if (typeof dataUrl !== 'string') return;
+                          setIsUploadingWorkshopImage(true);
+                          try {
+                            const uploadedPath = await adminApi.uploadWorkshopImage(file.name, dataUrl);
+                            setWorkshopImagePreview(uploadedPath);
+                            addToast('Workshop banner image uploaded to server.', 'success');
+                          } catch (err: any) {
+                            addToast(err.message || 'Failed to upload workshop image.', 'error');
+                          } finally {
+                            setIsUploadingWorkshopImage(false);
+                          }
+                        };
+                        reader.readAsDataURL(file);
                       }}
                     />
                   </label>
                 </div>
 
-                {/* Direct URL input */}
+                {/* Direct URL or Uploaded Path input */}
                 <input
-                  type="url"
+                  type="text"
                   name="imageUrl"
                   value={workshopImagePreview}
                   onChange={(e) => setWorkshopImagePreview(e.target.value)}
-                  placeholder="Paste banner image URL or select a preset below..."
+                  placeholder="Paste banner image URL, upload a file, or select a preset below..."
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-[11px] focus:outline-none"
                 />
 
@@ -2106,17 +2153,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <div className="flex flex-wrap gap-1.5">
                     {[
                       { name: 'CRISPR Gene Editing', url: 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80' },
-                      { name: 'NGS Bioinformatics', url: 'https://images.unsplash.com/photo-1507668077129-56e32842fceb?auto=format&fit=crop&w=800&q=80' },
+                      { name: 'NGS Bioinformatics', url: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80' },
                       { name: 'Fermentation Bioprocess', url: 'https://images.unsplash.com/photo-1582719471384-894fbb16e074?auto=format&fit=crop&w=800&q=80' },
                       { name: 'Flow Cytometry', url: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&w=800&q=80' },
-                      { name: 'GMP Cleanroom', url: 'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80' },
+                      { name: 'Food Safety & QA Lab', url: 'https://images.unsplash.com/photo-1576086213369-97a306d36557?auto=format&fit=crop&w=800&q=80' },
                       { name: 'Drug Discovery', url: 'https://images.unsplash.com/photo-1530497610245-94d3c16cda28?auto=format&fit=crop&w=800&q=80' }
                     ].map((preset) => (
                       <button
                         type="button"
                         key={preset.name}
                         onClick={() => setWorkshopImagePreview(preset.url)}
-                        className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all ${
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all cursor-pointer ${
                           workshopImagePreview === preset.url
                             ? 'bg-teal-600 text-white border-teal-600 shadow-2xs'
                             : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:bg-slate-100'
@@ -2171,7 +2218,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Format *</label>
                   <select
                     name="format"
-                    defaultValue={editingWorkshop?.format || editingWorkshop?.workMode || 'Online'}
+                    defaultValue={normalizeWorkshopFormat(editingWorkshop?.format || editingWorkshop?.workMode)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-semibold"
                   >
                     <option value="Online">Online Live Virtual</option>
@@ -2200,7 +2247,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     type="date"
                     name="startDate"
                     required
-                    defaultValue={editingWorkshop?.startDate || editingWorkshop?.date || '2026-12-10'}
+                    defaultValue={toDateInputValue(editingWorkshop?.startDate || editingWorkshop?.date, '2026-12-10')}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
@@ -2235,20 +2282,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <input
                     type="date"
                     name="registrationDeadline"
-                    defaultValue={editingWorkshop?.registrationDeadline || '2026-12-05'}
+                    defaultValue={toDateInputValue(editingWorkshop?.registrationDeadline, '2026-12-05')}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-mono"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">
-                    Registration URL * (Original Portal / Destination)
-                  </label>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300">
+                      Registration URL * (Official Destination)
+                    </label>
+                    {isValidWorkshopRegistrationUrl(workshopRegUrlDraft) && (
+                      <a
+                        href={workshopRegUrlDraft.trim()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] font-bold text-teal-600 hover:underline"
+                      >
+                        <span>Test URL</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
                   <input
                     type="url"
                     name="registrationUrl"
                     required
-                    defaultValue={editingWorkshop?.registrationUrl || editingWorkshop?.registrationLink}
-                    placeholder="https://www.igib.res.in/training"
+                    value={workshopRegUrlDraft}
+                    onChange={(e) => setWorkshopRegUrlDraft(e.target.value)}
+                    placeholder="https://www.igib.res.in/"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none text-[11px]"
                   />
                 </div>
@@ -2260,7 +2321,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Program Status *</label>
                   <select
                     name="status"
-                    defaultValue={(editingWorkshop?.status || 'upcoming').toLowerCase()}
+                    defaultValue={normalizeWorkshopStatus(editingWorkshop?.status)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
                   >
                     <option value="upcoming">Upcoming</option>
@@ -2273,7 +2334,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Availability *</label>
                   <select
                     name="availability"
-                    defaultValue={editingWorkshop?.availability || 'Open'}
+                    defaultValue={normalizeAvailabilityOption(editingWorkshop?.availability)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
                   >
                     <option value="Open">Open</option>

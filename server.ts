@@ -21,11 +21,20 @@ import { SEED_OPPORTUNITIES } from './src/services/opportunities/seedOpportuniti
 import { bionexaDb, DbJob, DbWorkshop, DbCourse } from './src/db/bionexaDatabase.js';
 import { automatedJobManager, AUTHORIZED_SOURCES } from './src/services/jobs/automatedJobManager.js';
 
+import crypto from 'node:crypto';
+
 const PORT = 3000;
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
+
+// Serve uploaded workshop images safely
+const workshopUploadsDir = path.resolve(process.cwd(), 'public', 'uploads', 'workshops');
+if (!fs.existsSync(workshopUploadsDir)) {
+  fs.mkdirSync(workshopUploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(path.resolve(process.cwd(), 'public', 'uploads')));
 
 // Initialize Rate Limiter & Session Manager
 const rateLimiter = new LoginRateLimiter();
@@ -260,7 +269,7 @@ app.get('/api/workshops', (req: Request, res: Response) => {
       featured: featured === 'true' ? true : featured === 'false' ? false : undefined,
       search: typeof search === 'string' ? search : undefined,
     });
-    res.json({ success: true, count: workshops.length, workshops });
+    res.json({ success: true, count: workshops.length, workshops: workshops.map(formatWorkshopForAdmin) });
   } catch (err: any) {
     res.status(500).json({ error: 'Internal Server Error', message: err.message });
   }
@@ -274,7 +283,7 @@ app.get('/api/workshops/:id', (req: Request, res: Response) => {
       res.status(404).json({ error: 'Not Found', message: 'Workshop not found.' });
       return;
     }
-    res.json({ success: true, workshop });
+    res.json({ success: true, workshop: formatWorkshopForAdmin(workshop) });
   } catch (err: any) {
     res.status(500).json({ error: 'Internal Server Error', message: err.message });
   }
@@ -727,6 +736,49 @@ app.post('/api/admin/jobs/:id/verify', requireAdminAuth, (req: Request, res: Res
 // -------------------------------------------------------------
 // B. Workshops Management Endpoints
 // -------------------------------------------------------------
+
+// POST /api/admin/workshops/upload-image (Upload Workshop Banner Image)
+app.post('/api/admin/workshops/upload-image', requireAdminAuth, (req: Request, res: Response) => {
+  try {
+    const { dataUrl, filename } = req.body || {};
+    if (typeof dataUrl !== 'string') {
+      res.status(400).json({ error: 'Validation Error', message: 'Image data is required.' });
+      return;
+    }
+
+    const match = dataUrl.match(/^data:image\/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+/=]+)$/i);
+    if (!match) {
+      res.status(400).json({
+        error: 'Validation Error',
+        message: 'Unsupported image format. Please upload PNG, JPG, WEBP, or GIF.'
+      });
+      return;
+    }
+
+    const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length > 5 * 1024 * 1024) {
+      res.status(400).json({ error: 'Validation Error', message: 'Image must be 5 MB or smaller.' });
+      return;
+    }
+
+    const safeBase = sanitizeString(filename || 'workshop')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '-')
+      .slice(0, 40) || 'workshop';
+    const storedName = `${safeBase}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`;
+    const targetFile = path.resolve(workshopUploadsDir, storedName);
+
+    fs.writeFileSync(targetFile, buffer);
+
+    res.status(201).json({
+      success: true,
+      imageUrl: `/uploads/workshops/${storedName}`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Upload Error', message: err.message });
+  }
+});
 
 // POST /api/admin/workshops (Add Workshop)
 app.post('/api/admin/workshops', requireAdminAuth, (req: Request, res: Response) => {

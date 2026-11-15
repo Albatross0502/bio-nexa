@@ -27,6 +27,12 @@ import { generateExternalSearchUrls } from '../../services/opportunities/externa
 import { OpportunityCard } from './OpportunityCard';
 import { OpportunityDetailModal } from './OpportunityDetailModal';
 import { SubmitOpportunityModal } from './SubmitOpportunityModal';
+import { WorkshopCard, UnifiedWorkshop } from '../workshops/WorkshopCard';
+import { WorkshopDetailModal } from '../workshops/WorkshopDetailModal';
+import {
+  mapApiWorkshopToUnified,
+  mapUnifiedWorkshopToOpportunity
+} from '../../services/workshops/workshopHelpers';
 import { useApp } from '../../context/AppContext';
 
 interface OpportunitiesPortalProps {
@@ -41,7 +47,10 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
   const { navigate } = useApp();
   // State from store
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [dbWorkshops, setDbWorkshops] = useState<UnifiedWorkshop[]>([]);
+  const [dbWorkshopsLoaded, setDbWorkshopsLoaded] = useState(false);
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null);
+  const [selectedWorkshop, setSelectedWorkshop] = useState<UnifiedWorkshop | null>(null);
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
   const [bookmarks, setBookmarks] = useState<string[]>(() => {
     try {
@@ -69,6 +78,31 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
     return () => unsub();
   }, []);
 
+  // Fetch live workshops from SQLite API
+  useEffect(() => {
+    let isMounted = true;
+    fetch('/api/workshops')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (isMounted && d && Array.isArray(d.workshops)) {
+          setDbWorkshops(d.workshops.map(mapApiWorkshopToUnified));
+          setDbWorkshopsLoaded(true);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Merge live DB workshops into opportunities list
+  const mergedOpportunities = useMemo(() => {
+    if (!dbWorkshopsLoaded) return opportunities;
+    const nonWorkshops = opportunities.filter((o) => o.type !== 'workshop');
+    const liveWorkshopsAsOpp = dbWorkshops.map(mapUnifiedWorkshopToOpportunity);
+    return [...nonWorkshops, ...liveWorkshopsAsOpp];
+  }, [opportunities, dbWorkshops, dbWorkshopsLoaded]);
+
   // Update initial tab when props change
   useEffect(() => {
     if (initialType) setSelectedTab(initialType);
@@ -78,17 +112,21 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const idParam = params.get('id');
-    if (idParam && opportunities.length > 0) {
-      const match = opportunities.find(o => o.id.toLowerCase() === idParam.toLowerCase());
+    if (idParam && mergedOpportunities.length > 0) {
+      const match = mergedOpportunities.find(o => o.id.toLowerCase() === idParam.toLowerCase());
       if (match) {
         if (match.type === 'job' || match.type === 'biotech_job') {
           navigate(`/jobs/${match.id}`);
+        } else if (match.type === 'workshop') {
+          const wsMatch = dbWorkshops.find((w) => w.id.toLowerCase() === match.id.toLowerCase());
+          if (wsMatch) setSelectedWorkshop(wsMatch);
+          else setSelectedOpportunity(match);
         } else {
           setSelectedOpportunity(match);
         }
       }
     }
-  }, [opportunities, navigate]);
+  }, [mergedOpportunities, dbWorkshops, navigate]);
 
   // Persist bookmarks
   const toggleBookmark = (id: string) => {
@@ -105,7 +143,7 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
 
   // Filter logic
   const filteredOpportunities = useMemo(() => {
-    return opportunities.filter(opp => {
+    return mergedOpportunities.filter(opp => {
       // Must be approved for public view
       if (!opp.isApproved) return false;
 
@@ -133,7 +171,11 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
       }
 
       // Work mode filter
-      if (workMode !== 'all' && opp.workMode !== workMode) return false;
+      if (workMode !== 'all') {
+        const normOppMode = (opp.workMode || '').toLowerCase().replace(/[^a-z]/g, '');
+        const normFilter = String(workMode).toLowerCase().replace(/[^a-z]/g, '');
+        if (normOppMode !== normFilter) return false;
+      }
 
       // Experience filter
       if (experience !== 'all') {
@@ -185,7 +227,7 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
       return dateB - dateA;
     });
   }, [
-    opportunities,
+    mergedOpportunities,
     bookmarks,
     showBookmarksOnly,
     selectedTab,
@@ -200,7 +242,7 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
 
   // Counts by tab
   const counts = useMemo(() => {
-    const approved = opportunities.filter(o => o.isApproved);
+    const approved = mergedOpportunities.filter(o => o.isApproved);
     return {
       all: approved.length,
       job: approved.filter(o => o.type === 'job' || o.type === 'biotech_job').length,
@@ -210,7 +252,7 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
       course: approved.filter(o => o.type === 'course').length,
       saved: bookmarks.length,
     };
-  }, [opportunities, bookmarks]);
+  }, [mergedOpportunities, bookmarks]);
 
   // External search URLs for fallback
   const externalUrls = useMemo(() => {
@@ -582,21 +624,37 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredOpportunities.map(opportunity => (
-                <OpportunityCard
-                  key={opportunity.id}
-                  opportunity={opportunity}
-                  onSelect={(opp) => {
-                    if (opp.type === 'job' || opp.type === 'biotech_job') {
-                      navigate(`/jobs/${opp.id}`);
-                    } else {
-                      setSelectedOpportunity(opp);
-                    }
-                  }}
-                  isBookmarked={bookmarks.includes(opportunity.id)}
-                  onToggleBookmark={toggleBookmark}
-                />
-              ))}
+              {filteredOpportunities.map(opportunity => {
+                if (opportunity.type === 'workshop') {
+                  const matchedWs = dbWorkshops.find((w) => w.id === opportunity.id);
+                  if (matchedWs) {
+                    return (
+                      <WorkshopCard
+                        key={matchedWs.id}
+                        workshop={matchedWs}
+                        onSelectDetails={(ws) => setSelectedWorkshop(ws)}
+                        isBookmarked={bookmarks.includes(matchedWs.id)}
+                        onToggleBookmark={(id) => toggleBookmark(id)}
+                      />
+                    );
+                  }
+                }
+                return (
+                  <OpportunityCard
+                    key={opportunity.id}
+                    opportunity={opportunity}
+                    onSelect={(opp) => {
+                      if (opp.type === 'job' || opp.type === 'biotech_job') {
+                        navigate(`/jobs/${opp.id}`);
+                      } else {
+                        setSelectedOpportunity(opp);
+                      }
+                    }}
+                    isBookmarked={bookmarks.includes(opportunity.id)}
+                    onToggleBookmark={toggleBookmark}
+                  />
+                );
+              })}
             </div>
           )}
         </div>
@@ -607,6 +665,12 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
           onClose={() => setSelectedOpportunity(null)}
           isBookmarked={selectedOpportunity ? bookmarks.includes(selectedOpportunity.id) : false}
           onBookmarkToggle={selectedOpportunity ? () => toggleBookmark(selectedOpportunity.id) : undefined}
+        />
+
+        {/* Detailed Workshop Modal */}
+        <WorkshopDetailModal
+          workshop={selectedWorkshop}
+          onClose={() => setSelectedWorkshop(null)}
         />
 
         {/* Submit Opportunity Modal */}

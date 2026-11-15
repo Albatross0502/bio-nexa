@@ -73,13 +73,16 @@ test('BionexaDatabase manages Workshops and Courses', () => {
     instructor: 'Dr. Sen',
     date: '2026-12-01',
     time: '09:00 AM - 05:00 PM',
+    format: 'Hybrid',
     venue: 'New Delhi (Hybrid)',
-    registrationLink: 'https://bionexa.org/ws-crispr',
+    registrationDeadline: '2026-11-28',
+    registrationLink: 'https://www.igib.res.in/',
     availability: 'Open (20 seats)',
-    status: 'active',
+    status: 'upcoming',
     fees: '₹1,500',
     duration: '3 Days',
     capacity: 30,
+    featured: true,
     skillsCovered: ['gRNA design', 'Electroporation']
   });
   assert.equal(ws.id, 'test-ws-1');

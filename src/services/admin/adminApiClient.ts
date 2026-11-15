@@ -251,14 +251,27 @@ class AdminApiClient {
 
   // --- Workshops CRUD ---
 
+  public async uploadWorkshopImage(filename: string, dataUrl: string): Promise<string> {
+    const res = await fetch('/api/admin/workshops/upload-image', {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ filename, dataUrl })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.imageUrl) {
+      throw new Error(data.message || 'Failed to upload workshop image');
+    }
+    return data.imageUrl;
+  }
+
   public async createWorkshop(workshop: Partial<AdminWorkshop>): Promise<AdminWorkshop> {
     const res = await fetch('/api/admin/workshops', {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(workshop)
     });
-    if (!res.ok) throw new Error('Failed to create workshop');
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Failed to create workshop');
     return data.workshop;
   }
 
@@ -268,8 +281,8 @@ class AdminApiClient {
       headers: this.getHeaders(),
       body: JSON.stringify(updates)
     });
-    if (!res.ok) throw new Error('Failed to update workshop');
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Failed to update workshop');
     return data.workshop;
   }
 
@@ -279,8 +292,8 @@ class AdminApiClient {
       headers: this.getHeaders(),
       body: JSON.stringify(updates)
     });
-    if (!res.ok) throw new Error('Failed to quickly update workshop');
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Failed to quickly update workshop');
     return data.workshop;
   }
 
@@ -289,7 +302,10 @@ class AdminApiClient {
       method: 'DELETE',
       headers: this.getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to delete workshop');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || 'Failed to delete workshop');
+    }
   }
 
   // --- Courses CRUD ---

@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
-import { Search, X, Briefcase, GraduationCap, FileText, Award, BookOpen, ChevronRight, Sparkles } from 'lucide-react';
+import { Search, X, Briefcase, GraduationCap, FileText, Award, BookOpen, ChevronRight, Sparkles, Calendar } from 'lucide-react';
 import { SEED_EXAMS, SEED_SCHOLARSHIPS, SEED_RESEARCH } from '../../data/seedData';
 import { opportunityStore } from '../../services/opportunities/opportunityStore';
 import { Opportunity } from '../../types/opportunity';
+import type { UnifiedWorkshop } from '../workshops/WorkshopCard';
+import { mapApiWorkshopToUnified } from '../../services/workshops/workshopHelpers';
 
 export const GlobalSearchModal: React.FC = () => {
   const { isSearchOpen, setIsSearchOpen, jobs, internships, courses, navigate } = useApp();
   const [query, setQuery] = useState('');
-  const [filterType, setFilterType] = useState<'all' | 'jobs' | 'internships' | 'courses' | 'exams' | 'scholarships' | 'research'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'jobs' | 'internships' | 'workshops' | 'courses' | 'exams' | 'scholarships' | 'research'>('all');
+  const [liveWorkshops, setLiveWorkshops] = useState<UnifiedWorkshop[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -28,6 +31,14 @@ export const GlobalSearchModal: React.FC = () => {
   useEffect(() => {
     if (isSearchOpen) {
       setTimeout(() => inputRef.current?.focus(), 50);
+      fetch('/api/workshops')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d && Array.isArray(d.workshops)) {
+            setLiveWorkshops(d.workshops.map(mapApiWorkshopToUnified));
+          }
+        })
+        .catch(() => {});
     } else {
       setQuery('');
     }
@@ -61,11 +72,23 @@ export const GlobalSearchModal: React.FC = () => {
     .filter((r) => !q || r.title.toLowerCase().includes(q) || r.keywords.some((k) => k.toLowerCase().includes(q)))
     .slice(0, 3);
 
+  const matchedWorkshops = liveWorkshops
+    .filter(
+      (w) =>
+        !q ||
+        w.title.toLowerCase().includes(q) ||
+        (w.organizer || '').toLowerCase().includes(q) ||
+        w.instructor.toLowerCase().includes(q) ||
+        w.venue.toLowerCase().includes(q) ||
+        (w.skillsCovered || []).some((s) => s.toLowerCase().includes(q))
+    )
+    .slice(0, 4);
+
   const matchedOpportunities = React.useMemo(() => {
     try {
       const opps: Opportunity[] = opportunityStore.getAllOpportunities();
       return opps
-        .filter((o: Opportunity) => o.isApproved && (!q || o.title.toLowerCase().includes(q) || o.organization.toLowerCase().includes(q) || o.branches.some((b: string) => b.toLowerCase().includes(q))))
+        .filter((o: Opportunity) => o.isApproved && o.type !== 'workshop' && (!q || o.title.toLowerCase().includes(q) || o.organization.toLowerCase().includes(q) || o.branches.some((b: string) => b.toLowerCase().includes(q))))
         .slice(0, 3);
     } catch {
       return [];
@@ -113,6 +136,7 @@ export const GlobalSearchModal: React.FC = () => {
               ['all', 'All Modules'],
               ['jobs', 'Jobs'],
               ['internships', 'Internships'],
+              ['workshops', 'Workshops'],
               ['courses', 'Courses'],
               ['exams', 'Exams'],
               ['scholarships', 'Scholarships'],
@@ -200,6 +224,47 @@ export const GlobalSearchModal: React.FC = () => {
                         <span>{job.location}</span>
                         <span>·</span>
                         <span className="font-mono text-emerald-600">{job.salary}</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 shrink-0" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Workshops */}
+          {(showAll || filterType === 'workshops') && matchedWorkshops.length > 0 && (
+            <div className="py-2.5">
+              <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-3.5 h-3.5 text-purple-600" />
+                  <span>Biotech Workshops &amp; Lab Training</span>
+                </div>
+                <button
+                  onClick={() => handleSelect('/workshops')}
+                  className="text-[11px] font-medium text-sky-600 hover:underline cursor-pointer"
+                >
+                  All Workshops →
+                </button>
+              </div>
+              <div className="space-y-1">
+                {matchedWorkshops.map((ws) => (
+                  <div
+                    key={ws.id}
+                    onClick={() => handleSelect(`/workshops?id=${ws.id}`)}
+                    className="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer group transition-colors"
+                  >
+                    <div>
+                      <div className="text-sm font-medium text-slate-900 dark:text-slate-100 group-hover:text-purple-600 transition-colors">
+                        {ws.title}
+                      </div>
+                      <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
+                        <span>{ws.instructor}</span>
+                        <span>·</span>
+                        <span>{ws.format}</span>
+                        <span>·</span>
+                        <span>{ws.date}</span>
                       </div>
                     </div>
                     <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 shrink-0" />
@@ -372,6 +437,7 @@ export const GlobalSearchModal: React.FC = () => {
           {matchedOpportunities.length === 0 &&
             matchedJobs.length === 0 &&
             matchedInternships.length === 0 &&
+            matchedWorkshops.length === 0 &&
             matchedCourses.length === 0 &&
             matchedExams.length === 0 &&
             matchedScholarships.length === 0 &&

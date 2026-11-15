@@ -15,6 +15,13 @@ import {
   ShieldCheck,
   X
 } from 'lucide-react';
+import {
+  getDefaultWorkshopImageForTitle,
+  isValidWorkshopRegistrationUrl,
+  isWorkshopRegistrationClosed,
+  normalizeWorkshopFormat,
+  normalizeWorkshopStatus
+} from '../../services/workshops/workshopHelpers';
 
 export interface UnifiedWorkshop {
   id: string;
@@ -61,63 +68,27 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
   const title = workshop.title || workshop.name || 'Biotechnology Workshop';
   const organizer = workshop.organizer || workshop.instructor || 'BIO-NEXA Academy';
   const instructor = workshop.instructor || organizer;
-  const destinationUrl = workshop.registrationUrl || workshop.registrationLink || '#';
+  const destinationUrl = workshop.registrationUrl || workshop.registrationLink || '';
+  const hasValidUrl = isValidWorkshopRegistrationUrl(destinationUrl);
   const venue = workshop.venue || workshop.location || 'Online / Remote';
   const time = workshop.time || '09:30 AM - 04:30 PM IST';
   const duration = workshop.duration || '2 Days Intensive';
   const deadline = workshop.registrationDeadline || '';
   const availability = workshop.availability || 'Open';
-  const status = (workshop.status?.toLowerCase() as 'upcoming' | 'ongoing' | 'completed') || 'upcoming';
+  const status = normalizeWorkshopStatus(workshop.status);
   const fees = workshop.fees || 'Free / Subsidized';
+  const format = normalizeWorkshopFormat(workshop.format || workshop.workMode);
+  const isExpired = isWorkshopRegistrationClosed(workshop);
 
-  // Format determination
-  const format: 'Online' | 'Offline' | 'Hybrid' = 
-    workshop.format || 
-    (workshop.workMode === 'In-Person' || workshop.workMode === 'Offline' ? 'Offline' :
-     workshop.workMode === 'Hybrid' ? 'Hybrid' : 'Online');
-
-  // Check if deadline has passed
-  const isExpired = React.useMemo(() => {
-    if (status === 'completed' || availability.toLowerCase() === 'closed') return true;
-    if (!deadline) return false;
-    try {
-      const d = new Date(deadline);
-      d.setHours(23, 59, 59, 999);
-      return d.getTime() < Date.now();
-    } catch {
-      return false;
-    }
-  }, [deadline, status, availability]);
-
-  // Default biotech placeholder images based on format/topic
-  const defaultImage = React.useMemo(() => {
-    if (title.toLowerCase().includes('crispr') || title.toLowerCase().includes('gene')) {
-      return 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80';
-    }
-    if (title.toLowerCase().includes('rna') || title.toLowerCase().includes('python') || title.toLowerCase().includes('bioinformatics')) {
-      return 'https://images.unsplash.com/photo-1507668077129-56e32842fceb?auto=format&fit=crop&w=800&q=80';
-    }
-    if (title.toLowerCase().includes('bioprocess') || title.toLowerCase().includes('fermentation')) {
-      return 'https://images.unsplash.com/photo-1582719471384-894fbb16e074?auto=format&fit=crop&w=800&q=80';
-    }
-    if (title.toLowerCase().includes('flow cytometry') || title.toLowerCase().includes('cell')) {
-      return 'https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&w=800&q=80';
-    }
-    if (title.toLowerCase().includes('haccp') || title.toLowerCase().includes('gmp') || title.toLowerCase().includes('food')) {
-      return 'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80';
-    }
-    return 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80';
-  }, [title]);
-
-  const displayImage = imgError || !workshop.imageUrl ? defaultImage : workshop.imageUrl;
+  const displayImage =
+    imgError || !workshop.imageUrl ? getDefaultWorkshopImageForTitle(title) : workshop.imageUrl;
 
   const handleRegisterClick = (e: React.MouseEvent) => {
     if (isExpired) {
       e.preventDefault();
       return;
     }
-    // External link security verification
-    if (!destinationUrl || destinationUrl === '#' || !destinationUrl.startsWith('http')) {
+    if (!hasValidUrl) {
       e.preventDefault();
       setShowDirectWarning(true);
     }
@@ -152,8 +123,6 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
               >
                 {format === 'Offline' ? (
                   <Building className="w-3 h-3" />
-                ) : format === 'Hybrid' ? (
-                  <Globe className="w-3 h-3" />
                 ) : (
                   <Globe className="w-3 h-3" />
                 )}
@@ -190,7 +159,8 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
                   e.stopPropagation();
                   onToggleBookmark(workshop.id, title);
                 }}
-                className={`pointer-events-auto p-2 rounded-full backdrop-blur-md transition-colors ${
+                aria-label={isBookmarked ? `Remove bookmark for ${title}` : `Bookmark ${title}`}
+                className={`pointer-events-auto p-2 rounded-full backdrop-blur-md transition-colors cursor-pointer ${
                   isBookmarked
                     ? 'bg-rose-500 text-white shadow-md'
                     : 'bg-slate-900/60 hover:bg-slate-900/80 text-white hover:text-rose-400'
@@ -221,12 +191,19 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
               <User className="w-3.5 h-3.5 text-[#14A3A0] shrink-0" />
               <span className="truncate">{instructor}</span>
             </div>
-            <h3
-              onClick={() => onSelectDetails?.(workshop)}
-              className="text-base font-bold text-slate-900 dark:text-slate-100 hover:text-[#1F6FB2] dark:hover:text-sky-400 transition-colors line-clamp-2 cursor-pointer"
-            >
-              {title}
-            </h3>
+            {onSelectDetails ? (
+              <button
+                type="button"
+                onClick={() => onSelectDetails(workshop)}
+                className="text-left text-base font-bold text-slate-900 dark:text-slate-100 hover:text-[#1F6FB2] dark:hover:text-sky-400 transition-colors line-clamp-2 cursor-pointer"
+              >
+                {title}
+              </button>
+            ) : (
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100 line-clamp-2">
+                {title}
+              </h3>
+            )}
           </div>
 
           <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2 leading-relaxed">
@@ -308,10 +285,19 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
 
           {isExpired ? (
             <button
+              type="button"
               disabled
               className="flex-1 py-2.5 px-3 rounded-xl bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 text-xs font-bold cursor-not-allowed text-center"
             >
               Registration Closed
+            </button>
+          ) : !hasValidUrl ? (
+            <button
+              type="button"
+              onClick={() => setShowDirectWarning(true)}
+              className="flex-1 py-2.5 px-3 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 text-xs font-bold text-center cursor-pointer hover:bg-amber-200 transition-colors"
+            >
+              Link Pending
             </button>
           ) : (
             <a
@@ -343,7 +329,12 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
                 <AlertCircle className="w-4 h-4" />
                 <span>Notice on Registration Link</span>
               </span>
-              <button onClick={() => setShowDirectWarning(false)} className="text-slate-400 hover:text-slate-600">
+              <button
+                type="button"
+                aria-label="Close notice"
+                onClick={() => setShowDirectWarning(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -352,8 +343,9 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
             </p>
             <div className="pt-2 flex justify-end">
               <button
+                type="button"
                 onClick={() => setShowDirectWarning(false)}
-                className="px-4 py-1.5 bg-[#0B2A5B] text-white rounded-lg font-bold"
+                className="px-4 py-1.5 bg-[#0B2A5B] text-white rounded-lg font-bold cursor-pointer"
               >
                 Understood
               </button>

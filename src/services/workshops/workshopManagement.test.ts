@@ -2,7 +2,19 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BionexaDatabase, DbWorkshop } from '../../db/bionexaDatabase';
+import { BionexaDatabase } from '../../db/bionexaDatabase';
+import {
+  isValidWorkshopRegistrationUrl,
+  isValidWorkshopImageUrl,
+  normalizeWorkshopFormat,
+  normalizeWorkshopStatus,
+  normalizeAvailabilityOption,
+  toDateInputValue,
+  isWorkshopRegistrationClosed,
+  filterWorkshops,
+  mapApiWorkshopToUnified,
+  mapUnifiedWorkshopToOpportunity
+} from './workshopHelpers';
 
 describe('Phase 08: Workshops Management System', () => {
   const testDbDir = path.resolve(process.cwd(), 'test-data-workshops');
@@ -36,7 +48,7 @@ describe('Phase 08: Workshops Management System', () => {
       format: 'Offline',
       venue: 'CSIR - Institute of Genomics & Integrative Biology, Mathura Road, New Delhi 110025',
       registrationDeadline: '2026-12-05',
-      registrationLink: 'https://www.igib.res.in/training',
+      registrationLink: 'https://www.igib.res.in/',
       availability: 'Open',
       status: 'upcoming',
       fees: '₹2,500 (Subsidized Student Rate)',
@@ -53,7 +65,7 @@ describe('Phase 08: Workshops Management System', () => {
     assert.equal(ws.status, 'upcoming');
     assert.equal(ws.availability, 'Open');
     assert.equal(ws.registrationDeadline, '2026-12-05');
-    assert.equal(ws.registrationLink, 'https://www.igib.res.in/training');
+    assert.equal(ws.registrationLink, 'https://www.igib.res.in/');
     assert.equal(ws.featured, true);
     assert.equal(ws.capacity, 35);
     assert.equal(ws.skillsCovered.length, 4);
@@ -61,7 +73,6 @@ describe('Phase 08: Workshops Management System', () => {
   });
 
   it('2. should support online, offline, and hybrid formats', () => {
-    // Online Workshop
     const onlineWs = db.createWorkshop({
       id: 'ws-rnaseq-002',
       name: 'High-Throughput RNA-Seq & Transcriptomics Analytics in R',
@@ -73,7 +84,7 @@ describe('Phase 08: Workshops Management System', () => {
       format: 'Online',
       venue: 'Virtual Hands-on Cloud RStudio Terminal (IISc Bioinformatics Gateway)',
       registrationDeadline: '2026-12-14',
-      registrationLink: 'https://iisc.ac.in/events',
+      registrationLink: 'https://www.bioinformatics.org/',
       availability: 'Filling Fast',
       status: 'upcoming',
       fees: 'Free (Sponsored Access)',
@@ -83,7 +94,6 @@ describe('Phase 08: Workshops Management System', () => {
       skillsCovered: ['RNA-Seq', 'DESeq2', 'R Bioconductor', 'Pathway Enrichment']
     });
 
-    // Hybrid Workshop
     const hybridWs = db.createWorkshop({
       id: 'ws-flow-003',
       name: 'Multicolor Flow Cytometry & Immunophenotyping Masterclass',
@@ -105,7 +115,6 @@ describe('Phase 08: Workshops Management System', () => {
       skillsCovered: ['FlowJo', 'Fluorophore Compensation', 'Cell Sorting']
     });
 
-    // Completed Workshop
     const completedWs = db.createWorkshop({
       id: 'ws-haccp-004',
       name: 'HACCP & GMP Quality Auditing for Food & Biopharma Enterprises',
@@ -117,7 +126,7 @@ describe('Phase 08: Workshops Management System', () => {
       format: 'Online',
       venue: 'DBT-BIRAC Digital Portal',
       registrationDeadline: '2026-10-10',
-      registrationLink: 'https://birac.nic.in/workshops',
+      registrationLink: 'https://www.afsti.org/',
       availability: 'Closed',
       status: 'completed',
       fees: 'Free',
@@ -134,29 +143,23 @@ describe('Phase 08: Workshops Management System', () => {
   });
 
   it('3. should filter workshops by status, format, and featured flag', () => {
-    // Filter by format: Offline
     const offlineList = db.getWorkshops({ format: 'Offline' });
     assert.equal(offlineList.length, 1);
     assert.equal(offlineList[0].id, 'ws-crispr-001');
 
-    // Filter by format: Online
     const onlineList = db.getWorkshops({ format: 'Online' });
     assert.equal(onlineList.length, 2);
 
-    // Filter by status: upcoming
     const upcomingList = db.getWorkshops({ status: 'upcoming' });
     assert.equal(upcomingList.length, 2);
 
-    // Filter by status: completed
     const completedList = db.getWorkshops({ status: 'completed' });
     assert.equal(completedList.length, 1);
     assert.equal(completedList[0].id, 'ws-haccp-004');
 
-    // Filter by featured
     const featuredList = db.getWorkshops({ featured: true });
     assert.equal(featuredList.length, 2);
 
-    // Filter by search keyword
     const searchList = db.getWorkshops({ search: 'CRISPR' });
     assert.equal(searchList.length, 1);
     assert.equal(searchList[0].name.includes('CRISPR'), true);
@@ -166,17 +169,16 @@ describe('Phase 08: Workshops Management System', () => {
     const updated = db.updateWorkshop('ws-rnaseq-002', {
       availability: 'Closed',
       status: 'completed',
-      registrationLink: 'https://iisc.ac.in/events/archive/rnaseq-2026',
+      registrationLink: 'https://www.bioinformatics.org/',
       featured: false
     });
 
     assert.ok(updated);
     assert.equal(updated.availability, 'Closed');
     assert.equal(updated.status, 'completed');
-    assert.equal(updated.registrationLink, 'https://iisc.ac.in/events/archive/rnaseq-2026');
+    assert.equal(updated.registrationLink, 'https://www.bioinformatics.org/');
     assert.equal(updated.featured, false);
 
-    // Fetch fresh from db
     const fresh = db.getWorkshopById('ws-rnaseq-002');
     assert.equal(fresh?.status, 'completed');
     assert.equal(fresh?.availability, 'Closed');
@@ -187,7 +189,7 @@ describe('Phase 08: Workshops Management System', () => {
     assert.equal(ws?.featured, true);
 
     const featuredList = db.getWorkshops({ featured: true });
-    assert.ok(featuredList.some(w => w.id === 'ws-flow-003'));
+    assert.ok(featuredList.some((w) => w.id === 'ws-flow-003'));
 
     const unfeatured = db.updateWorkshop('ws-flow-003', { featured: false });
     assert.equal(unfeatured?.featured, false);
@@ -199,5 +201,102 @@ describe('Phase 08: Workshops Management System', () => {
 
     const fetched = db.getWorkshopById('ws-haccp-004');
     assert.equal(fetched, null);
+  });
+
+  it('7. should validate registration URLs and image URLs/uploads cleanly', () => {
+    assert.equal(isValidWorkshopRegistrationUrl('https://www.igib.res.in/'), true);
+    assert.equal(isValidWorkshopRegistrationUrl('http://localhost:3000/reg'), true);
+    assert.equal(isValidWorkshopRegistrationUrl('#'), false);
+    assert.equal(isValidWorkshopRegistrationUrl(''), false);
+    assert.equal(isValidWorkshopRegistrationUrl('javascript:alert(1)'), false);
+
+    assert.equal(isValidWorkshopImageUrl('/uploads/workshops/banner-123.png'), true);
+    assert.equal(isValidWorkshopImageUrl('/assets/img/logo.jpeg'), true);
+    assert.equal(isValidWorkshopImageUrl('https://images.unsplash.com/photo-1.jpg'), true);
+    assert.equal(isValidWorkshopImageUrl('data:image/png;base64,iVBORw0KGgo='), true);
+    assert.equal(isValidWorkshopImageUrl('not-a-valid-url'), false);
+  });
+
+  it('8. should normalize formats, statuses, availability labels, and date inputs', () => {
+    assert.equal(normalizeWorkshopFormat('In-Person'), 'Offline');
+    assert.equal(normalizeWorkshopFormat('On-site'), 'Offline');
+    assert.equal(normalizeWorkshopFormat('Hybrid'), 'Hybrid');
+    assert.equal(normalizeWorkshopFormat('Remote'), 'Online');
+
+    assert.equal(normalizeWorkshopStatus('active'), 'ongoing');
+    assert.equal(normalizeWorkshopStatus('completed'), 'completed');
+    assert.equal(normalizeWorkshopStatus('upcoming'), 'upcoming');
+
+    assert.equal(normalizeAvailabilityOption('Open (45/50 Seats)'), 'Open');
+    assert.equal(normalizeAvailabilityOption('Filling Fast (6 Seats Left)'), 'Filling Fast');
+    assert.equal(normalizeAvailabilityOption('Waitlist Only'), 'Waitlist');
+    assert.equal(normalizeAvailabilityOption('Closed'), 'Closed');
+
+    assert.equal(toDateInputValue('2026-12-15'), '2026-12-15');
+    assert.equal(toDateInputValue('10 - 13 December 2026'), '2026-12-10');
+    assert.equal(toDateInputValue('invalid-date', '2026-12-01'), '2026-12-01');
+  });
+
+  it('9. should detect closed workshops and filter featured/mapped opportunities', () => {
+    const fixedNow = new Date('2026-11-14T12:00:00Z');
+    assert.equal(
+      isWorkshopRegistrationClosed({ status: 'completed', availability: 'Open' }, fixedNow),
+      true
+    );
+    assert.equal(
+      isWorkshopRegistrationClosed({ status: 'upcoming', availability: 'Closed' }, fixedNow),
+      true
+    );
+    assert.equal(
+      isWorkshopRegistrationClosed(
+        { status: 'upcoming', availability: 'Open', registrationDeadline: '2026-11-10' },
+        fixedNow
+      ),
+      true
+    );
+    assert.equal(
+      isWorkshopRegistrationClosed(
+        { status: 'upcoming', availability: 'Filling Fast', registrationDeadline: '2026-12-15' },
+        fixedNow
+      ),
+      false
+    );
+
+    const unified = [
+      mapApiWorkshopToUnified({
+        id: 'w1',
+        name: 'CRISPR Lab',
+        instructor: 'CSIR-IGIB',
+        date: '2026-12-10',
+        format: 'Offline',
+        venue: 'New Delhi',
+        registrationLink: 'https://www.igib.res.in/',
+        status: 'upcoming',
+        availability: 'Open',
+        featured: true
+      }),
+      mapApiWorkshopToUnified({
+        id: 'w2',
+        name: 'Flow Cytometry',
+        instructor: 'NCBS',
+        date: '2026-12-20',
+        format: 'Offline',
+        venue: 'Bengaluru',
+        registrationLink: 'https://www.ncbs.res.in/facilities/fcc',
+        status: 'upcoming',
+        availability: 'Open',
+        featured: false
+      })
+    ];
+
+    const featuredOnly = filterWorkshops(unified, { onlyFeatured: true });
+    assert.equal(featuredOnly.length, 1);
+    assert.equal(featuredOnly[0].id, 'w1');
+
+    const opp = mapUnifiedWorkshopToOpportunity(unified[0]);
+    assert.equal(opp.type, 'workshop');
+    assert.equal(opp.workMode, 'On-site');
+    assert.equal(opp.applicationUrl, 'https://www.igib.res.in/');
+    assert.equal(opp.featured, true);
   });
 });
