@@ -6,12 +6,15 @@ import { opportunityStore } from '../../services/opportunities/opportunityStore'
 import { Opportunity } from '../../types/opportunity';
 import type { UnifiedWorkshop } from '../workshops/WorkshopCard';
 import { mapApiWorkshopToUnified } from '../../services/workshops/workshopHelpers';
+import { UnifiedCourse, mapApiCourseToUnified } from '../../services/courses/courseHelpers';
 
 export const GlobalSearchModal: React.FC = () => {
   const { isSearchOpen, setIsSearchOpen, jobs, internships, courses, navigate } = useApp();
   const [query, setQuery] = useState('');
   const [filterType, setFilterType] = useState<'all' | 'jobs' | 'internships' | 'workshops' | 'courses' | 'exams' | 'scholarships' | 'research'>('all');
   const [liveWorkshops, setLiveWorkshops] = useState<UnifiedWorkshop[]>([]);
+  const [liveCourses, setLiveCourses] = useState<UnifiedCourse[]>([]);
+  const [liveCoursesLoaded, setLiveCoursesLoaded] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -39,6 +42,16 @@ export const GlobalSearchModal: React.FC = () => {
           }
         })
         .catch(() => {});
+
+      fetch('/api/courses')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d && Array.isArray(d.courses)) {
+            setLiveCourses(d.courses.map(mapApiCourseToUnified));
+            setLiveCoursesLoaded(true);
+          }
+        })
+        .catch(() => {});
     } else {
       setQuery('');
     }
@@ -56,9 +69,32 @@ export const GlobalSearchModal: React.FC = () => {
     .filter((i) => !q || i.title.toLowerCase().includes(q) || i.organization.toLowerCase().includes(q))
     .slice(0, 3);
 
-  const matchedCourses = courses
-    .filter((c) => !q || c.title.toLowerCase().includes(q) || c.category.toLowerCase().includes(q))
-    .slice(0, 3);
+  const matchedCourses = (liveCoursesLoaded
+    ? liveCourses.map((c) => ({
+        id: c.id,
+        title: c.title,
+        subtitle: c.provider,
+        category: c.category,
+        meta: c.deliveryMode,
+        status: c.status
+      }))
+    : courses.map((c) => ({
+        id: c.id,
+        title: c.title,
+        subtitle: c.instructor,
+        category: c.category,
+        meta: c.level,
+        status: 'available' as const
+      }))
+  )
+    .filter(
+      (c) =>
+        !q ||
+        c.title.toLowerCase().includes(q) ||
+        c.category.toLowerCase().includes(q) ||
+        c.subtitle.toLowerCase().includes(q)
+    )
+    .slice(0, 4);
 
   const matchedExams = SEED_EXAMS
     .filter((e) => !q || e.fullName.toLowerCase().includes(q) || e.shortName.toLowerCase().includes(q))
@@ -88,7 +124,7 @@ export const GlobalSearchModal: React.FC = () => {
     try {
       const opps: Opportunity[] = opportunityStore.getAllOpportunities();
       return opps
-        .filter((o: Opportunity) => o.isApproved && o.type !== 'workshop' && (!q || o.title.toLowerCase().includes(q) || o.organization.toLowerCase().includes(q) || o.branches.some((b: string) => b.toLowerCase().includes(q))))
+        .filter((o: Opportunity) => o.isApproved && o.type !== 'workshop' && o.type !== 'course' && (!q || o.title.toLowerCase().includes(q) || o.organization.toLowerCase().includes(q) || o.branches.some((b: string) => b.toLowerCase().includes(q))))
         .slice(0, 3);
     } catch {
       return [];
@@ -326,11 +362,17 @@ export const GlobalSearchModal: React.FC = () => {
                         {c.title}
                       </div>
                       <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                        <span>{c.instructor}</span>
+                        <span>{c.subtitle}</span>
                         <span>·</span>
-                        <span>{c.level}</span>
+                        <span>{c.category}</span>
                         <span>·</span>
-                        <span>★ {c.rating}</span>
+                        <span>{c.meta}</span>
+                        {c.status === 'closed' && (
+                          <>
+                            <span>·</span>
+                            <span className="text-rose-500 font-semibold">Closed</span>
+                          </>
+                        )}
                       </div>
                     </div>
                     <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-600 shrink-0" />

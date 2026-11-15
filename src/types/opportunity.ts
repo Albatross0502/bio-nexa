@@ -60,8 +60,13 @@ export interface CourseDetails {
   duration?: string;
   lessonsCount?: number;
   fees?: string;
+  deliveryMode?: string;
+  eligibility?: string;
+  registrationDeadline?: string;
+  imageUrl?: string;
   certificateAvailable?: boolean;
   certificateType?: string;
+  certificateInfo?: string;
   enrollmentUrl?: string;
   syllabus?: string[];
   level?: string;

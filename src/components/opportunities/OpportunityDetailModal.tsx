@@ -44,7 +44,9 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
 
   const daysLeft = getDaysUntilDeadline(opportunity.deadline);
   const isClosingSoon = opportunity.status === 'closing_soon' || opportunity.status === 'Closing Soon' || (daysLeft !== null && daysLeft <= 5 && daysLeft >= 0);
+  const isClosed = opportunity.status === 'closed' || opportunity.status === 'Closed';
   const isExpired = opportunity.status === 'expired' || opportunity.status === 'Expired' || (daysLeft !== null && daysLeft < 0);
+  const isUnavailable = isExpired || isClosed;
 
   const compensationDisplay = (() => {
     if (opportunity.salaryOrStipend && opportunity.salaryOrStipend !== 'Not Disclosed') {
@@ -248,7 +250,9 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
 
           {/* Description */}
           <div className="space-y-2">
-            <h4 className="text-sm font-bold text-slate-900 dark:text-white">Role Overview</h4>
+            <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+              {opportunity.type === 'course' ? 'Course Description' : 'Role Overview'}
+            </h4>
             <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line">
               {opportunity.description}
             </p>
@@ -285,37 +289,71 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
 
           {/* Course Details (if type is course) */}
           {opportunity.type === 'course' && (
-            <div className="p-4 bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 rounded-2xl space-y-3">
-              <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-200 text-sm">
-                <BookOpen className="w-4 h-4 text-amber-600" />
-                <span>Course & Certification Specifications</span>
+            <div className="p-4 bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 rounded-2xl space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-200 text-sm">
+                  <BookOpen className="w-4 h-4 text-amber-600" />
+                  <span>Course Specifications</span>
+                </div>
+                {opportunity.category && (
+                  <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-white dark:bg-slate-900 text-[#0B2A5B] dark:text-sky-300 border border-amber-200 dark:border-amber-800">
+                    {opportunity.category}
+                  </span>
+                )}
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
                 <div>
-                  <span className="text-slate-500 block">Course Provider:</span>
+                  <span className="text-slate-500 block">Provider / Institution:</span>
                   <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.provider || opportunity.organization}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block">Duration / Modules:</span>
+                  <span className="text-slate-500 block">Duration:</span>
                   <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.duration || opportunity.duration || 'Self-paced'}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block">Certification:</span>
-                  <span className="font-semibold text-emerald-600 dark:text-emerald-400">Verifiable Digital Certificate</span>
+                  <span className="text-slate-500 block">Delivery Mode:</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.deliveryMode || opportunity.location || 'Online'}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block">Tuition / Fee:</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.fees || opportunity.fees || 'Free'}</span>
+                  <span className="text-slate-500 block">Fees:</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.fees || opportunity.fees || 'See Provider Portal'}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block">Difficulty Level:</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.level || 'All Levels'}</span>
+                  <span className="text-slate-500 block">Registration Deadline:</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.registrationDeadline || opportunity.deadline || 'Open / Rolling'}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500 block">Rating Benchmark:</span>
-                  <span className="font-semibold text-amber-600">★ {opportunity.courseDetails?.rating || 4.9}</span>
+                  <span className="text-slate-500 block">Availability:</span>
+                  <span className={`font-semibold ${isUnavailable ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {isUnavailable ? 'Closed' : 'Available'}
+                  </span>
                 </div>
               </div>
+
+              {(opportunity.courseDetails?.eligibility || opportunity.eligibility) && (
+                <div className="text-xs text-slate-700 dark:text-slate-300 pt-1 border-t border-amber-200/70 dark:border-amber-800/40">
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">Eligibility: </span>
+                  {opportunity.courseDetails?.eligibility || opportunity.eligibility}
+                </div>
+              )}
+
+              {opportunity.courseDetails?.certificateInfo && (
+                <div className="text-xs text-slate-700 dark:text-slate-300 pt-1">
+                  <span className="font-semibold text-slate-900 dark:text-slate-100">Certificate Information: </span>
+                  {opportunity.courseDetails.certificateInfo}
+                </div>
+              )}
+
+              {opportunity.courseDetails?.syllabus && opportunity.courseDetails.syllabus.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-amber-200/70 dark:border-amber-800/40">
+                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100">Curriculum Modules</div>
+                  <ul className="list-disc list-inside space-y-1 text-xs text-slate-700 dark:text-slate-300">
+                    {opportunity.courseDetails.syllabus.map((mod, idx) => (
+                      <li key={idx}>{mod}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
@@ -375,12 +413,12 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
             >
               Close
             </button>
-            {isExpired ? (
+            {isUnavailable ? (
               <button
                 disabled
                 className="inline-flex items-center gap-2 px-5 py-2.5 text-xs font-bold text-slate-400 dark:text-slate-500 bg-slate-200 dark:bg-slate-800 rounded-xl cursor-not-allowed border border-slate-300 dark:border-slate-700"
               >
-                <span>Applications Closed</span>
+                <span>{isClosed ? 'Registration Closed' : 'Applications Closed'}</span>
               </button>
             ) : opportunity.applicationUrl ? (
               <a
@@ -393,7 +431,7 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
                   {opportunity.type === 'workshop' 
                     ? 'Register for Workshop' 
                     : opportunity.type === 'course' 
-                      ? 'Enroll in Course' 
+                      ? 'Go to Official Registration Portal' 
                       : 'Apply on Official Portal'}
                 </span>
                 <ExternalLink className="w-4 h-4" />

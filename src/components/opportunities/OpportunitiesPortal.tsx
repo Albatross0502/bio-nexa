@@ -33,6 +33,11 @@ import {
   mapApiWorkshopToUnified,
   mapUnifiedWorkshopToOpportunity
 } from '../../services/workshops/workshopHelpers';
+import {
+  UnifiedCourse,
+  mapApiCourseToUnified,
+  mapUnifiedCourseToOpportunity
+} from '../../services/courses/courseHelpers';
 import { useApp } from '../../context/AppContext';
 
 interface OpportunitiesPortalProps {
@@ -49,6 +54,8 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [dbWorkshops, setDbWorkshops] = useState<UnifiedWorkshop[]>([]);
   const [dbWorkshopsLoaded, setDbWorkshopsLoaded] = useState(false);
+  const [dbCourses, setDbCourses] = useState<UnifiedCourse[]>([]);
+  const [dbCoursesLoaded, setDbCoursesLoaded] = useState(false);
   const [selectedOpportunity, setSelectedOpportunity] = useState<Opportunity | null>(null);
   const [selectedWorkshop, setSelectedWorkshop] = useState<UnifiedWorkshop | null>(null);
   const [isSubmitModalOpen, setIsSubmitModalOpen] = useState(false);
@@ -78,7 +85,7 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
     return () => unsub();
   }, []);
 
-  // Fetch live workshops from SQLite API
+  // Fetch live workshops & courses from SQLite API
   useEffect(() => {
     let isMounted = true;
     fetch('/api/workshops')
@@ -90,18 +97,35 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
         }
       })
       .catch(() => {});
+
+    fetch('/api/courses')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (isMounted && d && Array.isArray(d.courses)) {
+          setDbCourses(d.courses.map(mapApiCourseToUnified));
+          setDbCoursesLoaded(true);
+        }
+      })
+      .catch(() => {});
+
     return () => {
       isMounted = false;
     };
   }, []);
 
-  // Merge live DB workshops into opportunities list
+  // Merge live DB workshops and courses into opportunities list
   const mergedOpportunities = useMemo(() => {
-    if (!dbWorkshopsLoaded) return opportunities;
-    const nonWorkshops = opportunities.filter((o) => o.type !== 'workshop');
-    const liveWorkshopsAsOpp = dbWorkshops.map(mapUnifiedWorkshopToOpportunity);
-    return [...nonWorkshops, ...liveWorkshopsAsOpp];
-  }, [opportunities, dbWorkshops, dbWorkshopsLoaded]);
+    let list = opportunities;
+    if (dbWorkshopsLoaded) {
+      const nonWorkshops = list.filter((o) => o.type !== 'workshop');
+      list = [...nonWorkshops, ...dbWorkshops.map(mapUnifiedWorkshopToOpportunity)];
+    }
+    if (dbCoursesLoaded) {
+      const nonCourses = list.filter((o) => o.type !== 'course');
+      list = [...nonCourses, ...dbCourses.map(mapUnifiedCourseToOpportunity)];
+    }
+    return list;
+  }, [opportunities, dbWorkshops, dbWorkshopsLoaded, dbCourses, dbCoursesLoaded]);
 
   // Update initial tab when props change
   useEffect(() => {

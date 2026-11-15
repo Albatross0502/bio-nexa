@@ -405,9 +405,18 @@ export const WelcomeLandingPage: React.FC<WelcomeLandingPageProps> = ({ onEnter 
         </div>
       </main>
 
-      {/* Subtle bottom spacing */}
-      <footer className="relative z-10 pb-4 text-center text-xs text-slate-400">
-        <span className="sr-only">BIO-NEXA Portal Gateway</span>
+      {/* Subtle Privacy & Session Notice */}
+      <footer className="relative z-10 pb-4 px-4 text-center text-[11px] text-slate-600">
+        <p>
+          Informational Life Sciences Discovery Portal · Clicking ENTER logs an optional session count unless declined in{' '}
+          <a href="/cookies" className="font-semibold text-[#0B2A5B] underline hover:text-teal-700">
+            Cookies &amp; Tracking
+          </a>{' '}
+          ·{' '}
+          <a href="/privacy" className="font-semibold text-[#0B2A5B] underline hover:text-teal-700">
+            Privacy Policy
+          </a>
+        </p>
       </footer>
 
       {/* Keyframe Styles for Waving Hand & Floating Robot */}

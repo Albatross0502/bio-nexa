@@ -90,20 +90,35 @@ export interface DbWorkshop {
   updatedAt: string;
 }
 
+export type CourseStatus = 'available' | 'closed' | 'active' | 'archived';
+
+export function normalizeDbCourseStatus(status?: string): 'available' | 'closed' {
+  const clean = (status || '').trim().toLowerCase();
+  if (clean === 'closed' || clean === 'archived' || clean === 'expired' || clean === 'inactive') {
+    return 'closed';
+  }
+  return 'available';
+}
+
 export interface DbCourse {
   id: string;
   name: string;
+  provider: string;
   description: string;
   duration: string;
   fees: string;
   eligibility: string;
   curriculum: string[];
+  deliveryMode: string;
+  certificateInfo: string;
+  registrationDeadline: string;
   registrationLink: string;
   availability: string;
-  status: 'active' | 'archived';
+  status: CourseStatus;
   instructor: string;
   level: string;
   category: string;
+  imageUrl?: string;
   isCertificateAvailable: boolean;
   featured: boolean;
   createdAt: string;
@@ -138,6 +153,31 @@ export interface DbBackupRecord {
   sizeBytes: number;
   createdAt: string;
   status: string;
+}
+
+export type DbComplianceRequestType =
+  | 'privacy_request'
+  | 'grievance'
+  | 'job_report'
+  | 'content_removal';
+
+export type DbComplianceRequestStatus = 'Pending' | 'In Review' | 'Resolved' | 'Action Taken';
+
+export interface DbComplianceRequest {
+  id: string;
+  referenceId: string;
+  requestType: DbComplianceRequestType;
+  subCategory: string;
+  requesterName: string;
+  requesterEmail: string;
+  organization: string;
+  targetTitleOrUrl: string;
+  details: string;
+  consentAccepted: boolean;
+  status: DbComplianceRequestStatus;
+  resolutionNotes: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export class BionexaDatabase {
@@ -230,18 +270,23 @@ export class BionexaDatabase {
       CREATE TABLE IF NOT EXISTS courses (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
+        provider TEXT DEFAULT '',
         description TEXT NOT NULL,
         duration TEXT NOT NULL,
         fees TEXT DEFAULT 'Free',
         eligibility TEXT DEFAULT 'Open to all Science Students',
         curriculum TEXT NOT NULL DEFAULT '[]',
+        delivery_mode TEXT DEFAULT 'Online (Self-Paced)',
+        certificate_info TEXT DEFAULT '',
+        registration_deadline TEXT DEFAULT '',
         registration_link TEXT NOT NULL,
-        availability TEXT DEFAULT 'Immediate Access',
-        status TEXT NOT NULL DEFAULT 'active',
-        instructor TEXT DEFAULT 'BIO-NEXA Faculty',
+        availability TEXT DEFAULT 'Available',
+        status TEXT NOT NULL DEFAULT 'available',
+        instructor TEXT DEFAULT '',
         level TEXT DEFAULT 'Intermediate',
         category TEXT DEFAULT 'Biotechnology',
-        is_certificate_available INTEGER NOT NULL DEFAULT 1,
+        image_url TEXT DEFAULT '',
+        is_certificate_available INTEGER NOT NULL DEFAULT 0,
         featured INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -285,12 +330,31 @@ export class BionexaDatabase {
         status TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS compliance_requests (
+        id TEXT PRIMARY KEY,
+        reference_id TEXT UNIQUE NOT NULL,
+        request_type TEXT NOT NULL,
+        sub_category TEXT NOT NULL,
+        requester_name TEXT NOT NULL,
+        requester_email TEXT NOT NULL,
+        organization TEXT DEFAULT '',
+        target_title_or_url TEXT DEFAULT '',
+        details TEXT NOT NULL,
+        consent_accepted INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT 'Pending',
+        resolution_notes TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_jobs_is_active ON jobs(is_active);
       CREATE INDEX IF NOT EXISTS idx_jobs_is_approved ON jobs(is_approved);
       CREATE INDEX IF NOT EXISTS idx_jobs_sector ON jobs(sector);
       CREATE INDEX IF NOT EXISTS idx_workshops_status ON workshops(status);
       CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status);
       CREATE INDEX IF NOT EXISTS idx_announcements_is_active ON announcements(is_active);
+      CREATE INDEX IF NOT EXISTS idx_compliance_type ON compliance_requests(request_type);
+      CREATE INDEX IF NOT EXISTS idx_compliance_status ON compliance_requests(status);
     `);
 
     // Ensure verification columns exist on existing databases
@@ -304,6 +368,14 @@ export class BionexaDatabase {
     try { this.db.exec("ALTER TABLE workshops ADD COLUMN registration_deadline TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE workshops ADD COLUMN featured INTEGER DEFAULT 0;"); } catch (_) {}
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_workshops_featured ON workshops(featured);"); } catch (_) {}
+
+    // Ensure Phase 09 course columns exist on existing databases
+    try { this.db.exec("ALTER TABLE courses ADD COLUMN provider TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE courses ADD COLUMN delivery_mode TEXT DEFAULT 'Online (Self-Paced)';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE courses ADD COLUMN certificate_info TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE courses ADD COLUMN registration_deadline TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE courses ADD COLUMN image_url TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_courses_featured ON courses(featured);"); } catch (_) {}
   }
 
   // ==========================================
@@ -659,14 +731,50 @@ export class BionexaDatabase {
   // COURSES CRUD
   // ==========================================
 
-  public getCourses(onlyActive: boolean = true): DbCourse[] {
-    let sql = 'SELECT * FROM courses';
-    if (onlyActive) {
-      sql += " WHERE status = 'active'";
+  public getCourses(filter?: boolean | {
+    onlyAvailable?: boolean;
+    category?: string;
+    status?: string;
+    featured?: boolean;
+    search?: string;
+  }): DbCourse[] {
+    let sql = 'SELECT * FROM courses WHERE 1=1';
+    const params: any[] = [];
+
+    if (typeof filter === 'boolean') {
+      if (filter) {
+        sql += " AND status NOT IN ('closed', 'archived')";
+      }
+    } else if (filter) {
+      if (filter.onlyAvailable) {
+        sql += " AND status NOT IN ('closed', 'archived')";
+      }
+      if (filter.status && filter.status !== 'all') {
+        const norm = normalizeDbCourseStatus(filter.status);
+        if (norm === 'closed') {
+          sql += " AND status IN ('closed', 'archived')";
+        } else {
+          sql += " AND status NOT IN ('closed', 'archived')";
+        }
+      }
+      if (filter.category && filter.category !== 'all') {
+        sql += ' AND LOWER(category) = LOWER(?)';
+        params.push(filter.category);
+      }
+      if (filter.featured !== undefined) {
+        sql += ' AND featured = ?';
+        params.push(filter.featured ? 1 : 0);
+      }
+      if (filter.search) {
+        sql += ' AND (name LIKE ? OR provider LIKE ? OR instructor LIKE ? OR description LIKE ? OR category LIKE ?)';
+        const term = `%${filter.search}%`;
+        params.push(term, term, term, term, term);
+      }
     }
+
     sql += ' ORDER BY featured DESC, created_at DESC';
 
-    const rows = this.db.prepare(sql).all() as any[];
+    const rows = this.db.prepare(sql).all(...params) as any[];
     return rows.map(this.mapCourseRow);
   }
 
@@ -676,32 +784,49 @@ export class BionexaDatabase {
     return this.mapCourseRow(row);
   }
 
-  public createCourse(data: Omit<DbCourse, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): DbCourse {
+  public createCourse(
+    data: Omit<DbCourse, 'id' | 'createdAt' | 'updatedAt' | 'provider' | 'deliveryMode' | 'certificateInfo' | 'registrationDeadline' | 'isCertificateAvailable'> & {
+      id?: string;
+      provider?: string;
+      deliveryMode?: string;
+      certificateInfo?: string;
+      registrationDeadline?: string;
+      isCertificateAvailable?: boolean;
+    }
+  ): DbCourse {
     const id = data.id || `course-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const now = new Date().toISOString();
+    const normStatus = normalizeDbCourseStatus(data.status);
+    const certInfo = (data.certificateInfo || '').trim();
+    const hasCert = Boolean(certInfo) || Boolean(data.isCertificateAvailable);
 
     this.db.prepare(`
       INSERT INTO courses (
-        id, name, description, duration, fees, eligibility,
-        curriculum, registration_link, availability, status,
-        instructor, level, category, is_certificate_available,
-        featured, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, provider, description, duration, fees, eligibility,
+        curriculum, delivery_mode, certificate_info, registration_deadline,
+        registration_link, availability, status, instructor, level, category,
+        image_url, is_certificate_available, featured, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.name,
+      data.provider || data.instructor || 'Course Provider',
       data.description,
-      data.duration,
+      data.duration || 'Self-Paced',
       data.fees || 'Free',
-      data.eligibility || 'Open to all Science Students',
+      data.eligibility || 'Life Sciences & Biotechnology Students',
       JSON.stringify(data.curriculum || []),
+      data.deliveryMode || 'Online (Self-Paced)',
+      certInfo,
+      data.registrationDeadline || 'Open / Rolling',
       data.registrationLink,
-      data.availability || 'Immediate Access',
-      data.status || 'active',
-      data.instructor || 'BIO-NEXA Faculty',
+      normStatus === 'closed' ? 'Closed' : (data.availability || 'Available'),
+      normStatus,
+      data.instructor || data.provider || '',
       data.level || 'Intermediate',
       data.category || 'Biotechnology',
-      data.isCertificateAvailable ? 1 : 0,
+      data.imageUrl || '',
+      hasCert ? 1 : 0,
       data.featured ? 1 : 0,
       now,
       now
@@ -714,32 +839,56 @@ export class BionexaDatabase {
     const existing = this.getCourseById(id);
     if (!existing) return null;
 
+    const mergedStatus = updates.status !== undefined
+      ? normalizeDbCourseStatus(updates.status)
+      : normalizeDbCourseStatus(existing.status);
+
+    const certInfo = updates.certificateInfo !== undefined
+      ? updates.certificateInfo.trim()
+      : existing.certificateInfo;
+
     const merged: DbCourse = {
       ...existing,
       ...updates,
+      status: mergedStatus,
+      availability: updates.availability !== undefined
+        ? updates.availability
+        : mergedStatus === 'closed'
+        ? 'Closed'
+        : 'Available',
+      certificateInfo: certInfo,
+      isCertificateAvailable: updates.certificateInfo !== undefined
+        ? Boolean(certInfo)
+        : (updates.isCertificateAvailable !== undefined ? updates.isCertificateAvailable : existing.isCertificateAvailable),
       updatedAt: new Date().toISOString()
     };
 
     this.db.prepare(`
       UPDATE courses SET
-        name = ?, description = ?, duration = ?, fees = ?,
-        eligibility = ?, curriculum = ?, registration_link = ?, availability = ?,
-        status = ?, instructor = ?, level = ?, category = ?,
+        name = ?, provider = ?, description = ?, duration = ?, fees = ?,
+        eligibility = ?, curriculum = ?, delivery_mode = ?, certificate_info = ?,
+        registration_deadline = ?, registration_link = ?, availability = ?,
+        status = ?, instructor = ?, level = ?, category = ?, image_url = ?,
         is_certificate_available = ?, featured = ?, updated_at = ?
       WHERE id = ?
     `).run(
       merged.name,
+      merged.provider,
       merged.description,
       merged.duration,
       merged.fees,
       merged.eligibility,
       JSON.stringify(merged.curriculum || []),
+      merged.deliveryMode,
+      merged.certificateInfo || '',
+      merged.registrationDeadline || '',
       merged.registrationLink,
       merged.availability,
       merged.status,
       merged.instructor,
       merged.level,
       merged.category,
+      merged.imageUrl || '',
       merged.isCertificateAvailable ? 1 : 0,
       merged.featured ? 1 : 0,
       merged.updatedAt,
@@ -946,6 +1095,116 @@ export class BionexaDatabase {
   }
 
   // ==========================================
+  // COMPLIANCE, PRIVACY & GRIEVANCE REQUESTS
+  // ==========================================
+
+  public createComplianceRequest(data: {
+    referenceId?: string;
+    requestType: DbComplianceRequestType;
+    subCategory: string;
+    requesterName: string;
+    requesterEmail: string;
+    organization?: string;
+    targetTitleOrUrl?: string;
+    details: string;
+    consentAccepted: boolean;
+  }): DbComplianceRequest {
+    const now = new Date().toISOString();
+    const id = `comp-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const referenceId =
+      data.referenceId ||
+      `BN-COMP-${now.slice(0, 10).replace(/-/g, '')}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+
+    this.db.prepare(`
+      INSERT INTO compliance_requests (
+        id, reference_id, request_type, sub_category, requester_name, requester_email,
+        organization, target_title_or_url, details, consent_accepted, status, resolution_notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      referenceId,
+      data.requestType,
+      data.subCategory,
+      data.requesterName,
+      data.requesterEmail,
+      data.organization || '',
+      data.targetTitleOrUrl || '',
+      data.details,
+      data.consentAccepted ? 1 : 0,
+      'Pending',
+      '',
+      now,
+      now
+    );
+
+    return this.getComplianceRequestById(id)!;
+  }
+
+  public getComplianceRequestById(id: string): DbComplianceRequest | null {
+    const row = this.db.prepare('SELECT * FROM compliance_requests WHERE id = ?').get(id) as any;
+    return row ? this.mapComplianceRow(row) : null;
+  }
+
+  public getComplianceRequests(filter?: {
+    requestType?: string;
+    status?: string;
+  }): DbComplianceRequest[] {
+    let sql = 'SELECT * FROM compliance_requests WHERE 1=1';
+    const params: any[] = [];
+    if (filter?.requestType && filter.requestType !== 'all') {
+      sql += ' AND request_type = ?';
+      params.push(filter.requestType);
+    }
+    if (filter?.status && filter.status !== 'all') {
+      sql += ' AND status = ?';
+      params.push(filter.status);
+    }
+    sql += ' ORDER BY created_at DESC';
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map((r) => this.mapComplianceRow(r));
+  }
+
+  public updateComplianceRequestStatus(
+    id: string,
+    status: DbComplianceRequestStatus,
+    resolutionNotes?: string
+  ): DbComplianceRequest | null {
+    const existing = this.getComplianceRequestById(id);
+    if (!existing) return null;
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE compliance_requests
+      SET status = ?, resolution_notes = ?, updated_at = ?
+      WHERE id = ?
+    `).run(status, resolutionNotes !== undefined ? resolutionNotes : existing.resolutionNotes, now, id);
+    return this.getComplianceRequestById(id);
+  }
+
+  public deleteComplianceRequest(id: string): boolean {
+    const result = this.db.prepare('DELETE FROM compliance_requests WHERE id = ?').run(id);
+    return (result as any).changes > 0;
+  }
+
+  private mapComplianceRow(r: any): DbComplianceRequest {
+    return {
+      id: r.id,
+      referenceId: r.reference_id,
+      requestType: r.request_type as DbComplianceRequestType,
+      subCategory: r.sub_category,
+      requesterName: r.requester_name,
+      requesterEmail: r.requester_email,
+      organization: r.organization || '',
+      targetTitleOrUrl: r.target_title_or_url || '',
+      details: r.details,
+      consentAccepted: r.consent_accepted === 1,
+      status: (r.status as DbComplianceRequestStatus) || 'Pending',
+      resolutionNotes: r.resolution_notes || '',
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    };
+  }
+
+  // ==========================================
   // HELPER MAPPERS
   // ==========================================
 
@@ -1042,21 +1301,29 @@ export class BionexaDatabase {
       curriculum = [];
     }
 
+    const normStatus = normalizeDbCourseStatus(r.status);
+    const certInfo = (r.certificate_info || '').trim();
+
     return {
       id: r.id,
       name: r.name,
+      provider: r.provider || r.instructor || 'Course Provider',
       description: r.description,
       duration: r.duration,
       fees: r.fees,
       eligibility: r.eligibility,
       curriculum,
+      deliveryMode: r.delivery_mode || 'Online (Self-Paced)',
+      certificateInfo: certInfo,
+      registrationDeadline: r.registration_deadline || 'Open / Rolling',
       registrationLink: r.registration_link,
-      availability: r.availability,
-      status: r.status,
-      instructor: r.instructor,
-      level: r.level,
-      category: r.category,
-      isCertificateAvailable: r.is_certificate_available === 1,
+      availability: normStatus === 'closed' ? 'Closed' : (r.availability || 'Available'),
+      status: normStatus,
+      instructor: r.instructor || r.provider || '',
+      level: r.level || 'Intermediate',
+      category: r.category || 'Biotechnology',
+      imageUrl: r.image_url || '',
+      isCertificateAvailable: Boolean(certInfo) || r.is_certificate_available === 1,
       featured: r.featured === 1,
       createdAt: r.created_at,
       updatedAt: r.updated_at
@@ -1283,27 +1550,291 @@ export class BionexaDatabase {
       console.error('[BIO-NEXA DB] Workshop migration note:', e);
     }
 
-    const courseCount = (this.db.prepare('SELECT COUNT(*) as count FROM courses').get() as any).count;
-    if (courseCount === 0 && seedCourses.length > 0) {
-      for (const c of seedCourses) {
-        this.createCourse({
-          id: c.id,
-          name: c.title || c.name,
-          description: c.overview || c.description,
-          duration: c.duration || '12 Hours (Self-paced)',
-          fees: 'Free (Sponsored Access)',
-          eligibility: 'B.Sc / M.Sc / Ph.D in Life Sciences',
-          curriculum: c.syllabus || ['Molecular Foundations', 'Experimental Protocols', 'Industry Case Studies'],
-          registrationLink: `/courses/${c.id}`,
-          availability: 'Immediate Access',
-          status: 'active',
-          instructor: c.instructor || 'BIO-NEXA Academy Faculty',
-          level: c.level || 'Intermediate',
-          category: c.category || 'Biotechnology',
-          isCertificateAvailable: true,
-          featured: !!c.featured
-        });
+    const phase9Courses = [
+      {
+        id: 'course-1',
+        name: 'CRISPR-Cas9 & Precision Gene Editing: Theory to Bench Protocol',
+        provider: 'CSIR-IGIB Training Portal',
+        instructor: 'Dr. Arindam Sen, Ph.D.',
+        category: 'Molecular Biology',
+        description: 'Rigorous curriculum covering CRISPR-Cas9 mechanisms, sgRNA design workflows (CRISPOR, CHOPCHOP), off-target analysis, Cas variants, and mammalian editing protocols.',
+        duration: '14 Hours (Self-Paced)',
+        eligibility: 'B.Sc, B.Tech, M.Sc, or Ph.D students in Life Sciences',
+        curriculum: [
+          'Module 1: Evolution of Genomic Editing — From Zinc Fingers to Cas9/Cas12',
+          'Module 2: sgRNA Design Engine & Off-Target Scoring',
+          'Module 3: Delivery Systems — Electroporation, AAV & Lipid Nanoparticles',
+          'Module 4: Validation Assays — T7E1, Sanger Deconvolution & NGS Amplicon-seq',
+          'Module 5: Therapeutic Applications & Assay Capstone'
+        ],
+        deliveryMode: 'Online (Self-Paced)',
+        fees: 'Free Open Curriculum',
+        certificateInfo: '',
+        registrationDeadline: '2026-12-31',
+        registrationLink: 'https://www.igib.res.in/',
+        availability: 'Available',
+        status: 'available' as const,
+        level: 'Intermediate',
+        imageUrl: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&w=800&q=80',
+        featured: true
+      },
+      {
+        id: 'course-2',
+        name: 'Industrial Bioprocess Technology: Upstream to Downstream Scale-Up',
+        provider: 'Biocon Academy',
+        instructor: 'Dr. Meenakshi Ramanathan',
+        category: 'Biotechnology',
+        description: 'Industrial fermentation kinetics, oxygen mass transfer coefficients (kLa), fed-batch optimization, single-use bioreactors, and downstream Protein A / IEX chromatography.',
+        duration: '6 Weeks (Self-Paced)',
+        eligibility: 'B.E./B.Tech or M.Sc in Biotechnology, Chemical Engineering, or Microbiology',
+        curriculum: [
+          'Module 1: Microbial vs Mammalian Bioprocess Kinetics',
+          'Module 2: Bioreactor Aeration, Agitation & kLa Determination',
+          'Module 3: Continuous & Fed-Batch Feeding Strategies',
+          'Module 4: Harvest, Depth Filtration & Tangential Flow Filtration',
+          'Module 5: Downstream Purification & CIP/SIP Overview'
+        ],
+        deliveryMode: 'Hybrid',
+        fees: 'Program fee applies at provider portal',
+        certificateInfo: 'Program completion documentation governed by Biocon Academy enrollment terms.',
+        registrationDeadline: '2026-12-20',
+        registrationLink: 'https://www.bioconacademy.com/',
+        availability: 'Available',
+        status: 'available' as const,
+        level: 'Advanced',
+        imageUrl: 'https://images.unsplash.com/photo-1582719471384-894fbb16e074?auto=format&fit=crop&w=800&q=80',
+        featured: true
+      },
+      {
+        id: 'course-3',
+        name: 'NGS Data Analysis & Bioinformatics Workflows',
+        provider: 'Institute of Bioinformatics and Applied Biotechnology (IBAB)',
+        instructor: 'Dr. Vikramaditya Joshi',
+        category: 'Bioinformatics',
+        description: 'Hands-on computational pipeline covering FASTQ quality control, reference alignment (BWA-MEM, STAR), variant calling best practices, and Python/Biopython scripting.',
+        duration: '4 Weeks (Self-Paced)',
+        eligibility: 'Undergraduate or Postgraduate students in Biology, Bioinformatics, or CS',
+        curriculum: [
+          'Module 1: FASTQ Format & Phred Quality Trimming',
+          'Module 2: Genome Indexing & Alignment (SAM/BAM Formats)',
+          'Module 3: Germline & Somatic Variant Calling Workflows',
+          'Module 4: Automation Scripting with Python & Biopython',
+          'Module 5: Genome Visualization & Functional Annotation'
+        ],
+        deliveryMode: 'Online (Self-Paced)',
+        fees: 'Check institutional course schedule',
+        certificateInfo: '',
+        registrationDeadline: '2026-12-31',
+        registrationLink: 'https://www.ibab.ac.in/',
+        availability: 'Available',
+        status: 'available' as const,
+        level: 'Beginner',
+        imageUrl: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80',
+        featured: true
+      },
+      {
+        id: 'course-4',
+        name: 'Applied Industrial & Environmental Microbiology',
+        provider: 'NPTEL / SWAYAM',
+        instructor: 'NPTEL Life Sciences Faculty',
+        category: 'Microbiology',
+        description: 'Covers microbial diversity, aseptic screening, industrial strain improvement, antimicrobial susceptibility methods, and bioremediation systems.',
+        duration: '8 Weeks',
+        eligibility: 'B.Sc / M.Sc Microbiology, Biotechnology, and Life Sciences learners',
+        curriculum: [
+          'Module 1: Microbial Physiology & Growth Kinetics',
+          'Module 2: Isolation, Screening & Strain Preservation',
+          'Module 3: Microbial Enzymes & Metabolite Production',
+          'Module 4: Quality & Sterility Testing Principles'
+        ],
+        deliveryMode: 'Online (Self-Paced)',
+        fees: 'Free to audit (Optional exam fee per SWAYAM policy)',
+        certificateInfo: 'Optional proctored exam certificate as published on SWAYAM/NPTEL.',
+        registrationDeadline: '2026-12-18',
+        registrationLink: 'https://onlinecourses.nptel.ac.in/',
+        availability: 'Available',
+        status: 'available' as const,
+        level: 'Intermediate',
+        imageUrl: 'https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=800&q=80',
+        featured: false
+      },
+      {
+        id: 'course-5',
+        name: 'Human Genetics & Population Genomics Primer',
+        provider: 'EMBL-EBI Open Training',
+        instructor: 'EMBL-EBI Training Team',
+        category: 'Genetics',
+        description: 'Explore Mendelian and complex inheritance, genome-wide association study (GWAS) concepts, variant interpretation databases, and Ensembl genome resources.',
+        duration: '6 Hours (Self-Paced)',
+        eligibility: 'Students & researchers in Genetics, Genomics, or Molecular Medicine',
+        curriculum: [
+          'Module 1: Human Genome Architecture & Variation',
+          'Module 2: Interpreting Variants in Ensembl & ClinVar',
+          'Module 3: Population Stratification & Linkage Disequilibrium',
+          'Module 4: Responsible Genomic Data Sharing'
+        ],
+        deliveryMode: 'Online (Self-Paced)',
+        fees: 'Free Open Access',
+        certificateInfo: '',
+        registrationDeadline: 'Open / Rolling',
+        registrationLink: 'https://www.ebi.ac.uk/training',
+        availability: 'Available',
+        status: 'available' as const,
+        level: 'Beginner',
+        imageUrl: 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80',
+        featured: false
+      },
+      {
+        id: 'course-6',
+        name: 'Biopharmaceutical Formulation & Quality Control Fundamentals',
+        provider: 'SWAYAM National Portal',
+        instructor: 'Pharmaceutical Sciences Faculty',
+        category: 'Pharmaceutical Sciences',
+        description: 'Foundations of drug delivery, stability indicating analytical assays (HPLC/UV), Good Manufacturing Practice (GMP) documentation, and pharmacopeial standards.',
+        duration: '12 Weeks',
+        eligibility: 'B.Pharm, M.Pharm, M.Sc Chemistry or Biotechnology candidates',
+        curriculum: [
+          'Module 1: Pre-formulation & Excipient Compatibility',
+          'Module 2: Stability Testing & Shelf-Life Estimation',
+          'Module 3: Analytical Method Validation (ICH Guidelines)',
+          'Module 4: cGMP Batch Records & Regulatory Audits'
+        ],
+        deliveryMode: 'Online (Self-Paced)',
+        fees: 'Free course access via SWAYAM',
+        certificateInfo: 'Official SWAYAM course rules apply upon exam registration.',
+        registrationDeadline: '2026-12-28',
+        registrationLink: 'https://swayam.gov.in/',
+        availability: 'Available',
+        status: 'available' as const,
+        level: 'Intermediate',
+        imageUrl: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?auto=format&fit=crop&w=800&q=80',
+        featured: false
+      },
+      {
+        id: 'course-7',
+        name: 'Good Clinical Practice (GCP) & Clinical Trial Design Cohort',
+        provider: 'NPTEL Health Sciences Track',
+        instructor: 'Clinical Research Faculty',
+        category: 'Clinical Research',
+        description: 'Phase I–IV clinical trial protocols, informed consent ethics, Institutional Ethics Committee (IEC) submissions, pharmacovigilance reporting, and biostatistical endpoints.',
+        duration: '8 Weeks (Cohort)',
+        eligibility: 'Graduates in Pharmacy, Medicine, Clinical Research, or Life Sciences',
+        curriculum: [
+          'Module 1: Ethics, Declaration of Helsinki & ICH-GCP',
+          'Module 2: Randomized Controlled Trial Design & Blinding',
+          'Module 3: Adverse Event Monitoring & Pharmacovigilance',
+          'Module 4: Clinical Data Management & Case Report Forms'
+        ],
+        deliveryMode: 'Online (Live Cohort)',
+        fees: 'Cohort Enrollment Closed for Current Cycle',
+        certificateInfo: '',
+        registrationDeadline: '2026-10-30',
+        registrationLink: 'https://nptel.ac.in/',
+        availability: 'Closed',
+        status: 'closed' as const,
+        level: 'Intermediate',
+        imageUrl: 'https://images.unsplash.com/photo-1530497610245-94d3c16cda28?auto=format&fit=crop&w=800&q=80',
+        featured: false
+      },
+      {
+        id: 'course-8',
+        name: 'Essential Wet-Lab Instrumentation: PCR, Electrophoresis & Spectrophotometry',
+        provider: 'NCBI & Open Science Learning Modules',
+        instructor: 'Molecular Methods Curators',
+        category: 'Laboratory Techniques',
+        description: 'Practical grounding in micropipetting accuracy, buffer preparation, nucleic acid quantification, primer design, end-point/qPCR troubleshooting, and SDS-PAGE.',
+        duration: '3 Weeks (Self-Paced)',
+        eligibility: 'B.Sc / M.Sc Life Sciences, MLT & Allied Biosciences students',
+        curriculum: [
+          'Module 1: Lab Math, Molarity, Serial Dilutions & Buffer Prep',
+          'Module 2: UV-Vis Spectrophotometry & Nucleic Acid Purity (A260/280)',
+          'Module 3: Primer Design & PCR/RT-qPCR Troubleshooting',
+          'Module 4: Agarose Gel & SDS-PAGE Electrophoresis'
+        ],
+        deliveryMode: 'Online (Self-Paced)',
+        fees: 'Free Open Resource',
+        certificateInfo: '',
+        registrationDeadline: 'Open / Rolling',
+        registrationLink: 'https://www.ncbi.nlm.nih.gov/home/learn/',
+        availability: 'Available',
+        status: 'available' as const,
+        level: 'Beginner',
+        imageUrl: 'https://images.unsplash.com/photo-1581093588401-fbb62a02f120?auto=format&fit=crop&w=800&q=80',
+        featured: false
+      },
+      {
+        id: 'course-9',
+        name: 'Research Methodology, Experimental Design & Biostatistics',
+        provider: 'NPTEL Research Methodology Program',
+        instructor: 'Research Methodology Faculty',
+        category: 'Research Methodology',
+        description: 'Hypothesis formulation, experimental controls, ANOVA, non-parametric tests, reproducible data reporting, literature review tools, and research ethics.',
+        duration: '8 Weeks',
+        eligibility: 'M.Sc, M.Tech, Ph.D scholars and early-career researchers',
+        curriculum: [
+          'Module 1: Formulating Research Questions & Experimental Controls',
+          'Module 2: Sample Size Power Analysis & Hypothesis Testing',
+          'Module 3: Reproducible Figures, Reference Managers & Preprints',
+          'Module 4: Publication Ethics & Peer Review Standards'
+        ],
+        deliveryMode: 'Online (Self-Paced)',
+        fees: 'Free to audit (Optional exam fee per NPTEL)',
+        certificateInfo: 'Official NPTEL exam rules apply if registered for proctored assessment.',
+        registrationDeadline: '2026-12-25',
+        registrationLink: 'https://onlinecourses.nptel.ac.in/',
+        availability: 'Available',
+        status: 'available' as const,
+        level: 'Intermediate',
+        imageUrl: 'https://images.unsplash.com/photo-1456513080510-7bf3a84b82f8?auto=format&fit=crop&w=800&q=80',
+        featured: false
       }
+    ];
+
+    const courseCount = (this.db.prepare('SELECT COUNT(*) as count FROM courses').get() as any).count;
+    const phase9SeedFlag = this.getContent('phase9_courses_initialized', false);
+
+    if (courseCount === 0 || !phase9SeedFlag) {
+      for (const c of phase9Courses) {
+        const existing = this.getCourseById(c.id);
+        if (!existing) {
+          this.createCourse(c);
+        } else {
+          // Enrich legacy pre-Phase-09 seeded courses cleanly with verified links, categories, and Phase 09 metadata
+          const isLegacyLink = !existing.registrationLink || existing.registrationLink.startsWith('/courses');
+          this.db.prepare(`
+            UPDATE courses SET
+              provider = CASE WHEN provider = '' OR provider IS NULL THEN ? ELSE provider END,
+              category = CASE WHEN category IN ('Molecular Biology & CRISPR', 'Bioprocess & Fermentation', 'Bioinformatics & NGS', '') OR category IS NULL THEN ? ELSE category END,
+              delivery_mode = CASE WHEN delivery_mode = '' OR delivery_mode IS NULL THEN ? ELSE delivery_mode END,
+              certificate_info = CASE WHEN certificate_info IS NULL OR certificate_info = '' THEN ? ELSE certificate_info END,
+              registration_deadline = CASE WHEN registration_deadline = '' OR registration_deadline IS NULL THEN ? ELSE registration_deadline END,
+              registration_link = CASE WHEN ? THEN ? ELSE registration_link END,
+              image_url = CASE WHEN image_url = '' OR image_url IS NULL THEN ? ELSE image_url END,
+              eligibility = CASE WHEN eligibility = 'Open to all Science Students' OR eligibility = '' THEN ? ELSE eligibility END,
+              fees = CASE WHEN fees IN ('Free (Sponsored Access)', 'Free Certified Masterclass') THEN ? ELSE fees END,
+              status = CASE WHEN status = 'active' THEN 'available' WHEN status = 'archived' THEN 'closed' ELSE status END,
+              availability = CASE WHEN availability = 'Immediate Access' THEN ? ELSE availability END,
+              featured = CASE WHEN id IN ('course-1', 'course-2', 'course-3') THEN 1 ELSE featured END,
+              is_certificate_available = ?
+            WHERE id = ?
+          `).run(
+            c.provider,
+            c.category,
+            c.deliveryMode,
+            c.certificateInfo,
+            c.registrationDeadline,
+            isLegacyLink ? 1 : 0,
+            c.registrationLink,
+            c.imageUrl,
+            c.eligibility,
+            c.fees,
+            c.availability,
+            c.certificateInfo ? 1 : 0,
+            existing.id
+          );
+        }
+      }
+      this.setContent('phase9_courses_initialized', true, 'system');
     }
 
     const annCount = (this.db.prepare('SELECT COUNT(*) as count FROM announcements').get() as any).count;

@@ -13,6 +13,7 @@ import {
   Award,
   Globe
 } from 'lucide-react';
+import { LegalCompliancePage } from '../legal/LegalPages';
 
 /* =========================================================================
    1. VERIFY CERTIFICATE PAGE
@@ -182,7 +183,7 @@ export const AboutPage: React.FC = () => {
           <strong>BIO-NEXA</strong> is a premier, non-commercial digital platform built for students, research scholars, freshers, and life science professionals across India and worldwide.
         </p>
         <p>
-          Bridging the critical gap between academic university education and real-world biopharmaceutical industrial requirements, BIO-NEXA unifies verified job vacancies, summer research fellowships, national competitive exam preparations (CSIR NET Life Sciences, GATE Biotechnology, DBT-BET), accredited course certifications, and PubMed literature discoveries into one coherent scientific umbrella.
+          Bridging the critical gap between academic university education and real-world biopharmaceutical industrial requirements, BIO-NEXA unifies curated job vacancies, summer research fellowships, national competitive exam preparations (CSIR NET Life Sciences, GATE Biotechnology, DBT-BET), structured course discovery, and PubMed literature discoveries into one coherent scientific umbrella.
         </p>
 
         <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 pt-4">
@@ -245,11 +246,16 @@ export const ContactPage: React.FC = () => {
         <div className="md:col-span-5 space-y-4 text-xs text-slate-600 dark:text-slate-400">
           <div className="p-5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
             <h3 className="font-bold text-slate-900 dark:text-slate-100 text-sm">
-              Headquarters &amp; Liaison Office
+              Operator Liaison &amp; Grievance Channel
             </h3>
             <p className="flex items-start gap-2">
               <MapPin className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
-              <span>Bio-Nexa Innovation Center, Biotech City, Bengaluru, Karnataka 560100, India</span>
+              <span>
+                India (Digital Platform Operations) —{' '}
+                <em className="text-amber-700 dark:text-amber-300">
+                  [Verified Legal Entity &amp; Registered Indian Address pending pre-launch completion by legal counsel]
+                </em>
+              </span>
             </p>
             <p className="flex items-center gap-2">
               <Mail className="w-4 h-4 text-teal-600 shrink-0" />
@@ -257,9 +263,14 @@ export const ContactPage: React.FC = () => {
             </p>
           </div>
 
-          <div className="p-5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs">
-            <h4 className="font-bold text-slate-900 dark:text-slate-100 mb-1">Response Commitment</h4>
-            <p>Our scientific moderation team reviews inquiries within 24 operational hours.</p>
+          <div className="p-5 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700 text-xs space-y-2">
+            <h4 className="font-bold text-slate-900 dark:text-slate-100">Grievance, DPDP &amp; Takedown Requests</h4>
+            <p>
+              For formal Indian DPDP privacy requests, fraud job reporting, or copyright/employer takedown notices, please use our{' '}
+              <a href="/grievance" className="font-bold text-[#0B2A5B] dark:text-sky-300 underline">
+                Compliance &amp; Grievance Redressal Desk
+              </a>.
+            </p>
           </div>
         </div>
 
@@ -338,57 +349,8 @@ export const ContactPage: React.FC = () => {
 };
 
 /* =========================================================================
-   4. PRIVACY POLICY
+   4. PRIVACY POLICY & 5. TERMS OF SERVICE (Delegated to LegalCompliancePage)
    ========================================================================= */
-export const PrivacyPage: React.FC = () => {
-  return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-6 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
-      <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 border-b pb-4">
-        Privacy &amp; Data Protection Policy
-      </h1>
-      <p>
-        Last Updated: November 2026. BIO-NEXA adheres strictly to the Digital Personal Data Protection (DPDP) Act of India and international standards.
-      </p>
-      <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 pt-2">
-        1. Information We Collect
-      </h2>
-      <p>
-        When you create an account, upload a curriculum vitae, or submit an application, we store your contact details and academic qualifications purely for matchmaking with authorized recruiters. We do not sell or monetize candidate data.
-      </p>
-      <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 pt-2">
-        2. Account Deletion &amp; Data Portability
-      </h2>
-      <p>
-        Users may request complete permanent deletion of their account and uploaded CV files at any time through the Student Dashboard settings or by emailing privacy@bio-nexa.org.
-      </p>
-    </div>
-  );
-};
+export const PrivacyPage: React.FC = () => <LegalCompliancePage initialSection="privacy" />;
 
-/* =========================================================================
-   5. TERMS OF SERVICE
-   ========================================================================= */
-export const TermsPage: React.FC = () => {
-  return (
-    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-6 text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
-      <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 border-b pb-4">
-        Terms of Service &amp; Code of Scientific Conduct
-      </h1>
-      <p>
-        By using BIO-NEXA, you agree to uphold rigorous scientific integrity, fair competition, and respectful peer interactions.
-      </p>
-      <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 pt-2">
-        1. Recruiter Guidelines
-      </h2>
-      <p>
-        All posted job and internship vacancies must represent legitimate scientific openings with clear remuneration/stipend or educational credit. Misleading or fraudulent posts are immediately terminated.
-      </p>
-      <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 pt-2">
-        2. Academic Integrity
-      </h2>
-      <p>
-        Certificates issued by BIO-NEXA represent individual mastery of course assessments. Cheating or sharing assessment keys violates certification conditions and invalidates credential serial numbers.
-      </p>
-    </div>
-  );
-};
+export const TermsPage: React.FC = () => <LegalCompliancePage initialSection="terms" />;

@@ -92,29 +92,37 @@ test('BionexaDatabase manages Workshops and Courses', () => {
   assert.equal(workshops.length, 1);
   assert.equal(workshops[0].name, 'Hands-on CRISPR Workshop');
 
-  // Course
+  // Course (Phase 09)
   const course = db.createCourse({
     id: 'test-c-1',
     name: 'Industrial Bioprocessing Track',
+    provider: 'NPTEL / Biocon Academy',
     description: 'Fermentation upscaling masterclass',
     duration: '16 Hours',
     fees: 'Free',
     eligibility: 'B.Sc / M.Sc Students',
     curriculum: ['Upstream', 'Downstream', 'QC'],
-    registrationLink: 'https://bionexa.org/courses/bioprocess',
-    availability: 'Immediate Access',
-    status: 'active',
+    deliveryMode: 'Online (Self-Paced)',
+    certificateInfo: '',
+    registrationDeadline: '2026-12-31',
+    registrationLink: 'https://onlinecourses.nptel.ac.in/',
+    availability: 'Available',
+    status: 'available',
     instructor: 'Dr. Ramanathan',
     level: 'Advanced',
-    category: 'Bioprocess & Fermentation',
-    isCertificateAvailable: true,
+    category: 'Biotechnology',
+    isCertificateAvailable: false,
     featured: true
   });
   assert.equal(course.id, 'test-c-1');
   assert.equal(course.name, 'Industrial Bioprocessing Track');
+  assert.equal(course.provider, 'NPTEL / Biocon Academy');
+  assert.equal(course.deliveryMode, 'Online (Self-Paced)');
+  assert.equal(course.registrationDeadline, '2026-12-31');
+  assert.equal(course.status, 'available');
   assert.deepEqual(course.curriculum, ['Upstream', 'Downstream', 'QC']);
 
-  const courses = db.getCourses();
+  const courses = db.getCourses({ category: 'Biotechnology' });
   assert.equal(courses.length, 1);
 });
 

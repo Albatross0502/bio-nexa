@@ -54,6 +54,18 @@ import {
   normalizeWorkshopStatus,
   toDateInputValue
 } from '../../services/workshops/workshopHelpers';
+import {
+  COURSE_CATEGORIES,
+  COURSE_DELIVERY_MODES,
+  DEFAULT_COURSE_IMAGE,
+  getDefaultCourseImageForCategory,
+  isValidCourseImageUrl,
+  isValidCourseRegistrationUrl,
+  normalizeCourseCategory,
+  normalizeCourseStatus,
+  normalizeDeliveryMode,
+  parseCurriculumInput
+} from '../../services/courses/courseHelpers';
 
 interface AdminDashboardProps {
   adminUser: AdminUser;
@@ -98,6 +110,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState<AdminCourse | null>(null);
+  const [courseImagePreview, setCourseImagePreview] = useState<string>('');
+  const [courseRegUrlDraft, setCourseRegUrlDraft] = useState<string>('');
+  const [isUploadingCourseImage, setIsUploadingCourseImage] = useState(false);
+  const [courseCategoryFilter, setCourseCategoryFilter] = useState<string>('all');
+  const [courseStatusFilter, setCourseStatusFilter] = useState<'all' | 'available' | 'closed'>('all');
 
   // Confirm Delete Dialog state
   const [deleteConfirm, setDeleteConfirm] = useState<{
@@ -397,30 +414,102 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   };
 
   // -------------------------------------------------------------
-  // Courses Handlers
+  // Courses Handlers (Phase 09)
   // -------------------------------------------------------------
+
+  const handleOpenCreateCourse = () => {
+    setEditingCourse(null);
+    setCourseImagePreview(DEFAULT_COURSE_IMAGE);
+    setCourseRegUrlDraft('');
+    setIsCourseModalOpen(true);
+  };
+
+  const handleOpenEditCourse = (c: AdminCourse) => {
+    setEditingCourse(c);
+    setCourseImagePreview(c.imageUrl || getDefaultCourseImageForCategory(c.category));
+    setCourseRegUrlDraft(c.registrationUrl || c.registrationLink || '');
+    setIsCourseModalOpen(true);
+  };
+
+  const handleToggleCourseFeatured = async (course: AdminCourse) => {
+    try {
+      const nextFeatured = !course.featured;
+      const updated = await adminApi.quickUpdateCourse(course.id, { featured: nextFeatured });
+      setCourses(courses.map((c) => (c.id === course.id ? updated : c)));
+      addToast(`"${updated.title}" is now ${nextFeatured ? 'featured on homepage' : 'removed from featured'}.`, 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Error updating course featured status.', 'error');
+    }
+  };
+
+  const handleChangeCourseStatus = async (course: AdminCourse, newStatus: 'available' | 'closed') => {
+    try {
+      const updated = await adminApi.quickUpdateCourse(course.id, { status: newStatus });
+      setCourses(courses.map((c) => (c.id === course.id ? updated : c)));
+      addToast(`"${updated.title}" marked as ${newStatus === 'closed' ? 'Closed' : 'Available'}.`, 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Error updating course status.', 'error');
+    }
+  };
 
   const handleSaveCourse = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
 
+    const title = String(formData.get('title') || '').trim();
+    const provider = String(formData.get('provider') || '').trim();
+    const registrationUrl = String(formData.get('registrationUrl') || courseRegUrlDraft || '').trim();
+    const imageUrl = (courseImagePreview || String(formData.get('imageUrl') || '').trim()).trim();
+
+    if (!title) {
+      addToast('Course title is required.', 'error');
+      return;
+    }
+    if (!provider) {
+      addToast('Provider or institution name is required.', 'error');
+      return;
+    }
+    if (!isValidCourseRegistrationUrl(registrationUrl)) {
+      addToast('Please provide a valid official registration URL starting with http:// or https://.', 'error');
+      return;
+    }
+    if (imageUrl && !isValidCourseImageUrl(imageUrl)) {
+      addToast('Course image must be a valid URL or uploaded image.', 'error');
+      return;
+    }
+
+    const category = normalizeCourseCategory(String(formData.get('category') || 'Biotechnology'));
+    const deliveryMode = normalizeDeliveryMode(String(formData.get('deliveryMode') || 'Online (Self-Paced)'));
+    const status = normalizeCourseStatus(String(formData.get('status') || 'available'));
+    const curriculum = parseCurriculumInput(String(formData.get('curriculum') || ''));
+    const certificateInfo = String(formData.get('certificateInfo') || '').trim();
+    const fees = String(formData.get('fees') || 'Free').trim() || 'Free';
+    const featured = formData.get('featured') === 'on' || formData.get('featured') === 'true';
+
     const coursePayload: Partial<AdminCourse> = {
-      title: String(formData.get('title') || '').trim(),
-      instructor: String(formData.get('instructor') || '').trim(),
-      category: String(formData.get('category') || 'Bioprocessing'),
-      duration: String(formData.get('duration') || '6 Weeks (Self-paced)').trim(),
-      level: String(formData.get('level') || 'Intermediate'),
-      price: String(formData.get('price') || 'Free Certified Masterclass').trim(),
+      title,
+      name: title,
+      provider,
+      instructor: String(formData.get('instructor') || provider).trim(),
+      category,
+      duration: String(formData.get('duration') || '6 Weeks').trim(),
+      level: String(formData.get('level') || 'Intermediate').trim(),
+      deliveryMode,
+      fees,
+      price: fees,
+      eligibility: String(formData.get('eligibility') || 'Life Sciences & Biotechnology Students').trim(),
       description: String(formData.get('description') || '').trim(),
-      syllabus: String(formData.get('syllabus') || '')
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      prerequisites: String(formData.get('prerequisites') || '')
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean),
-      featured: formData.get('featured') === 'on'
+      curriculum,
+      syllabus: curriculum,
+      certificateInfo,
+      isCertificateAvailable: Boolean(certificateInfo),
+      registrationDeadline: String(formData.get('registrationDeadline') || 'Open / Rolling').trim(),
+      registrationUrl,
+      registrationLink: registrationUrl,
+      imageUrl: imageUrl || getDefaultCourseImageForCategory(category),
+      status,
+      availability: status === 'closed' ? 'Closed' : 'Available',
+      featured
     };
 
     try {
@@ -540,12 +629,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
     );
   });
 
-  const filteredCourses = courses.filter(
-    (c) =>
-      !searchQuery ||
-      c.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.instructor.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredCourses = courses.filter((c) => {
+    if (courseCategoryFilter !== 'all') {
+      if (normalizeCourseCategory(c.category) !== courseCategoryFilter) return false;
+    }
+    if (courseStatusFilter !== 'all') {
+      if (normalizeCourseStatus(c.status, c.availability) !== courseStatusFilter) return false;
+    }
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      (c.title || '').toLowerCase().includes(q) ||
+      (c.provider || '').toLowerCase().includes(q) ||
+      (c.instructor || '').toLowerCase().includes(q) ||
+      (c.category || '').toLowerCase().includes(q) ||
+      (c.description || '').toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -1162,75 +1262,276 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
           )}
 
           {/* ========================================================= */}
-          {/* PANEL C: COURSES MANAGEMENT                                */}
+          {/* PANEL C: COURSES MANAGEMENT (PHASE 09)                    */}
           {/* ========================================================= */}
           {activeTab === 'courses' && (
             <div className="space-y-4 text-xs">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
                 <div>
-                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                    BIO-NEXA Academy Masterclasses &amp; Certification
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <span>Biotechnology Courses &amp; Educational Programs</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300">
+                      {courses.length} Courses
+                    </span>
                   </h2>
                   <p className="text-slate-500 text-[11px] mt-0.5">
-                    Manage self-paced courses, certified training tracks, module syllabi, and enrollment fees.
+                    Add, edit, or remove educational courses across 9 disciplines, upload course images, manage official registration links, availability, and homepage features.
                   </p>
                 </div>
                 <button
-                  onClick={() => {
-                    setEditingCourse(null);
-                    setIsCourseModalOpen(true);
-                  }}
+                  type="button"
+                  onClick={handleOpenCreateCourse}
                   className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
-                  <span>Create Academy Course</span>
+                  <span>Add Course</span>
                 </button>
               </div>
 
-              {/* Courses Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredCourses.map((c) => (
-                  <div key={c.id} className="p-5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-[#1F6FB2] uppercase text-[10px]">{c.category}</span>
-                        <span className="font-mono text-[10px] text-emerald-600 font-bold">{c.price}</span>
-                      </div>
-                      <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-1">{c.title}</h3>
-                      <div className="text-slate-500 text-[11px] mt-1">{c.instructor} · {c.duration} ({c.level})</div>
-                      <p className="text-slate-600 dark:text-slate-300 text-xs mt-2 line-clamp-2">{c.description}</p>
-                    </div>
-
-                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
-                      <span className="text-slate-400">Modules: <strong>{c.syllabus.length} sections</strong></span>
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => {
-                            setEditingCourse(c);
-                            setIsCourseModalOpen(true);
-                          }}
-                          className="px-2.5 py-1 text-slate-600 hover:text-sky-600 rounded-lg hover:bg-slate-100 font-bold"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() =>
-                            setDeleteConfirm({
-                              type: 'course',
-                              id: c.id,
-                              title: c.title
-                            })
-                          }
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50"
-                          title="Delete Course"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              {/* Stats Bar */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Courses</span>
+                  <span className="text-lg font-bold font-mono text-slate-900 dark:text-white">{courses.length}</span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Available</span>
+                  <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                    {courses.filter((c) => normalizeCourseStatus(c.status, c.availability) === 'available').length}
+                  </span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Closed</span>
+                  <span className="text-lg font-bold font-mono text-slate-500">
+                    {courses.filter((c) => normalizeCourseStatus(c.status, c.availability) === 'closed').length}
+                  </span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Homepage Featured</span>
+                  <span className="text-lg font-bold font-mono text-amber-500">
+                    {courses.filter((c) => c.featured).length}
+                  </span>
+                </div>
               </div>
+
+              {/* Filter Toolbar: 9 Categories + Availability Status */}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <label htmlFor="admin-course-category-filter" className="text-slate-400 font-semibold text-[11px]">
+                    Category:
+                  </label>
+                  <select
+                    id="admin-course-category-filter"
+                    value={courseCategoryFilter}
+                    onChange={(e) => setCourseCategoryFilter(e.target.value)}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold text-[11px] focus:outline-none"
+                  >
+                    <option value="all">All 9 Categories</option>
+                    {COURSE_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-slate-400 font-semibold text-[11px]">Status:</span>
+                  {(
+                    [
+                      { id: 'all', label: 'All' },
+                      { id: 'available', label: 'Available' },
+                      { id: 'closed', label: 'Closed' }
+                    ] as const
+                  ).map((st) => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => setCourseStatusFilter(st.id)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                        courseStatusFilter === st.id
+                          ? 'bg-[#0B2A5B] text-white shadow-2xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                      }`}
+                    >
+                      {st.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Courses Cards Grid */}
+              {filteredCourses.length === 0 ? (
+                <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-slate-500">
+                  No courses match the current category or status filter.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {filteredCourses.map((c) => {
+                    const normalizedStatus = normalizeCourseStatus(c.status, c.availability);
+                    const curriculumList = c.curriculum || c.syllabus || [];
+                    const regUrl = c.registrationUrl || c.registrationLink || '';
+
+                    return (
+                      <div
+                        key={c.id}
+                        className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between overflow-hidden hover:border-[#14A3A0]/60 transition-all"
+                      >
+                        <div>
+                          {/* Course Banner Thumbnail */}
+                          <div className="h-32 w-full bg-slate-100 dark:bg-slate-800 relative overflow-hidden">
+                            <img
+                              src={c.imageUrl || getDefaultCourseImageForCategory(c.category)}
+                              alt={c.title}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/75 via-transparent to-transparent" />
+
+                            <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-2">
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-white bg-[#0B2A5B]/90 backdrop-blur-md truncate max-w-[170px]">
+                                {normalizeCourseCategory(c.category)}
+                              </span>
+
+                              <button
+                                type="button"
+                                onClick={() => handleToggleCourseFeatured(c)}
+                                aria-label={
+                                  c.featured
+                                    ? `Unfeature course ${c.title} from homepage`
+                                    : `Feature course ${c.title} on homepage`
+                                }
+                                className={`p-1.5 rounded-full backdrop-blur-md transition-colors cursor-pointer ${
+                                  c.featured
+                                    ? 'bg-amber-500 text-white shadow-xs'
+                                    : 'bg-slate-900/60 text-slate-300 hover:text-amber-400'
+                                }`}
+                                title={c.featured ? 'Featured on Homepage (Click to unfeature)' : 'Feature on Homepage'}
+                              >
+                                <Star className={`w-3.5 h-3.5 ${c.featured ? 'fill-current' : ''}`} />
+                              </button>
+                            </div>
+
+                            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] text-white font-mono">
+                              <span>{c.duration || 'Self-Paced'}</span>
+                              <span className="font-bold text-emerald-300 truncate max-w-[130px]">
+                                {c.fees || c.price || 'See Provider'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Course Info Body */}
+                          <div className="p-4 space-y-2.5">
+                            <div>
+                              <div className="text-[10px] font-semibold text-[#14A3A0] truncate">
+                                {c.provider || c.instructor || 'Course Provider'}
+                              </div>
+                              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-0.5 line-clamp-2">
+                                {c.title}
+                              </h3>
+                            </div>
+
+                            <p className="text-[11px] text-slate-600 dark:text-slate-300 line-clamp-2">
+                              {c.description}
+                            </p>
+
+                            <div className="space-y-1 text-[10px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
+                              <div className="flex items-center justify-between gap-2">
+                                <span>Mode:</span>
+                                <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
+                                  {c.deliveryMode || 'Online (Self-Paced)'}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span>Deadline:</span>
+                                <span className="font-mono text-slate-700 dark:text-slate-200">
+                                  {c.registrationDeadline || 'Open / Rolling'}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between gap-2">
+                                <span>Curriculum:</span>
+                                <span className="font-semibold text-slate-700 dark:text-slate-200">
+                                  {curriculumList.length} module{curriculumList.length === 1 ? '' : 's'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Quick Status Toggle */}
+                            <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800">
+                              <label className="text-[9px] font-bold text-slate-400 block mb-0.5 uppercase">
+                                Course Availability
+                              </label>
+                              <select
+                                aria-label={`Availability status for ${c.title}`}
+                                value={normalizedStatus}
+                                onChange={(e) =>
+                                  handleChangeCourseStatus(c, e.target.value as 'available' | 'closed')
+                                }
+                                className={`w-full px-2.5 py-1 rounded-lg border font-bold text-[11px] focus:outline-none ${
+                                  normalizedStatus === 'closed'
+                                    ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300'
+                                    : 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300'
+                                }`}
+                              >
+                                <option value="available">Available (Registration Open)</option>
+                                <option value="closed">Closed (Registration Closed)</option>
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Card Footer Actions */}
+                        <div className="p-3 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            {isValidCourseRegistrationUrl(regUrl) ? (
+                              <a
+                                href={regUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label={`Open official registration link for ${c.title}`}
+                                className="p-1.5 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-white dark:hover:bg-slate-700 transition-colors"
+                                title="Verify Official Registration URL in New Tab"
+                              >
+                                <ExternalLink className="w-3.5 h-3.5" />
+                              </a>
+                            ) : (
+                              <span className="text-[10px] text-amber-500">No URL</span>
+                            )}
+                            <span className="text-[10px] text-slate-400">
+                              {c.featured ? '★ Featured' : ''}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditCourse(c)}
+                              aria-label={`Edit course ${c.title}`}
+                              className="px-2.5 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-200 rounded-lg font-bold border border-slate-200 dark:border-slate-600 transition-colors cursor-pointer"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDeleteConfirm({
+                                  type: 'course',
+                                  id: c.id,
+                                  title: c.title
+                                })
+                              }
+                              aria-label={`Delete course ${c.title}`}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                              title="Delete Course"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
@@ -2437,70 +2738,186 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       )}
 
       {/* ========================================================= */}
-      {/* ADD / EDIT COURSE MODAL                                   */}
+      {/* ADD / EDIT COURSE MODAL (PHASE 09)                        */}
       {/* ========================================================= */}
       {isCourseModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
-          <div className="w-full max-w-xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto text-xs">
+          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 sm:p-7 space-y-4 max-h-[92vh] overflow-y-auto text-xs">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
-                {editingCourse ? `Edit Course: ${editingCourse.title}` : 'Add Academy Course'}
-              </h3>
-              <button onClick={() => setIsCourseModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 block">
+                  Course Management
+                </span>
+                <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                  {editingCourse ? `Edit Course: ${editingCourse.title}` : 'Add Biotechnology Course'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                aria-label="Close course modal"
+                onClick={() => {
+                  setIsCourseModalOpen(false);
+                  setEditingCourse(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleSaveCourse} className="space-y-4">
+              {/* Course Name */}
               <div className="space-y-1">
-                <label className="block font-bold text-slate-700 dark:text-slate-300">Course Title *</label>
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Course Name / Title *</label>
                 <input
                   type="text"
                   name="title"
                   required
                   defaultValue={editingCourse?.title}
-                  placeholder="e.g. Industrial Fermentation & Bioprocess Masterclass"
+                  placeholder="e.g. Industrial Biotechnology & Bioprocess Engineering"
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                 />
               </div>
 
+              {/* Course Image Selection & Server Upload */}
+              <div className="space-y-2 p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Course Banner Image</span>
+                  </label>
+                  <label className="px-2.5 py-1 bg-white dark:bg-slate-700 hover:bg-slate-100 border border-slate-200 dark:border-slate-600 rounded-lg text-[10px] font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs">
+                    <Upload className="w-3 h-3 text-teal-500" />
+                    <span>{isUploadingCourseImage ? 'Uploading...' : 'Upload Course Image'}</span>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      disabled={isUploadingCourseImage}
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (file.size > 5 * 1024 * 1024) {
+                          addToast('Image must be 5 MB or smaller.', 'error');
+                          return;
+                        }
+                        const reader = new FileReader();
+                        reader.onload = async (event) => {
+                          const dataUrl = event.target?.result;
+                          if (typeof dataUrl !== 'string') return;
+                          setIsUploadingCourseImage(true);
+                          try {
+                            const uploadedPath = await adminApi.uploadCourseImage(file.name, dataUrl);
+                            setCourseImagePreview(uploadedPath);
+                            addToast('Course image uploaded to server.', 'success');
+                          } catch (err: any) {
+                            addToast(err.message || 'Failed to upload course image.', 'error');
+                          } finally {
+                            setIsUploadingCourseImage(false);
+                          }
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                  </label>
+                </div>
+
+                <input
+                  type="text"
+                  name="imageUrl"
+                  value={courseImagePreview}
+                  onChange={(e) => setCourseImagePreview(e.target.value)}
+                  placeholder="Paste course image URL, upload a file, or select a category preset..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-[11px] focus:outline-none"
+                />
+
+                <div className="flex flex-wrap gap-1.5">
+                  {COURSE_CATEGORIES.slice(0, 6).map((catPreset) => {
+                    const presetUrl = getDefaultCourseImageForCategory(catPreset);
+                    return (
+                      <button
+                        type="button"
+                        key={catPreset}
+                        onClick={() => setCourseImagePreview(presetUrl)}
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-all cursor-pointer ${
+                          courseImagePreview === presetUrl
+                            ? 'bg-teal-600 text-white border-teal-600 shadow-2xs'
+                            : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-600 hover:bg-slate-100'
+                        }`}
+                      >
+                        {catPreset}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {courseImagePreview && (
+                  <div className="relative h-24 w-full rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-900">
+                    <img src={courseImagePreview} alt="Course Preview" className="w-full h-full object-cover" />
+                    <span className="absolute bottom-1 right-2 text-[9px] bg-slate-950/80 px-2 py-0.5 rounded text-white font-mono">
+                      Image Preview
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Provider & Instructor */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Instructor / Lead *</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Provider / Institution *</label>
+                  <input
+                    type="text"
+                    name="provider"
+                    required
+                    defaultValue={editingCourse?.provider || ''}
+                    placeholder="e.g. NPTEL / SWAYAM, EMBL-EBI, Biocon Academy"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Lead Instructor (Optional)</label>
                   <input
                     type="text"
                     name="instructor"
-                    required
-                    defaultValue={editingCourse?.instructor}
-                    placeholder="e.g. Dr. Kavita Nair (Biocon Academy)"
+                    defaultValue={editingCourse?.instructor || ''}
+                    placeholder="e.g. Faculty / Coordinator Name"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
-                </div>
-                <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Category</label>
-                  <select
-                    name="category"
-                    defaultValue={editingCourse?.category || 'Bioprocessing'}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
-                  >
-                    <option value="Bioprocessing">Bioprocessing</option>
-                    <option value="Bioinformatics">Bioinformatics</option>
-                    <option value="Gene Editing">Gene Editing</option>
-                    <option value="QC & Regulatory">QC &amp; Regulatory</option>
-                  </select>
                 </div>
               </div>
 
+              {/* Category, Delivery Mode & Level */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Duration</label>
-                  <input
-                    type="text"
-                    name="duration"
-                    defaultValue={editingCourse?.duration || '6 Weeks (Self-paced)'}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
-                  />
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Course Category *</label>
+                  <select
+                    name="category"
+                    defaultValue={editingCourse ? normalizeCourseCategory(editingCourse.category) : 'Biotechnology'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
+                  >
+                    {COURSE_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
                 </div>
+
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Delivery Mode *</label>
+                  <select
+                    name="deliveryMode"
+                    defaultValue={editingCourse ? normalizeDeliveryMode(editingCourse.deliveryMode) : 'Online (Self-Paced)'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
+                  >
+                    {COURSE_DELIVERY_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {mode}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="space-y-1">
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Difficulty Level</label>
                   <select
@@ -2513,40 +2930,175 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     <option value="Advanced">Advanced</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Duration, Fees & Registration Deadline */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Fees / Access</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Duration *</label>
                   <input
                     type="text"
-                    name="price"
-                    defaultValue={editingCourse?.price || 'Free Certified Masterclass'}
+                    name="duration"
+                    required
+                    defaultValue={editingCourse?.duration || '8 Weeks'}
+                    placeholder="e.g. 8 Weeks / Self-Paced"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Fees (if applicable)</label>
+                  <input
+                    type="text"
+                    name="fees"
+                    defaultValue={editingCourse?.fees || editingCourse?.price || 'Free enrollment'}
+                    placeholder="e.g. Free / Program Fee applies"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Registration Deadline</label>
+                  <input
+                    type="text"
+                    name="registrationDeadline"
+                    defaultValue={editingCourse?.registrationDeadline || 'Open / Rolling'}
+                    placeholder="YYYY-MM-DD or Open / Rolling"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
                   />
                 </div>
               </div>
 
+              {/* Eligibility & Official Registration Link */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Eligibility *</label>
+                  <input
+                    type="text"
+                    name="eligibility"
+                    required
+                    defaultValue={editingCourse?.eligibility || 'B.Sc / M.Sc / B.Tech Biotechnology & Life Sciences Students'}
+                    placeholder="e.g. B.Sc / M.Sc / Ph.D in Life Sciences"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300">
+                      Official Registration Link *
+                    </label>
+                    {isValidCourseRegistrationUrl(courseRegUrlDraft) && (
+                      <a
+                        href={courseRegUrlDraft.trim()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-[10px] font-bold text-teal-600 hover:underline"
+                      >
+                        <span>Test URL</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                  <input
+                    type="url"
+                    name="registrationUrl"
+                    required
+                    value={courseRegUrlDraft}
+                    onChange={(e) => setCourseRegUrlDraft(e.target.value)}
+                    placeholder="https://onlinecourses.nptel.ac.in/"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-[11px] focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              {/* Description */}
               <div className="space-y-1">
-                <label className="block font-bold text-slate-700 dark:text-slate-300">Course Description</label>
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Course Description *</label>
                 <textarea
-                  rows={2}
+                  rows={3}
                   name="description"
+                  required
                   defaultValue={editingCourse?.description}
+                  placeholder="Describe what learners will study and practical competencies covered..."
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2">
+              {/* Curriculum Modules */}
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
+                  Curriculum (One module or topic per line)
+                </label>
+                <textarea
+                  rows={4}
+                  name="curriculum"
+                  defaultValue={(editingCourse?.curriculum || editingCourse?.syllabus || []).join('\n')}
+                  placeholder="Module 1: Core Theoretical Foundations&#10;Module 2: Experimental & Quantitative Analysis&#10;Module 3: Applied Case Studies"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+
+              {/* Certificate Information (Strictly optional, no invented claims) */}
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
+                  Certificate Information (Optional — only enter verified provider details)
+                </label>
+                <input
+                  type="text"
+                  name="certificateInfo"
+                  defaultValue={editingCourse?.certificateInfo || ''}
+                  placeholder="Leave blank if not offered; do not invent accreditations or affiliations"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+
+              {/* Status & Feature on Homepage */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Availability Status *</label>
+                  <select
+                    name="status"
+                    defaultValue={editingCourse ? normalizeCourseStatus(editingCourse.status, editingCourse.availability) : 'available'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
+                  >
+                    <option value="available">Available (Open for Registration)</option>
+                    <option value="closed">Closed (Registration Closed)</option>
+                  </select>
+                </div>
+
+                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Star className="w-4 h-4 text-amber-500 fill-amber-500 shrink-0" />
+                    <div>
+                      <div className="font-bold text-slate-900 dark:text-slate-100">Feature on Homepage</div>
+                      <div className="text-[10px] text-slate-500">Show in Section 05 Courses</div>
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    name="featured"
+                    defaultChecked={editingCourse?.featured || false}
+                    className="w-4 h-4 accent-amber-500 cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setIsCourseModalOpen(false)}
-                  className="px-4 py-2 text-slate-500 hover:bg-slate-100 rounded-xl"
+                  onClick={() => {
+                    setIsCourseModalOpen(false);
+                    setEditingCourse(null);
+                  }}
+                  className="px-4 py-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl shadow-xs cursor-pointer"
+                  className="px-5 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
-                  {editingCourse ? 'Save Changes' : 'Create Course'}
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>{editingCourse ? 'Save Course Changes' : 'Add Course'}</span>
                 </button>
               </div>
             </form>

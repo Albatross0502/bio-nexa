@@ -79,16 +79,29 @@ export interface AdminWorkshop {
 export interface AdminCourse {
   id: string;
   title: string;
+  name?: string;
+  provider: string;
   instructor: string;
   category: string;
   duration: string;
   level: string;
+  deliveryMode: string;
+  fees: string;
   price: string;
+  eligibility: string;
   description: string;
+  curriculum: string[];
   syllabus: string[];
-  prerequisites: string[];
-  featured: boolean;
+  prerequisites?: string[];
+  certificateInfo?: string;
   isCertificateAvailable: boolean;
+  registrationDeadline: string;
+  registrationUrl: string;
+  registrationLink?: string;
+  imageUrl?: string;
+  status: 'available' | 'closed';
+  availability?: string;
+  featured: boolean;
 }
 
 export interface AnnouncementItem {
@@ -310,14 +323,27 @@ class AdminApiClient {
 
   // --- Courses CRUD ---
 
+  public async uploadCourseImage(filename: string, dataUrl: string): Promise<string> {
+    const res = await fetch('/api/admin/courses/upload-image', {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ filename, dataUrl })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.imageUrl) {
+      throw new Error(data.message || 'Failed to upload course image');
+    }
+    return data.imageUrl;
+  }
+
   public async createCourse(course: Partial<AdminCourse>): Promise<AdminCourse> {
     const res = await fetch('/api/admin/courses', {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(course)
     });
-    if (!res.ok) throw new Error('Failed to create course');
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Failed to create course');
     return data.course;
   }
 
@@ -327,8 +353,22 @@ class AdminApiClient {
       headers: this.getHeaders(),
       body: JSON.stringify(updates)
     });
-    if (!res.ok) throw new Error('Failed to update course');
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Failed to update course');
+    return data.course;
+  }
+
+  public async quickUpdateCourse(
+    id: string,
+    updates: { status?: 'available' | 'closed'; featured?: boolean; registrationUrl?: string }
+  ): Promise<AdminCourse> {
+    const res = await fetch(`/api/admin/courses/${encodeURIComponent(id)}/quick`, {
+      method: 'PATCH',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.message || 'Failed to update course');
     return data.course;
   }
 
@@ -337,7 +377,10 @@ class AdminApiClient {
       method: 'DELETE',
       headers: this.getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to delete course');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.message || 'Failed to delete course');
+    }
   }
 
   // --- Website Content ---

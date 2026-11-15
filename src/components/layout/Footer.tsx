@@ -230,41 +230,111 @@ export const Footer: React.FC = () => {
           </div>
         </div>
 
+        {/* Legal, Compliance & Policy Navigation Strip (Policies A–H) */}
+        <div className="pt-8 pb-5 border-b border-slate-800/80 flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs">
+          <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-slate-300 shrink-0">
+            <ShieldCheck className="w-4 h-4 text-teal-400" />
+            <span>Legal, Privacy &amp; Compliance (India):</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[11px] text-slate-400">
+            <button
+              type="button"
+              onClick={() => navigate('/privacy')}
+              className="hover:text-teal-300 transition-colors cursor-pointer"
+            >
+              Privacy Policy
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/terms')}
+              className="hover:text-teal-300 transition-colors cursor-pointer"
+            >
+              Terms &amp; Conditions
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/job-disclaimer')}
+              className="hover:text-teal-300 transition-colors cursor-pointer"
+            >
+              Job Listing Disclaimer
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/external-links')}
+              className="hover:text-teal-300 transition-colors cursor-pointer"
+            >
+              External Links Disclaimer
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/cookies')}
+              className="hover:text-teal-300 transition-colors cursor-pointer"
+            >
+              Cookies &amp; Tracking
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/grievance')}
+              className="hover:text-teal-300 transition-colors cursor-pointer"
+            >
+              Grievance &amp; Contact
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/report-job')}
+              className="hover:text-rose-300 transition-colors cursor-pointer"
+            >
+              Report a Listing
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate('/content-removal')}
+              className="hover:text-teal-300 transition-colors cursor-pointer"
+            >
+              Content Removal &amp; Correction
+            </button>
+          </div>
+        </div>
+
         {/* Bottom Bar */}
-        <div className="pt-8 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-500">
+        <div className="pt-6 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-slate-500">
           <div className="flex flex-wrap items-center gap-4">
             <span className="font-semibold text-slate-400">
               BIOTECHNOLOGY · INTERNSHIP · EDUCATION · CAREERS
             </span>
             <span className="hidden sm:inline">|</span>
-            <span>&copy; {new Date().getFullYear()} BIO-NEXA. All rights reserved.</span>
+            <span>&copy; {new Date().getFullYear()} BIO-NEXA. Informational Discovery Platform.</span>
           </div>
           <div className="flex items-center gap-6">
             <button
+              type="button"
               onClick={() => navigate('/privacy')}
-              className="hover:text-slate-300 transition-colors"
+              className="hover:text-slate-300 transition-colors cursor-pointer"
             >
               Privacy Policy
             </button>
             <button
+              type="button"
               onClick={() => navigate('/terms')}
-              className="hover:text-slate-300 transition-colors"
+              className="hover:text-slate-300 transition-colors cursor-pointer"
             >
               Terms of Service
             </button>
             <button
+              type="button"
               onClick={() => {
                 sessionStorage.removeItem('bionexa_welcome_entered');
                 window.location.search = '?welcome=1';
               }}
-              className="hover:text-teal-400 transition-colors text-slate-400 flex items-center gap-1"
+              className="hover:text-teal-400 transition-colors text-slate-400 flex items-center gap-1 cursor-pointer"
               title="Return to Welcome Landing Screen"
             >
               <span>Welcome Screen</span>
             </button>
             <button
+              type="button"
               onClick={() => navigate('/admin')}
-              className="hover:text-slate-300 transition-colors text-slate-600"
+              className="hover:text-slate-300 transition-colors text-slate-600 cursor-pointer"
             >
               Staff Portal
             </button>

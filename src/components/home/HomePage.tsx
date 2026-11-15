@@ -36,6 +36,12 @@ import {
   mapUnifiedWorkshopToOpportunity,
   normalizeWorkshopFormat
 } from '../../services/workshops/workshopHelpers';
+import {
+  UnifiedCourse,
+  filterCourses,
+  mapApiCourseToUnified,
+  mapUnifiedCourseToOpportunity
+} from '../../services/courses/courseHelpers';
 
 export const HomePage: React.FC = () => {
   const { navigate, isItemSaved, toggleSaveItem, addToast } = useApp();
@@ -68,6 +74,10 @@ export const HomePage: React.FC = () => {
   const [dbWorkshops, setDbWorkshops] = useState<UnifiedWorkshop[]>([]);
   const [dbWorkshopsLoaded, setDbWorkshopsLoaded] = useState(false);
 
+  // 05. COURSES live catalog
+  const [dbCourses, setDbCourses] = useState<UnifiedCourse[]>([]);
+  const [dbCoursesLoaded, setDbCoursesLoaded] = useState(false);
+
   useEffect(() => {
     let isMounted = true;
     fetch('/api/workshops')
@@ -79,6 +89,17 @@ export const HomePage: React.FC = () => {
         }
       })
       .catch(() => {});
+
+    fetch('/api/courses')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (isMounted && d && Array.isArray(d.courses)) {
+          setDbCourses(d.courses.map(mapApiCourseToUnified));
+          setDbCoursesLoaded(true);
+        }
+      })
+      .catch(() => {});
+
     return () => {
       isMounted = false;
     };
@@ -153,16 +174,27 @@ export const HomePage: React.FC = () => {
       }));
   }, [dbWorkshopsLoaded, dbWorkshops, opportunities]);
 
-  // Filter public, non-expired opportunities (merging live DB workshops)
+  // Filter public, non-expired opportunities (merging live DB workshops & courses)
   const activeOpportunities = useMemo(() => {
-    const nonWorkshopActive = opportunities.filter(
-      (o) => o.isApproved && o.type !== 'workshop' && o.status !== 'Expired' && o.status !== 'Closed'
-    );
+    const baseFiltered = opportunities.filter((o) => {
+      if (!o.isApproved || o.type === 'workshop' || o.status === 'Expired' || o.status === 'Closed') {
+        return false;
+      }
+      if (dbCoursesLoaded && o.type === 'course') {
+        return false;
+      }
+      return true;
+    });
     const liveWorkshopsAsOpp = allWorkshops
       .map(mapUnifiedWorkshopToOpportunity)
       .filter((o) => o.status !== 'Closed' && o.status !== 'Expired');
-    return [...nonWorkshopActive, ...liveWorkshopsAsOpp];
-  }, [opportunities, allWorkshops]);
+    const liveCoursesAsOpp = dbCoursesLoaded
+      ? dbCourses
+          .map(mapUnifiedCourseToOpportunity)
+          .filter((o) => o.status !== 'Closed' && o.status !== 'Expired')
+      : [];
+    return [...baseFiltered, ...liveWorkshopsAsOpp, ...liveCoursesAsOpp];
+  }, [opportunities, allWorkshops, dbCourses, dbCoursesLoaded]);
 
   // Section 01: All Opportunities filtered
   const filteredAllOpportunities = useMemo(() => {
@@ -240,10 +272,15 @@ export const HomePage: React.FC = () => {
     return activeOpportunities.filter((o) => o.type === 'workshop').length;
   }, [activeOpportunities]);
 
-  // Section 05: Courses
+  // Section 05: Featured Courses (falls back to active courses if none marked featured)
   const coursesList = useMemo(() => {
+    if (dbCoursesLoaded) {
+      const featuredLive = filterCourses(dbCourses, { onlyFeatured: true });
+      const pool = featuredLive.length > 0 ? featuredLive : filterCourses(dbCourses, { status: 'available' });
+      return pool.slice(0, 6).map(mapUnifiedCourseToOpportunity);
+    }
     return activeOpportunities.filter(opp => opp.type === 'course');
-  }, [activeOpportunities]);
+  }, [dbCoursesLoaded, dbCourses, activeOpportunities]);
 
   const latestPapers = SEED_RESEARCH.slice(0, 2);
   const latestNews = SEED_NEWS.slice(0, 3);
@@ -880,13 +917,13 @@ export const HomePage: React.FC = () => {
               Biotechnology Courses &amp; Certifications
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-              Curated masterclasses with verifiable digital certificates, protocol guides, and interactive module quizzes.
+              Curated educational courses across biotechnology, bioinformatics, clinical research, and laboratory methodology.
             </p>
           </div>
 
           <button
             onClick={() => navigate('/courses')}
-            className="inline-flex items-center gap-1 text-sm font-bold text-amber-700 dark:text-amber-400 hover:underline shrink-0"
+            className="inline-flex items-center gap-1 text-sm font-bold text-amber-700 dark:text-amber-400 hover:underline shrink-0 cursor-pointer"
           >
             <span>Explore All Academy Courses</span>
             <ChevronRight className="w-4 h-4" />
@@ -900,7 +937,7 @@ export const HomePage: React.FC = () => {
               opportunity={course}
               onSelect={(selected) => setSelectedOpportunity(selected)}
               isBookmarked={isItemSaved(course.id)}
-              onToggleBookmark={(id) => toggleSaveItem(course.id, course.title)}
+              onToggleBookmark={(_id) => toggleSaveItem(course.id, course.title)}
             />
           ))}
         </div>

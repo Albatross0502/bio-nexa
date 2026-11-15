@@ -20,6 +20,16 @@ import { SEED_JOBS, SEED_COURSES } from './src/data/seedData.js';
 import { SEED_OPPORTUNITIES } from './src/services/opportunities/seedOpportunities.js';
 import { bionexaDb, DbJob, DbWorkshop, DbCourse } from './src/db/bionexaDatabase.js';
 import { automatedJobManager, AUTHORIZED_SOURCES } from './src/services/jobs/automatedJobManager.js';
+import {
+  normalizeCourseCategory,
+  normalizeCourseStatus,
+  normalizeDeliveryMode,
+  parseCurriculumInput
+} from './src/services/courses/courseHelpers.js';
+import {
+  normalizeComplianceRequestType,
+  validateComplianceRequest
+} from './src/services/legal/legalCompliance.js';
 
 import crypto from 'node:crypto';
 
@@ -29,10 +39,14 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
-// Serve uploaded workshop images safely
+// Serve uploaded workshop and course images safely
 const workshopUploadsDir = path.resolve(process.cwd(), 'public', 'uploads', 'workshops');
+const courseUploadsDir = path.resolve(process.cwd(), 'public', 'uploads', 'courses');
 if (!fs.existsSync(workshopUploadsDir)) {
   fs.mkdirSync(workshopUploadsDir, { recursive: true });
+}
+if (!fs.existsSync(courseUploadsDir)) {
+  fs.mkdirSync(courseUploadsDir, { recursive: true });
 }
 app.use('/uploads', express.static(path.resolve(process.cwd(), 'public', 'uploads')));
 
@@ -259,6 +273,46 @@ app.post('/api/jobs/:id/report', (req: Request, res: Response) => {
   }
 });
 
+// POST /api/compliance/request (DPDP Privacy Requests, Grievances, Job Reports & Content Takedowns)
+app.post('/api/compliance/request', (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const requestType = normalizeComplianceRequestType(body.requestType);
+    const input = {
+      requestType,
+      subCategory: sanitizeString(body.subCategory),
+      requesterName: sanitizeString(body.requesterName),
+      requesterEmail: sanitizeString(body.requesterEmail),
+      organization: sanitizeString(body.organization),
+      targetTitleOrUrl: sanitizeString(body.targetTitleOrUrl),
+      details: sanitizeString(body.details),
+      consentAccepted: Boolean(body.consentAccepted)
+    };
+
+    const validation = validateComplianceRequest(input);
+    if (!validation.valid) {
+      res.status(400).json({
+        error: 'Validation Error',
+        message: validation.error || 'Invalid compliance request submission.'
+      });
+      return;
+    }
+
+    const record = bionexaDb.createComplianceRequest(input);
+    res.status(201).json({
+      success: true,
+      referenceId: record.referenceId,
+      request: record,
+      message:
+        requestType === 'privacy_request' || requestType === 'grievance'
+          ? 'Your DPDP / Grievance submission has been logged with tracking reference ' + record.referenceId + '.'
+          : 'Your listing report / content removal request has been logged with reference ' + record.referenceId + ' for priority moderation review.'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Internal Server Error', message: err.message });
+  }
+});
+
 // GET /api/workshops
 app.get('/api/workshops', (req: Request, res: Response) => {
   try {
@@ -290,10 +344,17 @@ app.get('/api/workshops/:id', (req: Request, res: Response) => {
 });
 
 // GET /api/courses
-app.get('/api/courses', (_req: Request, res: Response) => {
+app.get('/api/courses', (req: Request, res: Response) => {
   try {
-    const courses = bionexaDb.getCourses(true);
-    res.json({ success: true, count: courses.length, courses });
+    const { category, status, featured, search, onlyAvailable } = req.query;
+    const courses = bionexaDb.getCourses({
+      onlyAvailable: onlyAvailable === 'true',
+      category: typeof category === 'string' ? category : undefined,
+      status: typeof status === 'string' ? status : undefined,
+      featured: featured === 'true' ? true : featured === 'false' ? false : undefined,
+      search: typeof search === 'string' ? search : undefined
+    });
+    res.json({ success: true, count: courses.length, courses: courses.map(formatCourseForAdmin) });
   } catch (err: any) {
     res.status(500).json({ error: 'Internal Server Error', message: err.message });
   }
@@ -307,7 +368,7 @@ app.get('/api/courses/:id', (req: Request, res: Response) => {
       res.status(404).json({ error: 'Not Found', message: 'Course not found.' });
       return;
     }
-    res.json({ success: true, course });
+    res.json({ success: true, course: formatCourseForAdmin(course) });
   } catch (err: any) {
     res.status(500).json({ error: 'Internal Server Error', message: err.message });
   }
@@ -503,19 +564,35 @@ function formatWorkshopForAdmin(w: DbWorkshop) {
 }
 
 function formatCourseForAdmin(c: DbCourse) {
+  const status = normalizeCourseStatus(c.status, c.availability);
+  const category = normalizeCourseCategory(c.category);
   return {
     id: c.id,
     title: c.name,
-    instructor: c.instructor,
-    category: c.category,
+    name: c.name,
+    provider: c.provider || c.instructor || 'Institutional Training Partner',
+    instructor: c.instructor || c.provider || '',
+    category,
     duration: c.duration,
-    level: c.level,
-    price: c.fees,
+    level: c.level || 'Intermediate',
+    deliveryMode: c.deliveryMode || 'Online (Self-Paced)',
+    fees: c.fees || 'Free',
+    price: c.fees || 'Free',
+    eligibility: c.eligibility || 'Open to Science Students',
     description: c.description,
-    syllabus: c.curriculum,
-    prerequisites: ['Basic Biology knowledge', 'Enthusiasm for Biotechnology'],
-    featured: c.featured,
-    isCertificateAvailable: c.isCertificateAvailable
+    curriculum: c.curriculum || [],
+    syllabus: c.curriculum || [],
+    certificateInfo: c.certificateInfo || '',
+    isCertificateAvailable: Boolean(c.certificateInfo) || Boolean(c.isCertificateAvailable),
+    registrationDeadline: c.registrationDeadline || 'Open / Rolling',
+    registrationUrl: c.registrationLink || '',
+    registrationLink: c.registrationLink || '',
+    imageUrl: c.imageUrl || '',
+    status,
+    availability: status === 'closed' ? 'Closed' : 'Available',
+    featured: Boolean(c.featured),
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt
   };
 }
 
@@ -923,31 +1000,96 @@ app.delete('/api/admin/workshops/:id', requireAdminAuth, (req: Request, res: Res
 // C. Courses Management Endpoints
 // -------------------------------------------------------------
 
+// POST /api/admin/courses/upload-image (Upload Course Banner Image)
+app.post('/api/admin/courses/upload-image', requireAdminAuth, (req: Request, res: Response) => {
+  try {
+    const { dataUrl, filename } = req.body || {};
+    if (typeof dataUrl !== 'string') {
+      res.status(400).json({ error: 'Validation Error', message: 'Image data is required.' });
+      return;
+    }
+
+    const match = dataUrl.match(/^data:image\/(png|jpeg|jpg|webp|gif);base64,([A-Za-z0-9+/=]+)$/i);
+    if (!match) {
+      res.status(400).json({
+        error: 'Validation Error',
+        message: 'Unsupported image format. Please upload PNG, JPG, WEBP, or GIF.'
+      });
+      return;
+    }
+
+    const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length > 5 * 1024 * 1024) {
+      res.status(400).json({ error: 'Validation Error', message: 'Image must be 5 MB or smaller.' });
+      return;
+    }
+
+    const safeBase = sanitizeString(filename || 'course')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[^a-zA-Z0-9_-]/g, '-')
+      .slice(0, 40) || 'course';
+    const storedName = `${safeBase}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}.${ext}`;
+    const targetFile = path.resolve(courseUploadsDir, storedName);
+
+    fs.writeFileSync(targetFile, buffer);
+
+    res.status(201).json({
+      success: true,
+      imageUrl: `/uploads/courses/${storedName}`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Upload Error', message: err.message });
+  }
+});
+
 // POST /api/admin/courses (Add Course)
 app.post('/api/admin/courses', requireAdminAuth, (req: Request, res: Response) => {
   try {
     const body = req.body;
     const name = sanitizeString(body.title || body.name);
+    const provider = sanitizeString(body.provider || body.instructor);
+    const registrationLink = sanitizeString(body.registrationUrl || body.registrationLink);
 
-    if (!name) {
-      res.status(400).json({ error: 'Validation Error', message: 'Course title is required.' });
+    if (!name || !provider || !registrationLink) {
+      res.status(400).json({
+        error: 'Validation Error',
+        message: 'Course title, provider/institution, and official registration URL are required.'
+      });
       return;
     }
 
+    if (!isValidHttpUrl(registrationLink)) {
+      res.status(400).json({
+        error: 'Validation Error',
+        message: 'Official registration URL must start with http:// or https://'
+      });
+      return;
+    }
+
+    const status = normalizeCourseStatus(body.status, body.availability);
+    const certificateInfo = sanitizeString(body.certificateInfo || '');
+    const curriculum = parseCurriculumInput(body.curriculum || body.syllabus);
+
     const course = bionexaDb.createCourse({
       name,
-      description: sanitizeString(body.description || 'Self-paced biotechnology curriculum.'),
-      duration: sanitizeString(body.duration || '10 Hours'),
-      fees: sanitizeString(body.price || body.fees || 'Free'),
-      eligibility: 'Open to all Science Students',
-      curriculum: Array.isArray(body.syllabus) ? body.syllabus : ['Module 1: Principles', 'Module 2: Practical Lab'],
-      registrationLink: `/courses/enroll`,
-      availability: 'Immediate Access',
-      status: 'active',
-      instructor: sanitizeString(body.instructor || 'BIO-NEXA Faculty'),
+      provider,
+      instructor: sanitizeString(body.instructor || provider),
+      category: normalizeCourseCategory(body.category),
+      description: sanitizeString(body.description || 'Structured biotechnology and life sciences curriculum.'),
+      duration: sanitizeString(body.duration || 'Self-Paced'),
+      eligibility: sanitizeString(body.eligibility || 'Life Sciences & Biotechnology Students'),
+      curriculum: curriculum.length > 0 ? curriculum : ['Module 1: Core Foundations', 'Module 2: Applied Protocols'],
+      deliveryMode: normalizeDeliveryMode(body.deliveryMode),
+      fees: sanitizeString(body.fees || body.price || 'See Provider Portal'),
+      certificateInfo,
+      registrationDeadline: sanitizeString(body.registrationDeadline || 'Open / Rolling'),
+      registrationLink,
+      availability: status === 'closed' ? 'Closed' : 'Available',
+      status,
       level: sanitizeString(body.level || 'Intermediate'),
-      category: sanitizeString(body.category || 'Biotechnology'),
-      isCertificateAvailable: true,
+      imageUrl: sanitizeString(body.imageUrl || ''),
+      isCertificateAvailable: Boolean(certificateInfo),
       featured: Boolean(body.featured)
     });
 
@@ -965,14 +1107,81 @@ app.put('/api/admin/courses/:id', requireAdminAuth, (req: Request, res: Response
 
     const updates: Partial<DbCourse> = {};
     if (body.title || body.name) updates.name = sanitizeString(body.title || body.name);
-    if (body.instructor) updates.instructor = sanitizeString(body.instructor);
-    if (body.category) updates.category = sanitizeString(body.category);
+    if (body.provider) updates.provider = sanitizeString(body.provider);
+    if (body.instructor !== undefined) updates.instructor = sanitizeString(body.instructor);
+    if (body.category) updates.category = normalizeCourseCategory(body.category);
     if (body.duration) updates.duration = sanitizeString(body.duration);
     if (body.level) updates.level = sanitizeString(body.level);
-    if (body.price || body.fees) updates.fees = sanitizeString(body.price || body.fees);
-    if (body.description) updates.description = sanitizeString(body.description);
-    if (Array.isArray(body.syllabus)) updates.curriculum = body.syllabus;
+    if (body.deliveryMode) updates.deliveryMode = normalizeDeliveryMode(body.deliveryMode);
+    if (body.eligibility !== undefined) updates.eligibility = sanitizeString(body.eligibility);
+    if (body.price !== undefined || body.fees !== undefined) {
+      updates.fees = sanitizeString(body.fees !== undefined ? body.fees : body.price);
+    }
+    if (body.description !== undefined) updates.description = sanitizeString(body.description);
+    if (body.curriculum !== undefined || body.syllabus !== undefined) {
+      updates.curriculum = parseCurriculumInput(body.curriculum !== undefined ? body.curriculum : body.syllabus);
+    }
+    if (body.certificateInfo !== undefined) {
+      updates.certificateInfo = sanitizeString(body.certificateInfo);
+      updates.isCertificateAvailable = Boolean(updates.certificateInfo);
+    }
+    if (body.registrationDeadline !== undefined) {
+      updates.registrationDeadline = sanitizeString(body.registrationDeadline);
+    }
+    if (body.registrationUrl !== undefined || body.registrationLink !== undefined) {
+      const regUrl = sanitizeString(body.registrationUrl || body.registrationLink);
+      if (!isValidHttpUrl(regUrl)) {
+        res.status(400).json({
+          error: 'Validation Error',
+          message: 'Official registration URL must start with http:// or https://'
+        });
+        return;
+      }
+      updates.registrationLink = regUrl;
+    }
+    if (body.imageUrl !== undefined) updates.imageUrl = sanitizeString(body.imageUrl);
+    if (body.status !== undefined || body.availability !== undefined) {
+      const nextStatus = normalizeCourseStatus(body.status, body.availability);
+      updates.status = nextStatus;
+      updates.availability = nextStatus === 'closed' ? 'Closed' : 'Available';
+    }
     if (body.featured !== undefined) updates.featured = Boolean(body.featured);
+
+    const updated = bionexaDb.updateCourse(id, updates);
+    if (!updated) {
+      res.status(404).json({ error: 'Not Found', message: 'Course not found.' });
+      return;
+    }
+
+    res.json({ success: true, course: formatCourseForAdmin(updated) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
+// PATCH /api/admin/courses/:id/quick (Quick Toggle Featured / Status / Registration Link)
+app.patch('/api/admin/courses/:id/quick', requireAdminAuth, (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const body = req.body;
+    const updates: Partial<DbCourse> = {};
+
+    if (body.status !== undefined || body.availability !== undefined) {
+      const nextStatus = normalizeCourseStatus(body.status, body.availability);
+      updates.status = nextStatus;
+      updates.availability = nextStatus === 'closed' ? 'Closed' : 'Available';
+    }
+    if (body.featured !== undefined) {
+      updates.featured = Boolean(body.featured);
+    }
+    if (body.registrationUrl !== undefined || body.registrationLink !== undefined) {
+      const url = sanitizeString(body.registrationUrl || body.registrationLink);
+      if (!isValidHttpUrl(url)) {
+        res.status(400).json({ error: 'Validation Error', message: 'Registration URL must start with http:// or https://' });
+        return;
+      }
+      updates.registrationLink = url;
+    }
 
     const updated = bionexaDb.updateCourse(id, updates);
     if (!updated) {
@@ -1156,6 +1365,56 @@ app.post('/api/admin/automated-sync/expire', requireAdminAuth, (_req: Request, r
     });
   } catch (err: any) {
     res.status(500).json({ error: 'Expiry Scan Error', message: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// G. Admin Compliance, Privacy & Takedown Request Endpoints
+// -------------------------------------------------------------
+
+app.get('/api/admin/compliance-requests', requireAdminAuth, (req: Request, res: Response) => {
+  try {
+    const requestType = typeof req.query.requestType === 'string' ? req.query.requestType : undefined;
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const requests = bionexaDb.getComplianceRequests({ requestType, status });
+    res.json({ success: true, count: requests.length, requests });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
+app.patch('/api/admin/compliance-requests/:id', requireAdminAuth, (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const status = sanitizeString(req.body?.status) as any;
+    const resolutionNotes =
+      req.body?.resolutionNotes !== undefined ? sanitizeString(req.body.resolutionNotes) : undefined;
+    const allowedStatuses = ['Pending', 'In Review', 'Resolved', 'Action Taken'];
+    if (!allowedStatuses.includes(status)) {
+      res.status(400).json({ error: 'Validation Error', message: 'Invalid status value.' });
+      return;
+    }
+    const updated = bionexaDb.updateComplianceRequestStatus(id, status, resolutionNotes);
+    if (!updated) {
+      res.status(404).json({ error: 'Not Found', message: 'Compliance request not found.' });
+      return;
+    }
+    res.json({ success: true, request: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
+app.delete('/api/admin/compliance-requests/:id', requireAdminAuth, (req: Request, res: Response) => {
+  try {
+    const deleted = bionexaDb.deleteComplianceRequest(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Not Found', message: 'Compliance request not found.' });
+      return;
+    }
+    res.json({ success: true, message: 'Compliance request deleted.' });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
   }
 });
 

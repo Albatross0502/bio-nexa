@@ -127,9 +127,26 @@ export function parseRoute(rawPath: string): ParsedRoute {
       case 'contact':
         return { route: 'contact', pathname, params, queryParams };
       case 'privacy':
+      case 'privacy-policy':
+      case 'legal':
         return { route: 'privacy', pathname, params, queryParams };
       case 'terms':
+      case 'terms-of-service':
         return { route: 'terms', pathname, params, queryParams };
+      case 'job-disclaimer':
+      case 'disclaimers':
+        return { route: 'job-disclaimer', pathname, params, queryParams };
+      case 'external-links':
+        return { route: 'external-links', pathname, params, queryParams };
+      case 'cookies':
+      case 'cookie-policy':
+        return { route: 'cookies', pathname, params, queryParams };
+      case 'grievance':
+        return { route: 'grievance', pathname, params, queryParams };
+      case 'report-job':
+        return { route: 'report-job', pathname, params, queryParams };
+      case 'content-removal':
+        return { route: 'content-removal', pathname, params, queryParams };
       default:
         return { route: 'not-found', pathname, params, queryParams };
     }

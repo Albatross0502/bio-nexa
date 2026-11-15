@@ -1,4 +1,5 @@
 import { DEFAULT_APPS_SCRIPT_URL, googleSheetsSync } from '../services/opportunities/googleSheetsSync';
+import { canSendNonEssentialTelemetry } from '../services/legal/legalCompliance';
 
 export const BIO_NEXA_TRACKING_URL = DEFAULT_APPS_SCRIPT_URL;
 
@@ -7,11 +8,17 @@ let bioNexaEntrySent = false;
 /**
  * Sends visitor entry to Google Sheets via Google Apps Script Web App.
  * Uses GET with mode: 'no-cors', cache: 'no-store', keepalive: true.
+ * Respects DPDP / Cookie consent ("Essential Only") and DNT preference.
  * Duplicate protection ensures each session triggers at most one entry.
  */
 export function sendBioNexaVisitorEntry(): boolean {
   // Prevent duplicate tracking requests
   if (bioNexaEntrySent) {
+    return false;
+  }
+
+  // Respect visitor opt-out / Essential Only privacy choice
+  if (!canSendNonEssentialTelemetry()) {
     return false;
   }
 

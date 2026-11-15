@@ -54,6 +54,7 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
 
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [legalConsentAccepted, setLegalConsentAccepted] = useState(false);
 
   if (!isOpen) return null;
 
@@ -76,6 +77,11 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
 
     if (selectedBranches.length === 0) {
       setError('Please select at least one eligible educational branch');
+      return;
+    }
+
+    if (!legalConsentAccepted) {
+      setError('Please confirm authorization, accuracy, and compliance with BIO-NEXA Terms before submitting.');
       return;
     }
 
@@ -132,6 +138,7 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
     setCompAmount('');
     setSubmitted(false);
     setError(null);
+    setLegalConsentAccepted(false);
     onClose();
   };
 
@@ -509,6 +516,23 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
                 className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
               />
             </div>
+
+            {/* Legal Authorization & Zero-Fee Compliance Pledge */}
+            <label className="flex items-start gap-2.5 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={legalConsentAccepted}
+                onChange={(e) => setLegalConsentAccepted(e.target.checked)}
+                className="mt-0.5 accent-teal-600 cursor-pointer"
+              />
+              <span className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                I confirm that I am authorized to submit this listing, the destination URL points to the official organization portal, no illegal candidate application fees are charged, and the submission respects third-party trademarks and BIO-NEXA&apos;s{' '}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-bold text-teal-700 dark:text-teal-300 underline">
+                  Terms &amp; Conditions
+                </a>
+                .
+              </span>
+            </label>
 
             {/* Footer Buttons */}
             <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-3">

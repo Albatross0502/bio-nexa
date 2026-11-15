@@ -30,6 +30,8 @@ import { OpportunitiesPortal } from './components/opportunities/OpportunitiesPor
 import { JobDetailPage } from './components/jobs/JobDetailPage';
 import { WorkshopsPage } from './components/workshops/WorkshopsPage';
 import { NotFoundPage } from './components/pages/NotFoundPage';
+import { LegalCompliancePage } from './components/legal/LegalPages';
+import { PrivacyConsentBanner } from './components/legal/PrivacyConsentBanner';
 import { parseRoute } from './utils/routeMatcher';
 
 const MainContent: React.FC = () => {
@@ -107,6 +109,18 @@ const MainContent: React.FC = () => {
         return <PrivacyPage />;
       case 'terms':
         return <TermsPage />;
+      case 'job-disclaimer':
+        return <LegalCompliancePage initialSection="job-disclaimer" />;
+      case 'external-links':
+        return <LegalCompliancePage initialSection="external-links" />;
+      case 'cookies':
+        return <LegalCompliancePage initialSection="cookies" />;
+      case 'grievance':
+        return <LegalCompliancePage initialSection="grievance" />;
+      case 'report-job':
+        return <LegalCompliancePage initialSection="report-job" />;
+      case 'content-removal':
+        return <LegalCompliancePage initialSection="content-removal" />;
       case 'not-found':
       default:
         return (
@@ -129,6 +143,7 @@ const MainContent: React.FC = () => {
         </main>
         <Footer />
         <GlobalSearchModal />
+        <PrivacyConsentBanner />
         <ToastContainer />
       </div>
     </>
