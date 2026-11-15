@@ -23,7 +23,7 @@ export const Footer: React.FC = () => {
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center gap-3">
               <img
-                src="/assets/img/logo.jpeg"
+                src="/assets/aistudio/LOGO_2306a641.jpeg"
                 alt="BIO-INEXA Logo"
                 className="h-10 w-auto object-contain rounded bg-white p-0.5"
               />

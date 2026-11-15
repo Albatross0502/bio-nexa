@@ -1,12 +1,177 @@
-# Netlify Production Configuration for BIO-NEXA
-# https://bio-nexa.netlify.app/
+# Netlify Production Configuration for BIO-INEXA
+# https://bio-inexa-0.netlify.app/
 
 [build]
   publish = "dist"
   command = "npm run build"
 
 [build.environment]
-  NODE_VERSION = "20"
+  NODE_VERSION = "22"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# -----------------------------------------------------------------
+# API Routing to Modular Netlify Serverless Functions
+# Evaluated strictly BEFORE the SPA /* -> /index.html catch-all.
+# -----------------------------------------------------------------
+
+[[redirects]]
+  from = "/api/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
+  from = "/api/jobs"
+  to = "/.netlify/functions/jobs"
+  status = 200
+
+[[redirects]]
+  from = "/api/jobs/*"
+  to = "/.netlify/functions/jobs/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/workshops"
+  to = "/.netlify/functions/workshops"
+  status = 200
+
+[[redirects]]
+  from = "/api/workshops/*"
+  to = "/.netlify/functions/workshops/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/courses"
+  to = "/.netlify/functions/courses"
+  status = 200
+
+[[redirects]]
+  from = "/api/courses/*"
+  to = "/.netlify/functions/courses/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/announcements"
+  to = "/.netlify/functions/content/announcements"
+  status = 200
+
+[[redirects]]
+  from = "/api/content/*"
+  to = "/.netlify/functions/content/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/compliance/*"
+  to = "/.netlify/functions/compliance/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/opportunities"
+  to = "/.netlify/functions/opportunities"
+  status = 200
+
+[[redirects]]
+  from = "/api/opportunities/*"
+  to = "/.netlify/functions/opportunities/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/sync-opportunities"
+  to = "/.netlify/functions/sync-opportunities"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/login"
+  to = "/.netlify/functions/admin-auth/login"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/logout"
+  to = "/.netlify/functions/admin-auth/logout"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/me"
+  to = "/.netlify/functions/admin-auth/me"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/data"
+  to = "/.netlify/functions/admin-data"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/jobs"
+  to = "/.netlify/functions/admin-jobs"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/jobs/*"
+  to = "/.netlify/functions/admin-jobs/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/workshops"
+  to = "/.netlify/functions/admin-workshops"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/workshops/*"
+  to = "/.netlify/functions/admin-workshops/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/courses"
+  to = "/.netlify/functions/admin-courses"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/courses/*"
+  to = "/.netlify/functions/admin-courses/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/content"
+  to = "/.netlify/functions/admin-content/content"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/content/*"
+  to = "/.netlify/functions/admin-content/content/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/backups"
+  to = "/.netlify/functions/admin-content/backups"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/backups/*"
+  to = "/.netlify/functions/admin-content/backups/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/compliance-requests"
+  to = "/.netlify/functions/admin-content/compliance-requests"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/compliance-requests/*"
+  to = "/.netlify/functions/admin-content/compliance-requests/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/automated-sync/*"
+  to = "/.netlify/functions/admin-automation/:splat"
+  status = 200
+
+# Catch unknown /api/* routes with structured JSON 404 instead of SPA HTML
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api-not-found/:splat"
+  status = 200
 
 # Single-Page Application (SPA) catch-all rewrite:
 # Prevents 404 errors on deep routes (/opportunities, /jobs, /admin, etc.)

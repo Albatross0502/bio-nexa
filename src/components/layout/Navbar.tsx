@@ -46,7 +46,7 @@ export const Navbar: React.FC = () => {
             aria-label="BIO-INEXA Home"
           >
             <img
-              src="/assets/img/logo.jpeg"
+              src="/assets/aistudio/LOGO_2306a641.jpeg"
               alt="BIO-INEXA Official Logo"
               className="h-9 w-auto object-contain rounded-xs shrink-0"
               onError={(e) => {

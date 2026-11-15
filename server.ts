@@ -31,13 +31,38 @@ import {
   validateComplianceRequest
 } from './src/services/legal/legalCompliance.js';
 
+import {
+  getRuntimeEnvironmentConfig,
+  resolveCorsOrigin,
+} from './src/config/environment.js';
+
 import crypto from 'node:crypto';
 
 const PORT = 3000;
 const app = express();
+const runtimeEnv = getRuntimeEnvironmentConfig();
 
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
+
+// Environment-aware CORS and preflight handling for /api/* routes
+app.use('/api', (req: Request, res: Response, next: NextFunction) => {
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+  const allowedOrigin = resolveCorsOrigin(origin, runtimeEnv);
+
+  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Vary', 'Origin');
+
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+  next();
+});
 
 // Serve uploaded workshop and course images safely
 const workshopUploadsDir = path.resolve(process.cwd(), 'public', 'uploads', 'workshops');
@@ -139,6 +164,20 @@ function requireAdminAuth(req: Request, res: Response, next: NextFunction): void
 // -------------------------------------------------------------
 // PUBLIC REST API ENDPOINTS
 // -------------------------------------------------------------
+
+// GET /api/health
+app.get('/api/health', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    ok: true,
+    service: 'bio-inexa-api',
+    runtime: runtimeEnv.runtimeMode,
+    environment: runtimeEnv.nodeEnv,
+    persistentDbConfigured: true,
+    adzunaConfigured: runtimeEnv.adzunaConfigured,
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // GET /api/jobs
 app.get('/api/jobs', (req: Request, res: Response) => {
@@ -445,8 +484,8 @@ app.post('/api/admin/login', (req: Request, res: Response) => {
 
   res.cookie('bionexa_admin_session', session.token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: runtimeEnv.cookieSecure,
+    sameSite: runtimeEnv.cookieSameSite,
     maxAge: 8 * 60 * 60 * 1000 // 8 hours
   });
 
@@ -1416,6 +1455,17 @@ app.delete('/api/admin/compliance-requests/:id', requireAdminAuth, (req: Request
   } catch (err: any) {
     res.status(500).json({ error: 'Database Error', message: err.message });
   }
+});
+
+// JSON 404 catch-all for unrecognized /api/* endpoints (must precede SPA fallback)
+app.all('/api/*', (req: Request, res: Response) => {
+  res.status(404).json({
+    success: false,
+    error: 'Not Found',
+    code: 'API_ROUTE_NOT_FOUND',
+    message: `API endpoint '${req.originalUrl}' does not exist.`,
+    path: req.originalUrl,
+  });
 });
 
 // -------------------------------------------------------------

@@ -1,1 +1,35 @@
-/*    /index.html   200
+# API routes to modular Netlify Functions (must precede SPA /* catch-all)
+/api/health                          /.netlify/functions/health                            200
+/api/jobs                            /.netlify/functions/jobs                              200
+/api/jobs/*                          /.netlify/functions/jobs/:splat                       200
+/api/workshops                       /.netlify/functions/workshops                         200
+/api/workshops/*                     /.netlify/functions/workshops/:splat                  200
+/api/courses                         /.netlify/functions/courses                           200
+/api/courses/*                       /.netlify/functions/courses/:splat                    200
+/api/announcements                   /.netlify/functions/content/announcements             200
+/api/content/*                       /.netlify/functions/content/:splat                    200
+/api/compliance/*                    /.netlify/functions/compliance/:splat                 200
+/api/opportunities                   /.netlify/functions/opportunities                     200
+/api/opportunities/*                 /.netlify/functions/opportunities/:splat              200
+/api/sync-opportunities              /.netlify/functions/sync-opportunities                200
+/api/admin/login                     /.netlify/functions/admin-auth/login                  200
+/api/admin/logout                    /.netlify/functions/admin-auth/logout                 200
+/api/admin/me                        /.netlify/functions/admin-auth/me                     200
+/api/admin/data                      /.netlify/functions/admin-data                        200
+/api/admin/jobs                      /.netlify/functions/admin-jobs                        200
+/api/admin/jobs/*                    /.netlify/functions/admin-jobs/:splat                 200
+/api/admin/workshops                 /.netlify/functions/admin-workshops                   200
+/api/admin/workshops/*               /.netlify/functions/admin-workshops/:splat            200
+/api/admin/courses                   /.netlify/functions/admin-courses                     200
+/api/admin/courses/*                 /.netlify/functions/admin-courses/:splat              200
+/api/admin/content                   /.netlify/functions/admin-content/content             200
+/api/admin/content/*                 /.netlify/functions/admin-content/content/:splat      200
+/api/admin/backups                   /.netlify/functions/admin-content/backups             200
+/api/admin/backups/*                 /.netlify/functions/admin-content/backups/:splat      200
+/api/admin/compliance-requests       /.netlify/functions/admin-content/compliance-requests 200
+/api/admin/compliance-requests/*     /.netlify/functions/admin-content/compliance-requests/:splat 200
+/api/admin/automated-sync/*          /.netlify/functions/admin-automation/:splat           200
+/api/*                               /.netlify/functions/api-not-found/:splat              200
+
+# Single-Page Application fallback
+/*                                   /index.html                                           200

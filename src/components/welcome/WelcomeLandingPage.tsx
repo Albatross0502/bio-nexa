@@ -219,14 +219,14 @@ export const WelcomeLandingPage: React.FC<WelcomeLandingPageProps> = ({ onEnter 
       {/* =========================================================================
           SECTION 2: TOP BRANDING SECTION
       ========================================================================== */}
-      <header className="relative z-10 w-full pt-6 sm:pt-8 md:pt-10 px-4 flex flex-col items-center">
+      <header className="relative z-10 w-full pt-6 sm:pt-8 md:pt-10 px-4 flex flex-col items-center mix-blend-multiply">
         <h1 className="sr-only">BIO-INEXA | Connecting Science. Creating Careers.</h1>
-        <div className="flex flex-col items-center max-w-2xl mx-auto transition-transform hover:scale-[1.01] duration-300">
-          {/* Pristine Transparent BIO-INEXA Brand Logo */}
+        <div className="flex flex-col items-center max-w-2xl mx-auto">
+          {/* BIO-INEXA Brand Logo */}
           <img
-            src="/assets/img/logo-transparent.png"
+            src="/assets/aistudio/LOGO_2306a641.jpeg"
             alt="BIO-INEXA - Connecting Science. Creating Careers."
-            className="h-20 sm:h-24 md:h-28 w-auto object-contain select-none filter drop-shadow-[0_2px_8px_rgba(11,42,91,0.08)]"
+            className="h-24 sm:h-28 md:h-32 w-auto object-contain select-none brightness-[1.04] contrast-[1.05]"
             loading="eager"
             fetchPriority="high"
           />

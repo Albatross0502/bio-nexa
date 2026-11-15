@@ -1,56 +1,58 @@
 /**
- * Netlify Scheduled Serverless Function: sync-opportunities
- * Cadence: Every 6 hours (0 0,6,12,18 * * *)
- * Free Tier: Netlify Scheduled Functions (Zero budget)
+ * Netlify Serverless & Scheduled Function: sync-opportunities
+ * Routes:
+ * - POST|GET /api/sync-opportunities (Admin authenticated)
+ * - Scheduled invocation via Netlify Cron
  *
- * Responsibilities:
- * 1. Poll authorized open gazettes (CSIR, DBT, ICMR feeds).
- * 2. Ingest approved direct employer/organizer submissions.
- * 3. Run duplicate detection algorithm to prevent redundant records.
- * 4. Run expiry manager to transition expired listings.
- * 5. Update data store or external Supabase database.
+ * Replaces previous hardcoded mock stats ({ sourcesSynced: 7, addedCount: 4, expiredCount: 1 })
+ * with explicit persistent-DB checks and genuine authorization guards.
  */
 
-interface SyncResult {
-  timestamp: string;
-  sourcesSynced: number;
-  addedCount: number;
-  expiredCount: number;
-  status: 'success' | 'partial' | 'failed';
-}
+import { getRuntimeEnvironmentConfig } from '../../src/config/environment';
+import {
+  getHeader,
+  handleCorsPreflight,
+  methodNotAllowedResponse,
+  NetlifyEvent,
+  NetlifyResponse,
+  serviceUnavailableResponse,
+} from './_shared/http';
+import { requireServerlessAdminAuth } from './_shared/serverlessAuth';
 
-export const handler = async (event: any) => {
-  console.log('[BIO-INEXA] Scheduled 6-hour Opportunity Sync triggered at:', new Date().toISOString());
+const ALLOWED_METHODS = ['GET', 'POST'];
 
-  try {
-    // 1. In a production environment with Supabase / PostgreSQL:
-    // const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-    // Execute synchronization routines with DBT/CSIR feeds & Adzuna India API (if configured)
-    
-    const result: SyncResult = {
-      timestamp: new Date().toISOString(),
-      sourcesSynced: 7,
-      addedCount: 4,
-      expiredCount: 1,
-      status: 'success',
-    };
+export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => {
+  const isScheduledEvent =
+    !event.httpMethod ||
+    Boolean(getHeader(event.headers, 'x-netlify-event') === 'schedule');
 
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: 'BIO-INEXA opportunity sync completed successfully',
-        data: result,
-      }),
-    };
-  } catch (error) {
-    console.error('[BIO-INEXA] Error during automated sync:', error);
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        error: error instanceof Error ? error.message : 'Unknown sync error',
-      }),
-    };
+  if (!isScheduledEvent) {
+    const preflight = handleCorsPreflight(event, ALLOWED_METHODS);
+    if (preflight) return preflight;
+
+    const method = (event.httpMethod || '').toUpperCase();
+    if (!ALLOWED_METHODS.includes(method)) {
+      return methodNotAllowedResponse(event, ALLOWED_METHODS);
+    }
+
+    const auth = requireServerlessAdminAuth(event, ALLOWED_METHODS);
+    if (auth.authorized === false) return auth.response;
   }
+
+  const config = getRuntimeEnvironmentConfig();
+  if (!config.supabaseConfigured) {
+    return serviceUnavailableResponse(
+      event,
+      'Opportunity feed sync cannot persist changes in serverless production until shared cloud database credentials (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY) are configured.',
+      'PERSISTENT_DB_NOT_CONFIGURED',
+      ALLOWED_METHODS
+    );
+  }
+
+  return serviceUnavailableResponse(
+    event,
+    'Live Supabase sync persistence pipeline will be enabled in Phase 04.',
+    'SYNC_PIPELINE_PENDING_PHASE_04',
+    ALLOWED_METHODS
+  );
 };

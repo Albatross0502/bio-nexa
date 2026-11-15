@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+cookies.txt
+db/*.db
+db/*.db-*
+db/backups/
+public/uploads/
+.playwright-cli/
+.aistudio/

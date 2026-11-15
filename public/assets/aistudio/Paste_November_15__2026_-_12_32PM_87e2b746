@@ -1,0 +1,1123 @@
+Absolutely. The most important instruction for your AI coding agent will be:
+
+**FIX WHAT IS BROKEN. DO NOT CHANGE WHAT IS ALREADY WORKING.**
+
+We will develop BIO-INEXA through 20 controlled phases. Each phase will be independent, so you can give the prompts to Google AI Studio, Cursor, Claude, Windsurf, or another coding agent one at a time.
+
+I have designed these instructions around your existing React, TypeScript, Vite and Netlify project.
+
+# BIO-INEXA — MASTER DEVELOPMENT ROADMAP
+### From existing website to a fully functional professional biotechnology career platform
+
+## PART 1 — Non-negotiable instructions
+
+Before starting any phase, give your AI coding agent these instructions.
+
+# BIO-INEXA — MASTER DEVELOPMENT INSTRUCTIONS
+
+You are working on my existing BIO-INEXA biotechnology career platform.
+
+Your responsibility is to improve the existing website's functionality, backend, database, security, reliability and production infrastructure.
+
+IMPORTANT: I AM NOT ASKING YOU TO REDESIGN OR REBUILD MY WEBSITE.
+
+## 1. ABSOLUTELY PRESERVE THE EXISTING WEBSITE
+
+Do not change anything that is already working perfectly.
+
+Preserve all existing:
+
+- Homepage design and layout.
+- Header and navigation.
+- Footer.
+- Welcome and landing pages.
+- Colour palette.
+- Typography and fonts.
+- Buttons and their existing appearance.
+- Animations and transitions.
+- Cards and sections.
+- Responsive layouts.
+- Images and illustrations.
+- Existing working functionality.
+- Page structure and routing.
+- Branding and visual identity.
+
+Do not remove, replace, simplify or redesign existing components.
+
+Do not introduce a new visual theme.
+
+Do not replace the existing website with a generic AI-generated template.
+
+## 2. DEVELOPMENT APPROACH
+
+Before modifying any file:
+
+1. Inspect the complete existing project.
+2. Understand how the current feature works.
+3. Identify the exact problem.
+4. Identify the smallest possible modification.
+5. Check which other components depend on that functionality.
+6. Preserve existing working behaviour.
+
+Prefer minimal, targeted modifications over replacing complete files.
+
+Do not rewrite entire components when only a small correction is necessary.
+
+Do not delete existing functionality simply because you want to implement a different solution.
+
+## 3. BACKUP AND VERSION CONTROL
+
+Before every phase:
+
+- Inspect Git status.
+- Preserve existing user changes.
+- Create a separate Git commit or backup checkpoint.
+- Never overwrite uncommitted user work.
+- Record the files being modified.
+
+If a phase fails, restore the affected functionality without disturbing unrelated changes.
+
+## 4. TECHNICAL REQUIREMENTS
+
+Use the existing project architecture wherever possible.
+
+Maintain compatibility with:
+
+- React.
+- TypeScript.
+- Vite.
+- Existing Netlify deployment.
+- Existing frontend components.
+- Existing services.
+- Existing integrations.
+
+Use Netlify Functions for backend operations where appropriate.
+
+Use Supabase PostgreSQL for shared persistent production data if approved during the database migration phase.
+
+Do not introduce unnecessary frameworks, dependencies or architectural complexity.
+
+Do not expose API keys, passwords, database credentials or administrator secrets in frontend code.
+
+## 5. TESTING REQUIREMENTS
+
+After every modification:
+
+- Run TypeScript checks.
+- Run relevant tests.
+- Run the production build.
+- Check browser console errors.
+- Check network requests.
+- Test the affected functionality.
+- Check mobile responsiveness.
+- Verify that unrelated working functionality remains unchanged.
+
+Never claim that something is fixed unless you have actually tested it.
+
+## 6. IMPORTANT DEVELOPMENT RULE
+
+Work on ONE PHASE AT A TIME.
+
+Do not automatically start the next phase.
+
+After completing a phase, provide:
+
+1. Problems identified.
+2. Files modified.
+3. Changes implemented.
+4. Tests executed.
+5. Test results.
+6. Remaining issues.
+7. Deployment instructions, if required.
+8. Confirmation that existing working website functionality was preserved.
+
+WAIT FOR MY APPROVAL BEFORE STARTING THE NEXT PHASE.
+
+## 7. FAILURE PREVENTION
+
+If an existing feature is already working, do not modify it unnecessarily.
+
+If a proposed backend change requires frontend modifications, change only the minimum necessary code.
+
+If a required external service is unavailable, explain the limitation instead of creating fake functionality.
+
+Never use hardcoded success responses, simulated database records, fake verification statuses or fabricated synchronization statistics.
+
+Never display success messages for operations that have not actually succeeded.
+
+FINAL OBJECTIVE:
+
+Make BIO-INEXA a genuinely functional, secure, reliable and professional biotechnology career platform while preserving 100% of its existing working design and functionality.
+
+---
+
+# PART 2 — The 20 development phases
+
+Give these prompts to your coding agent **individually and in the specified order**.
+
+## PHASE 01 — Complete Technical Audit and Project Protection
+
+**Priority: Critical**
+
+Act as a senior full-stack developer and software auditor.
+
+Perform a complete technical audit of my existing BIO-INEXA project.
+
+OBJECTIVE:
+
+Identify and document all technical problems without unnecessarily changing existing code.
+
+TASKS:
+
+1. Inspect the complete project structure.
+2. Inspect package.json and dependencies.
+3. Inspect React and TypeScript components.
+4. Inspect Vite configuration.
+5. Inspect Netlify configuration.
+6. Inspect existing API services.
+7. Inspect authentication.
+8. Inspect database implementation.
+9. Inspect Google Sheets integration.
+10. Inspect job management.
+11. Inspect internship management.
+12. Inspect workshops and courses.
+13. Inspect admin dashboard.
+14. Inspect legal compliance modules.
+15. Inspect environment variable usage.
+16. Inspect existing tests.
+17. Identify unused, duplicate and conflicting implementations.
+18. Identify security vulnerabilities.
+19. Identify frontend/backend integration problems.
+
+IMPORTANT:
+
+Do not redesign anything.
+
+Do not delete files merely because they appear unused.
+
+Do not modify functioning components during this audit.
+
+DELIVERABLE:
+
+Create a technical audit report containing:
+
+- Critical problems.
+- High-priority problems.
+- Medium-priority problems.
+- Low-priority problems.
+- Affected file paths.
+- Root causes.
+- Recommended fixes.
+- Dependencies between fixes.
+
+Create a baseline record of existing functionality so it can be tested after every development phase.
+
+Do not start Phase 02 until I approve the audit.
+
+## PHASE 02 — Fix Netlify Deployment Architecture
+
+**Priority: Critical**
+
+Fix the backend deployment architecture of BIO-INEXA.
+
+CURRENT PROBLEM:
+
+The project contains an Express backend, but the current Netlify configuration primarily builds and publishes the Vite frontend.
+
+Some frontend API requests do not have corresponding production implementations.
+
+OBJECTIVE:
+
+Make the existing frontend and backend communicate correctly in production.
+
+TASKS:
+
+1. Inspect netlify.toml.
+2. Inspect server.ts.
+3. Inspect all existing API routes.
+4. Inspect existing Netlify Functions.
+5. Identify every frontend API endpoint.
+6. Map frontend requests to actual backend implementations.
+7. Identify endpoints that currently return placeholders or 404 errors.
+8. Design a compatible Netlify Functions architecture.
+9. Implement the required backend endpoints.
+10. Configure API routing and redirects.
+11. Handle CORS and HTTP methods correctly.
+12. Implement consistent error responses.
+13. Configure production and development environments separately.
+
+IMPORTANT:
+
+Do not blindly convert the entire Express server into one large function.
+
+Preserve existing route functionality wherever possible.
+
+Do not break existing frontend navigation or routing.
+
+Do not deploy a backend implementation that depends on unavailable local files.
+
+TESTING:
+
+Test every API endpoint individually.
+
+Verify that existing website pages still load correctly.
+
+Verify that no new 404 errors are introduced.
+
+Do not proceed until the production architecture is working.
+
+## PHASE 03 — Implement Real Backend APIs
+
+**Priority: Critical**
+
+Connect BIO-INEXA frontend services to genuine backend implementations.
+
+OBJECTIVE:
+
+Remove disconnected APIs, placeholder responses and simulated successful operations.
+
+TASKS:
+
+1. Audit every API client.
+2. Audit adminApiClient.ts.
+3. Audit bionexaApiClient.ts.
+4. Audit opportunities.ts.
+5. Audit existing backend routes.
+6. Implement genuine GET, POST, PUT and DELETE operations where required.
+7. Implement proper request validation.
+8. Implement consistent response formats.
+9. Implement proper HTTP status codes.
+10. Implement server-side error handling.
+11. Add authentication checks to protected endpoints.
+12. Add authorization checks to administrative endpoints.
+13. Add pagination and filtering where necessary.
+14. Add request logging without exposing sensitive information.
+
+IMPORTANT:
+
+Never return fake database records.
+
+Never generate fake submission IDs and claim that data has been saved.
+
+Only return success after the actual operation completes.
+
+Preserve existing frontend components and their appearance.
+
+TESTING:
+
+Test all endpoints using real requests.
+
+Verify database persistence where applicable.
+
+Verify that failed operations return meaningful errors.
+
+## PHASE 04 — Supabase PostgreSQL Database Integration
+
+**Priority: Critical**
+
+Implement a reliable production database for BIO-INEXA using Supabase PostgreSQL.
+
+OBJECTIVE:
+
+Replace unsuitable local production persistence with a shared, persistent database.
+
+TASKS:
+
+1. Inspect the existing SQLite database.
+2. Inspect db/schema.sql.
+3. Identify all existing tables and relationships.
+4. Design a PostgreSQL-compatible schema.
+5. Create tables for:
+   - Opportunities.
+   - Jobs.
+   - Internships.
+   - Workshops.
+   - Courses.
+   - Users.
+   - Companies.
+   - Applications, where supported.
+   - Admin users and roles.
+   - Verification records.
+   - Synchronization logs.
+   - Announcements.
+6. Create suitable indexes.
+7. Implement foreign-key relationships.
+8. Configure Row Level Security.
+9. Implement secure database access.
+10. Create database migration scripts.
+11. Migrate existing records without duplication.
+12. Verify migrated records.
+13. Implement error handling.
+14. Implement backup and recovery procedures.
+
+SECURITY:
+
+Never expose the Supabase service-role key in frontend JavaScript.
+
+Use server-side database access for privileged operations.
+
+Do not make public database tables writable without proper authorization.
+
+IMPORTANT:
+
+Do not delete the existing SQLite database until migration and verification are complete.
+
+Do not change the website's design.
+
+DELIVERABLE:
+
+Provide database schema, migration report, environment variables and connection instructions.
+
+## PHASE 05 — Secure Admin Authentication
+
+**Priority: Critical**
+
+Secure the existing BIO-INEXA administrator authentication system.
+
+OBJECTIVE:
+
+Make administrator login genuinely secure without changing the existing login page design.
+
+TASKS:
+
+1. Remove hardcoded administrator passwords.
+2. Remove insecure fallback credentials.
+3. Require secure production environment variables.
+4. Implement proper password hashing using Argon2id or securely configured scrypt.
+5. Implement secure session management.
+6. Prefer HttpOnly, Secure and appropriate SameSite cookies.
+7. Remove unnecessary session tokens from frontend-accessible storage.
+8. Implement session expiration.
+9. Implement logout and session revocation.
+10. Implement login rate limiting.
+11. Implement failed-login monitoring.
+12. Implement role-based permissions.
+13. Add administrator audit logs.
+14. Protect all sensitive API endpoints.
+15. Implement secure password reset procedures.
+16. Consider optional two-factor authentication.
+
+IMPORTANT:
+
+Do not store administrator passwords in localStorage or sessionStorage.
+
+Do not expose authentication secrets to the browser.
+
+Do not change the existing login interface.
+
+TESTING:
+
+Test valid login, invalid login, expired sessions, logout, unauthorized requests and administrator permissions.
+
+## PHASE 06 — Connect Admin Dashboard to the Real Database
+
+**Priority: Critical**
+
+Make the existing BIO-INEXA administrator dashboard fully functional.
+
+IMPORTANT:
+
+Preserve the existing admin dashboard design, layout, navigation, styling, cards, charts and animations.
+
+Do not create a replacement dashboard.
+
+TASKS:
+
+Connect existing dashboard functionality to the actual backend and database.
+
+Implement:
+
+1. Real dashboard statistics.
+2. Add opportunity.
+3. Edit opportunity.
+4. Delete opportunity.
+5. Approve opportunity.
+6. Reject opportunity.
+7. Verify opportunity.
+8. Manage internships.
+9. Manage workshops.
+10. Manage courses.
+11. Manage announcements.
+12. Manage homepage content.
+13. Manage user submissions.
+14. Manage reported opportunities.
+15. View synchronization history.
+16. View administrator activity logs.
+17. Export authorized records.
+18. Implement proper data refresh.
+
+Every operation must save or retrieve actual database records.
+
+Do not use hardcoded dashboard statistics.
+
+Do not show success notifications unless the database operation succeeds.
+
+Preserve all existing working admin features.
+
+## PHASE 07 — Job Verification and Application System
+
+**Priority: Critical**
+
+This is particularly important because users must be able to trust the opportunities published on BIO-INEXA.
+
+Develop a reliable job verification and application-link management system.
+
+OBJECTIVE:
+
+Ensure users are directed to genuine job opportunities and legitimate application destinations.
+
+TASKS:
+
+1. Inspect jobService.ts.
+2. Inspect jobVerification.ts.
+3. Inspect googleSheetsSync.ts.
+4. Remove automatic verification defaults.
+5. Set newly imported jobs to Pending Verification.
+6. Implement administrator verification.
+7. Implement application URL validation.
+8. Implement duplicate detection.
+9. Implement expired-job detection.
+10. Record verification history.
+
+Every job should contain:
+
+- Job title.
+- Employer identity.
+- Original listing source.
+- Original listing URL.
+- Application destination.
+- Publication date.
+- Expiry date.
+- Last verification date.
+- Verification status.
+- Verification notes.
+
+IMPLEMENT THESE STATUSES:
+
+- Pending Verification.
+- Verified.
+- Rejected.
+- Expired.
+- Link Unavailable.
+
+IMPORTANT:
+
+Never automatically mark a job as verified merely because it was imported from Google Sheets.
+
+Never generate artificial verification dates.
+
+Never claim that an employer or vacancy has been verified without supporting evidence.
+
+APPLICATION BUTTONS:
+
+For verified opportunities, provide the appropriate application destination.
+
+For unverified opportunities, do not display them as verified.
+
+If a specific application link is unavailable, clearly identify the official employer career portal where possible.
+
+Do not create fake application forms.
+
+Preserve the existing job card design and APPLY NOW button styling.
+
+## PHASE 08 — Genuine Automatic Opportunity Synchronization
+
+**Priority: Critical**
+
+Implement genuine automated opportunity synchronization for BIO-INEXA.
+
+OBJECTIVE:
+
+Automatically retrieve, validate, update and manage opportunities using authorized data sources.
+
+TASKS:
+
+1. Inspect sync-opportunities.ts.
+2. Remove hardcoded synchronization statistics.
+3. Identify all existing opportunity sources.
+4. Connect only supported and authorized sources.
+5. Retrieve actual opportunity records.
+6. Normalize incoming records.
+7. Detect duplicate opportunities.
+8. Validate source URLs.
+9. Validate application destinations.
+10. Identify expired listings.
+11. Save valid records to PostgreSQL.
+12. Place new records in Pending Verification.
+13. Update existing records safely.
+14. Record synchronization history.
+15. Implement error handling.
+16. Configure scheduled execution.
+17. Prevent overlapping synchronization jobs.
+18. Implement retry logic where appropriate.
+
+SCHEDULE:
+
+Use a configurable schedule, initially every six hours if supported by the selected Netlify scheduling architecture.
+
+IMPORTANT:
+
+A synchronization function must never report successful imports unless records were actually retrieved and processed.
+
+Do not scrape websites against their terms of service.
+
+Do not invent opportunities.
+
+Do not automatically approve imported listings.
+
+Preserve the existing homepage design.
+
+The homepage should retrieve the latest approved and eligible records from the backend.
+
+## PHASE 09 — Google Sheets Integration
+
+**Priority: High**
+
+Improve the existing BIO-INEXA Google Sheets integration.
+
+OBJECTIVE:
+
+Make Google Sheets a reliable opportunity import and management source without treating it as the primary production database.
+
+TASKS:
+
+1. Inspect googleSheetsSync.ts.
+2. Verify Google Sheets API configuration.
+3. Configure credentials securely.
+4. Implement server-side synchronization.
+5. Validate spreadsheet column mappings.
+6. Validate imported records.
+7. Detect duplicates.
+8. Prevent automatic verification.
+9. Save imported records into Supabase.
+10. Record synchronization timestamps.
+11. Record synchronization errors.
+12. Implement retry mechanisms.
+13. Handle missing or invalid spreadsheet data.
+14. Prevent accidental deletion of existing database records.
+
+IMPORT STATUS:
+
+Every newly imported record must begin as Pending Verification.
+
+ADMIN FUNCTIONALITY:
+
+Allow authorized administrators to review imported records before publication.
+
+IMPORTANT:
+
+Do not expose Google credentials in frontend code.
+
+Do not make the entire website dependent on Google Sheets availability.
+
+If Google Sheets becomes unavailable, existing approved database records must remain accessible.
+
+## PHASE 10 — Improve Google Jobs Search
+
+**Priority: High**
+
+Improve the existing Google Jobs search functionality.
+
+OBJECTIVE:
+
+Make biotechnology job discovery more useful without falsely claiming that Google provides a public Jobs API.
+
+TASKS:
+
+1. Inspect googleJobsSearch.ts.
+2. Preserve existing Google search functionality.
+3. Improve biotechnology-specific search queries.
+4. Add internship searches.
+5. Add fresher job searches.
+6. Add research assistant searches.
+7. Add pharmaceutical job searches.
+8. Add clinical research searches.
+9. Add molecular biology searches.
+10. Add bioinformatics searches.
+11. Add location-based searches.
+12. Add remote job searches.
+13. Add official employer career portal destinations.
+14. Ensure search URLs are correctly encoded.
+15. Test all generated search links.
+
+IMPORTANT:
+
+Do not represent Google search URLs as direct API integration.
+
+Do not automatically import search results unless a legitimate supported provider is implemented.
+
+Preserve the existing job search interface and styling.
+
+## PHASE 11 — Internship Portal Integration
+
+**Priority: High**
+
+Make the existing BIO-INEXA internship portal genuinely functional.
+
+Preserve its current design, layout, cards, filters and navigation.
+
+TASKS:
+
+1. Connect internships to the backend.
+2. Retrieve actual internship records.
+3. Implement category filtering.
+4. Implement location filtering.
+5. Implement paid/unpaid filtering.
+6. Implement remote/on-site/hybrid filtering.
+7. Implement eligibility information.
+8. Implement duration information.
+9. Implement application deadlines.
+10. Implement application URL validation.
+11. Implement verification status.
+12. Implement expired internship management.
+13. Connect internship submissions to the admin dashboard.
+14. Implement database-connected internship management.
+
+IMPORTANT:
+
+Do not display fake internships.
+
+Do not mark internships as verified automatically.
+
+Do not simulate successful applications.
+
+Test the entire internship workflow.
+
+## PHASE 12 — Workshop Management
+
+**Priority: High**
+
+Connect the existing BIO-INEXA workshop module to the production backend.
+
+Preserve the existing workshop page design.
+
+IMPLEMENT:
+
+1. Retrieve workshops from the database.
+2. Add workshop through admin dashboard.
+3. Edit workshop.
+4. Delete workshop.
+5. Approve or reject workshop submissions.
+6. Add organizer information.
+7. Add workshop descriptions.
+8. Add online, offline and hybrid classifications.
+9. Add registration URLs.
+10. Validate registration URLs.
+11. Add registration deadlines.
+12. Add workshop dates.
+13. Add capacity information where applicable.
+14. Automatically identify expired workshops.
+15. Add workshop categories.
+16. Implement proper homepage synchronization.
+
+IMPORTANT:
+
+Do not invent organizers or certifications.
+
+Do not display fake registration confirmations.
+
+Only display workshop information that has actually been saved.
+
+## PHASE 13 — Course Management
+
+**Priority: High**
+
+Make the existing BIO-INEXA course management system genuinely functional.
+
+Preserve the current course page and card design.
+
+IMPLEMENT:
+
+1. Database-connected course listing.
+2. Add course.
+3. Edit course.
+4. Delete course.
+5. Course provider information.
+6. Course category management.
+7. Course duration.
+8. Course fees.
+9. Free and paid classification.
+10. Enrollment destination.
+11. Registration URL validation.
+12. Certificate information.
+13. Course availability.
+14. Course expiry.
+15. Administrator approval.
+16. Homepage course synchronization.
+
+IMPORTANT:
+
+Do not claim BIO-INEXA provides or certifies a course unless that is actually true.
+
+Clearly distinguish third-party courses from BIO-INEXA-provided courses.
+
+Do not display fake enrollments or certificates.
+
+## PHASE 14 — Student Authentication
+
+**Priority: High**
+
+Implement a genuine student registration and authentication system.
+
+Preserve existing student registration and login page designs.
+
+IMPLEMENT:
+
+1. Student registration.
+2. Secure login.
+3. Logout.
+4. Email verification.
+5. Password reset.
+6. Secure password storage.
+7. Student profile management.
+8. Profile editing.
+9. Session management.
+10. Account deletion requests.
+11. Role-based access control.
+12. Input validation.
+13. Rate limiting.
+14. Privacy-conscious data storage.
+
+Remove demonstration accounts from production functionality.
+
+Do not allow students to access administrator APIs.
+
+Do not expose private student information to other users.
+
+Connect student accounts to the actual database.
+
+## PHASE 15 — Company Authentication
+
+**Priority: High**
+
+Implement genuine company and employer account functionality.
+
+Preserve the existing website design.
+
+IMPLEMENT:
+
+1. Company registration.
+2. Company login.
+3. Company profile.
+4. Company email verification.
+5. Organization information.
+6. Employer verification workflow.
+7. Authorized job submissions.
+8. Job editing.
+9. Job status tracking.
+10. Application destination management.
+11. Company account permissions.
+12. Administrator approval.
+13. Account suspension.
+14. Audit logs.
+
+IMPORTANT:
+
+A registered company must not automatically be treated as a verified employer.
+
+Verify employer identity through an appropriate review process.
+
+Do not allow unverified employers to publish opportunities as verified.
+
+Do not invent company partnerships.
+
+## PHASE 16 — Real Student and Company Dashboards
+
+**Priority: High**
+
+Make existing student and company dashboards genuinely functional.
+
+Preserve existing dashboard layouts and visual styling.
+
+STUDENT DASHBOARD:
+
+- Real student profile.
+- Saved opportunities.
+- Saved internships.
+- Application tracking where actual application records exist.
+- Course information.
+- Workshop information.
+- Notifications.
+- Account settings.
+
+COMPANY DASHBOARD:
+
+- Company profile.
+- Employer verification status.
+- Submitted opportunities.
+- Published opportunities.
+- Rejected opportunities.
+- Expired opportunities.
+- Editing functionality.
+- Submission history.
+
+IMPORTANT:
+
+Distinguish between applications submitted through BIO-INEXA and applications completed on external employer websites.
+
+Do not display external applications as completed BIO-INEXA transactions.
+
+Do not generate fake application statistics.
+
+Connect all dashboard information to the database.
+
+## PHASE 17 — Legal Compliance and Privacy
+
+**Priority: High**
+
+Review and improve the legal and privacy implementation of BIO-INEXA.
+
+Preserve existing legal pages and their visual design.
+
+TASKS:
+
+1. Inspect legalCompliance.ts.
+2. Review Privacy Policy.
+3. Review Terms and Conditions.
+4. Review Job Disclaimer.
+5. Review External Links Disclaimer.
+6. Review Cookie Policy.
+7. Review grievance information.
+8. Review job reporting functionality.
+9. Review content removal procedures.
+10. Review data collection practices.
+11. Review account deletion processes.
+12. Review data retention.
+13. Review third-party integrations.
+14. Review consent management.
+15. Review external font loading and other third-party requests.
+16. Review applicable Indian privacy and data protection requirements, including the DPDP framework.
+
+IMPORTANT:
+
+The actual website behaviour must match the published privacy policy.
+
+Do not claim legal compliance simply because legal documents exist.
+
+Do not invent legal registrations, institutional approvals, certifications or contact details.
+
+Identify areas requiring qualified legal review.
+
+Ensure user consent preferences are respected by the actual implementation.
+
+## PHASE 18 — Email and Notification System
+
+**Priority: Medium**
+
+Implement a reliable email and notification system for BIO-INEXA.
+
+Preserve the existing notification interface.
+
+TASKS:
+
+1. Select a suitable transactional email provider.
+2. Configure credentials server-side.
+3. Implement email verification messages.
+4. Implement password reset emails.
+5. Implement registration confirmations.
+6. Implement opportunity submission confirmations.
+7. Implement administrator notifications.
+8. Implement approval and rejection notifications.
+9. Implement workshop notifications where appropriate.
+10. Implement course-related notifications where appropriate.
+11. Implement notification history.
+12. Handle delivery failures.
+13. Prevent duplicate notifications.
+14. Implement appropriate unsubscribe controls for optional communications.
+
+IMPORTANT:
+
+Do not send emails without a legitimate trigger.
+
+Do not expose email provider API keys.
+
+Do not display fake delivery confirmations.
+
+## PHASE 19 — SEO and Performance Optimization
+
+**Priority: Medium**
+
+Improve BIO-INEXA search engine optimization and performance.
+
+IMPORTANT:
+
+Do not redesign the website.
+
+Preserve existing visual presentation.
+
+TASKS:
+
+1. Verify canonical URLs.
+2. Standardize BIO-INEXA branding.
+3. Create sitemap.xml.
+4. Configure robots.txt.
+5. Review page titles.
+6. Review meta descriptions.
+7. Improve Open Graph metadata.
+8. Review structured data.
+9. Add appropriate organization structured data.
+10. Implement JobPosting structured data only for eligible, genuine vacancies.
+11. Improve image alt text.
+12. Optimize image sizes.
+13. Reduce unnecessary network requests.
+14. Improve loading performance.
+15. Review accessibility.
+16. Improve keyboard navigation.
+17. Review mobile responsiveness.
+18. Check broken internal links.
+
+IMPORTANT:
+
+Do not remove existing images or animations merely to improve performance.
+
+Do not make inaccurate SEO claims.
+
+Test the actual production build.
+
+## PHASE 20 — Final Security, Testing and Production Readiness
+
+**Priority: Critical**
+
+Perform a complete production-readiness audit of BIO-INEXA.
+
+OBJECTIVE:
+
+Verify that all previously implemented features genuinely work together.
+
+TASKS:
+
+1. Run TypeScript checks.
+2. Configure and execute actual test scripts.
+3. Run unit tests.
+4. Run integration tests.
+5. Run the production build.
+6. Test every backend API.
+7. Test database connectivity.
+8. Test administrator authentication.
+9. Test student authentication.
+10. Test company authentication.
+11. Test admin dashboard operations.
+12. Test job submission.
+13. Test job verification.
+14. Test application links.
+15. Test internship management.
+16. Test workshop management.
+17. Test course management.
+18. Test Google Sheets synchronization.
+19. Test scheduled synchronization.
+20. Test homepage data updates.
+21. Test error handling.
+22. Test expired opportunities.
+23. Test mobile responsiveness.
+24. Test accessibility.
+25. Inspect browser console errors.
+26. Inspect network failures.
+27. Check security headers.
+28. Check exposed secrets.
+29. Check database permissions.
+30. Check backup and recovery procedures.
+
+SECURITY:
+
+Review cookies, environment variables, authentication, authorization, rate limiting, database access and sensitive files.
+
+PROJECT HYGIENE:
+
+Ensure database files, cookies, backups, logs and secrets are excluded from public frontend deployment and Git tracking as appropriate.
+
+FINAL DELIVERABLE:
+
+Prepare a complete production-readiness report containing:
+
+- Features successfully tested.
+- Features still incomplete.
+- Security vulnerabilities.
+- API test results.
+- Database test results.
+- Build results.
+- Deployment results.
+- Remaining risks.
+- Recommended next steps.
+
+IMPORTANT:
+
+Do not declare BIO-INEXA production-ready if critical functionality remains untested or broken.
+
+Do not modify working website design.
+
+The final objective is a stable, secure, fully functional BIO-INEXA platform.
+
+---
+
+# PART 3 — How you should execute these phases
+
+I strongly recommend following this sequence.
+
+| Phase | What you should do | Approval |
+|---|---|---|
+| 01 | Audit the existing project | Required |
+| 02 | Fix Netlify architecture | Required |
+| 03 | Connect backend APIs | Required |
+| 04 | Set up Supabase | Required |
+| 05 | Secure admin login | Required |
+| 06 | Connect admin dashboard | Required |
+| 07 | Fix job verification | Required |
+| 08 | Implement automatic synchronization | Required |
+| 09 | Connect Google Sheets | Required |
+| 10 | Improve Google Jobs | Required |
+| 11–13 | Fix internships, workshops and courses | Required |
+| 14–16 | Implement genuine user functionality | Required |
+| 17 | Legal and privacy improvements | Required |
+| 18 | Email and notifications | Required |
+| 19 | SEO and performance | Required |
+| 20 | Final production testing | Required |
+
+### Before starting
+
+Make sure you have:
+- A backup of your complete BIO-INEXA project.
+- Your GitHub repository updated.
+- Access to your Netlify project.
+- Access to your Google Sheets integration.
+- A Supabase account for Phase 04.
+- Access to your environment variables.
+
+**Security warning:** Because your audit identified an administrator session cookie and database files in the uploaded project, invalidate exposed sessions and rotate affected credentials before production deployment.
+
+---
+
+# PART 4 — My most important advice
+
+There are five rules I want you to follow throughout development.
+
+**1. Never allow your AI agent to redesign the website.**
+
+If it needs to modify a frontend component to connect an API, it should modify only the necessary functionality.
+
+**2. Never execute all 20 phases together.**
+
+Complete one phase, test it, review the changes and then proceed.
+
+**3. Never accept fake functionality.**
+
+A button that displays "Success" without saving anything is not a working feature.
+
+**4. Never deploy untested changes directly to production.**
+
+Test the changes in a separate deployment or preview first.
+
+**5. Preserve your existing working features.**
+
+Your objective is not to build another website. It is to make your existing BIO-INEXA website genuinely functional.
+
+### My recommended starting point
+
+Start with **PHASE 01 — Complete Technical Audit**.
+
+Do not let your AI agent immediately start changing files. First make it identify exactly what is broken and what is already working.
+
+**One final instruction:** If your coding agent proposes replacing the entire homepage, changing the colour palette, rebuilding navigation or rewriting working components as part of a backend fix, reject that change.
+
+The guiding principle for all 20 phases is:
+
+**100% preservation of existing working design and functionality + targeted correction of broken systems + genuine backend integration + production-level security.**
