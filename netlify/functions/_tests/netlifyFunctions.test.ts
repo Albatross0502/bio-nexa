@@ -5,20 +5,30 @@ import path from 'node:path';
 
 import { handler as healthHandler } from '../health';
 import { handler as jobsHandler } from '../jobs';
+import { handler as internshipsHandler } from '../internships';
 import { handler as workshopsHandler } from '../workshops';
 import { handler as coursesHandler } from '../courses';
 import { handler as contentHandler } from '../content';
 import { handler as complianceHandler } from '../compliance';
 import { handler as opportunitiesHandler } from '../opportunities';
 import { handler as syncOpportunitiesHandler } from '../sync-opportunities';
-import { handler as adminAuthHandler } from '../admin-auth';
+import { handler as adminAuthHandler, resetServerlessAdminRateLimiterForTest } from '../admin-auth';
 import { handler as adminDataHandler } from '../admin-data';
 import { handler as adminJobsHandler } from '../admin-jobs';
+import { handler as adminInternshipsHandler } from '../admin-internships';
 import { handler as adminWorkshopsHandler } from '../admin-workshops';
 import { handler as adminCoursesHandler } from '../admin-courses';
 import { handler as adminContentHandler } from '../admin-content';
 import { handler as adminAutomationHandler } from '../admin-automation';
+import { handler as adminInboxHandler } from '../admin-inbox';
+import { handler as adminExportHandler } from '../admin-export';
+import { handler as communityHandler } from '../community';
 import { handler as apiNotFoundHandler } from '../api-not-found';
+import {
+  runServerlessGoogleSheetsSync,
+  runServerlessOpportunitySync,
+} from '../_shared/supabaseSyncRunner';
+import { SyncInProgressError } from '../../../src/services/jobs/opportunitySyncEngine';
 import type { NetlifyEvent } from '../_shared/http';
 
 const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '..', '..', '..');
@@ -34,15 +44,44 @@ function makeEvent(overrides: Partial<NetlifyEvent> = {}): NetlifyEvent {
   };
 }
 
-function withAdminEnv<T>(fn: () => Promise<T>): Promise<T> {
+import {
+  computeTotpCode,
+  generateTotpSecret,
+  hashPassword,
+} from '../../../src/services/admin/adminAuthService';
+
+function withAdminEnv<T>(
+  fn: () => Promise<T>,
+  overrides: {
+    username?: string;
+    password?: string;
+    passwordHash?: string;
+    sessionSecret?: string;
+    role?: string;
+    totpSecret?: string;
+  } = {}
+): Promise<T> {
   const prevUser = process.env.ADMIN_USERNAME;
   const prevPass = process.env.ADMIN_PASSWORD;
+  const prevPassHash = process.env.ADMIN_PASSWORD_HASH;
   const prevSecret = process.env.ADMIN_SESSION_SECRET;
+  const prevRole = process.env.ADMIN_ROLE;
+  const prevTotp = process.env.ADMIN_TOTP_SECRET;
   const prevNetlify = process.env.NETLIFY;
 
-  process.env.ADMIN_USERNAME = 'admin@bio-inexa.org';
-  process.env.ADMIN_PASSWORD = 'TestAdminPassword!2026';
-  process.env.ADMIN_SESSION_SECRET = 'TestSessionSecret!2026';
+  process.env.ADMIN_USERNAME = overrides.username ?? 'admin@bio-inexa.org';
+  if (overrides.passwordHash !== undefined) {
+    delete process.env.ADMIN_PASSWORD;
+    process.env.ADMIN_PASSWORD_HASH = overrides.passwordHash;
+  } else {
+    delete process.env.ADMIN_PASSWORD_HASH;
+    process.env.ADMIN_PASSWORD = overrides.password ?? 'TestAdminPassword!2026';
+  }
+  process.env.ADMIN_SESSION_SECRET = overrides.sessionSecret ?? 'TestSessionSecret!2026-Complex-Key';
+  if (overrides.role !== undefined) process.env.ADMIN_ROLE = overrides.role;
+  else delete process.env.ADMIN_ROLE;
+  if (overrides.totpSecret !== undefined) process.env.ADMIN_TOTP_SECRET = overrides.totpSecret;
+  else delete process.env.ADMIN_TOTP_SECRET;
   process.env.NETLIFY = 'true';
 
   return fn().finally(() => {
@@ -50,11 +89,24 @@ function withAdminEnv<T>(fn: () => Promise<T>): Promise<T> {
     else process.env.ADMIN_USERNAME = prevUser;
     if (prevPass === undefined) delete process.env.ADMIN_PASSWORD;
     else process.env.ADMIN_PASSWORD = prevPass;
+    if (prevPassHash === undefined) delete process.env.ADMIN_PASSWORD_HASH;
+    else process.env.ADMIN_PASSWORD_HASH = prevPassHash;
     if (prevSecret === undefined) delete process.env.ADMIN_SESSION_SECRET;
     else process.env.ADMIN_SESSION_SECRET = prevSecret;
+    if (prevRole === undefined) delete process.env.ADMIN_ROLE;
+    else process.env.ADMIN_ROLE = prevRole;
+    if (prevTotp === undefined) delete process.env.ADMIN_TOTP_SECRET;
+    else process.env.ADMIN_TOTP_SECRET = prevTotp;
     if (prevNetlify === undefined) delete process.env.NETLIFY;
     else process.env.NETLIFY = prevNetlify;
   });
+}
+
+function extractCookiePair(setCookieHeader?: string): string {
+  assert.ok(setCookieHeader, 'Expected Set-Cookie header');
+  const firstSegment = setCookieHeader.split(';')[0].trim();
+  assert.ok(firstSegment.startsWith('bionexa_admin_session='));
+  return firstSegment;
 }
 
 test('no Netlify Function imports local SQLite DB or writes local upload files', () => {
@@ -89,6 +141,8 @@ test('netlify.toml and public/_redirects route all /api/* paths before SPA /* ca
   const requiredApiPrefixes = [
     '/api/health',
     '/api/jobs',
+    '/api/internships',
+    '/api/internships/*',
     '/api/workshops',
     '/api/courses',
     '/api/announcements',
@@ -99,14 +153,34 @@ test('netlify.toml and public/_redirects route all /api/* paths before SPA /* ca
     '/api/admin/login',
     '/api/admin/logout',
     '/api/admin/me',
+    '/api/admin/audit-logs',
+    '/api/admin/sessions',
+    '/api/admin/sessions/*',
+    '/api/admin/auth/*',
+    '/api/admin/password-reset/*',
     '/api/admin/data',
     '/api/admin/jobs',
+    '/api/admin/internships',
+    '/api/admin/internships/*',
+    '/api/admin/export',
     '/api/admin/workshops',
     '/api/admin/courses',
     '/api/admin/content',
     '/api/admin/backups',
     '/api/admin/compliance-requests',
     '/api/admin/automated-sync/*',
+    '/api/admin/google-sheets/*',
+    '/api/admin/opportunities',
+    '/api/admin/opportunities/*',
+    '/api/admin/contact-messages',
+    '/api/contact',
+    '/api/newsletter',
+    '/api/certificates',
+    '/api/certificates/*',
+    '/api/applications',
+    '/api/applications/*',
+    '/api/discussions',
+    '/api/discussions/*',
     '/api/*',
   ];
 
@@ -121,6 +195,9 @@ test('netlify.toml and public/_redirects route all /api/* paths before SPA /* ca
     assert.ok(tomlPos >= 0 && tomlPos < spaCatchAllPosToml, `Missing or misordered ${prefix} in netlify.toml`);
     assert.ok(redirPos >= 0 && redirPos < spaCatchAllPosRedirects, `Missing or misordered ${prefix} in public/_redirects`);
   }
+
+  assert.match(netlifyToml, /\[functions\."sync-opportunities"\]/);
+  assert.match(netlifyToml, /schedule\s*=\s*"0 \*\/6 \* \* \*"/);
 });
 
 test('health endpoint handles GET, OPTIONS CORS, and 405 Method Not Allowed', async () => {
@@ -174,6 +251,12 @@ test('public catalog endpoints return genuine jobs, workshops, courses, announce
   const highlightsRes = await contentHandler(makeEvent({ path: '/api/content/homepage' }));
   assert.equal(highlightsRes.statusCode, 200);
   assert.ok(JSON.parse(highlightsRes.body).highlights.heroBadge);
+
+  const internshipsRes = await internshipsHandler(makeEvent({ path: '/api/internships' }));
+  assert.equal(internshipsRes.statusCode, 200);
+  const internshipsData = JSON.parse(internshipsRes.body);
+  assert.equal(internshipsData.success, true);
+  assert.ok(internshipsData.internships.length >= 4);
 });
 
 test('public write and opportunity endpoints validate payloads strictly and return honest 503 instead of fake success IDs', async () => {
@@ -185,6 +268,22 @@ test('public write and opportunity endpoints validate payloads strictly and retu
     })
   );
   assert.equal(badSubmit.statusCode, 400);
+
+  const shortenerSubmit = await jobsHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/jobs/submit',
+      body: JSON.stringify({
+        title: 'Suspicious Job',
+        company: 'Unknown Lab',
+        applicationUrl: 'https://bit.ly/fake-biotech-job',
+        description: 'Testing shortener URL rejection rule.',
+        location: 'Bengaluru',
+      }),
+    })
+  );
+  assert.equal(shortenerSubmit.statusCode, 400);
+  assert.equal(JSON.parse(shortenerSubmit.body).code, 'INVALID_URL');
 
   const validSubmit = await jobsHandler(
     makeEvent({
@@ -256,7 +355,32 @@ test('public write and opportunity endpoints validate payloads strictly and retu
   assert.equal(oppPost.statusCode, 503);
 });
 
-test('admin endpoints reject unauthenticated requests and support full signed session lifecycle', async () => {
+test('admin endpoints fail closed when unconfigured, use HttpOnly cookies (no token leak), revoke jti on logout, and enforce CSRF', async () => {
+  resetServerlessAdminRateLimiterForTest();
+
+  // Fail closed with 503 if ADMIN_* environment variables are absent
+  const prevUser = process.env.ADMIN_USERNAME;
+  const prevPass = process.env.ADMIN_PASSWORD;
+  const prevSecret = process.env.ADMIN_SESSION_SECRET;
+  delete process.env.ADMIN_USERNAME;
+  delete process.env.ADMIN_PASSWORD;
+  delete process.env.ADMIN_SESSION_SECRET;
+  try {
+    const unconfiguredLogin = await adminAuthHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/login',
+        body: JSON.stringify({ username: 'admin', password: 'BioNexa@2026!Admin' }),
+      })
+    );
+    assert.equal(unconfiguredLogin.statusCode, 503);
+    assert.equal(JSON.parse(unconfiguredLogin.body).code, 'ADMIN_AUTH_NOT_CONFIGURED');
+  } finally {
+    if (prevUser !== undefined) process.env.ADMIN_USERNAME = prevUser;
+    if (prevPass !== undefined) process.env.ADMIN_PASSWORD = prevPass;
+    if (prevSecret !== undefined) process.env.ADMIN_SESSION_SECRET = prevSecret;
+  }
+
   await withAdminEnv(async () => {
     const unauthData = await adminDataHandler(makeEvent({ path: '/api/admin/data' }));
     assert.equal(unauthData.statusCode, 401);
@@ -266,10 +390,22 @@ test('admin endpoints reject unauthenticated requests and support full signed se
     );
     assert.equal(unauthSync.statusCode, 401);
 
+    // Reject 'admin' fallback alias when configured ADMIN_USERNAME is 'admin@bio-inexa.org'
+    const aliasBypassAttempt = await adminAuthHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/login',
+        headers: { origin: 'https://bio-inexa-0.netlify.app', 'x-forwarded-for': '10.0.0.10' },
+        body: JSON.stringify({ username: 'admin', password: 'TestAdminPassword!2026' }),
+      })
+    );
+    assert.equal(aliasBypassAttempt.statusCode, 401);
+
     const badLogin = await adminAuthHandler(
       makeEvent({
         httpMethod: 'POST',
         path: '/api/admin/login',
+        headers: { origin: 'https://bio-inexa-0.netlify.app', 'x-forwarded-for': '10.0.0.11' },
         body: JSON.stringify({ username: 'admin@bio-inexa.org', password: 'WrongPassword' }),
       })
     );
@@ -279,6 +415,7 @@ test('admin endpoints reject unauthenticated requests and support full signed se
       makeEvent({
         httpMethod: 'POST',
         path: '/api/admin/login',
+        headers: { origin: 'https://bio-inexa-0.netlify.app', 'x-forwarded-for': '10.0.0.11' },
         body: JSON.stringify({
           username: 'admin@bio-inexa.org',
           password: 'TestAdminPassword!2026',
@@ -288,19 +425,40 @@ test('admin endpoints reject unauthenticated requests and support full signed se
     assert.equal(loginRes.statusCode, 200);
     const loginBody = JSON.parse(loginRes.body);
     assert.equal(loginBody.success, true);
-    assert.ok(loginBody.token);
+    assert.equal(loginBody.token, undefined, 'Session token must never be exposed in JSON body');
     assert.ok(loginRes.headers?.['Set-Cookie']?.includes('HttpOnly'));
+    assert.ok(loginRes.headers?.['Set-Cookie']?.includes('SameSite=Lax'));
+    assert.ok(loginRes.headers?.['Set-Cookie']?.includes('Secure'));
 
+    const sessionCookie = extractCookiePair(loginRes.headers?.['Set-Cookie']);
     const authHeaders = {
       origin: 'https://bio-inexa-0.netlify.app',
-      authorization: `Bearer ${loginBody.token}`,
+      cookie: sessionCookie,
     };
 
     const meRes = await adminAuthHandler(
       makeEvent({ httpMethod: 'GET', path: '/api/admin/me', headers: authHeaders })
     );
     assert.equal(meRes.statusCode, 200);
-    assert.equal(JSON.parse(meRes.body).authenticated, true);
+    const meBody = JSON.parse(meRes.body);
+    assert.equal(meBody.authenticated, true);
+    assert.equal(meBody.user.role, 'super_admin');
+
+    // Cross-origin cookie-based POST must be blocked by CSRF origin guard
+    const csrfBlocked = await adminJobsHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/jobs',
+        headers: {
+          origin: 'https://evil-attacker.example',
+          host: 'bio-inexa-0.netlify.app',
+          cookie: sessionCookie,
+        },
+        body: JSON.stringify({ title: 'CSRF Job', applicationUrl: 'https://www.igib.res.in/' }),
+      })
+    );
+    assert.equal(csrfBlocked.statusCode, 403);
+    assert.equal(JSON.parse(csrfBlocked.body).code, 'CSRF_ORIGIN_DENIED');
 
     const dataRes = await adminDataHandler(
       makeEvent({ httpMethod: 'GET', path: '/api/admin/data', headers: authHeaders })
@@ -320,6 +478,18 @@ test('admin endpoints reject unauthenticated requests and support full signed se
       })
     );
     assert.equal(badJobCreate.statusCode, 400);
+
+    const jobVerificationsGet = await adminJobsHandler(
+      makeEvent({
+        httpMethod: 'GET',
+        path: '/api/admin/jobs/job-1/verifications',
+        headers: authHeaders,
+      })
+    );
+    assert.equal(jobVerificationsGet.statusCode, 200);
+    const verificationsBody = JSON.parse(jobVerificationsGet.body);
+    assert.equal(verificationsBody.success, true);
+    assert.ok(Array.isArray(verificationsBody.verifications));
 
     const validWorkshopCreate = await adminWorkshopsHandler(
       makeEvent({
@@ -354,6 +524,16 @@ test('admin endpoints reject unauthenticated requests and support full signed se
     );
     assert.equal(backupsGet.statusCode, 503);
 
+    const auditGet = await adminAuthHandler(
+      makeEvent({ httpMethod: 'GET', path: '/api/admin/audit-logs', headers: authHeaders })
+    );
+    assert.equal(auditGet.statusCode, 200);
+
+    const sessionsGet = await adminAuthHandler(
+      makeEvent({ httpMethod: 'GET', path: '/api/admin/sessions', headers: authHeaders })
+    );
+    assert.equal(sessionsGet.statusCode, 200);
+
     const syncStatusGet = await adminAutomationHandler(
       makeEvent({
         httpMethod: 'GET',
@@ -362,14 +542,184 @@ test('admin endpoints reject unauthenticated requests and support full signed se
       })
     );
     assert.equal(syncStatusGet.statusCode, 200);
-    assert.ok(JSON.parse(syncStatusGet.body).sources.length >= 5);
+    const syncBody = JSON.parse(syncStatusGet.body);
+    assert.ok(syncBody.sources.length >= 5);
+    assert.ok(Array.isArray(syncBody.syncHistory));
+    assert.equal(syncBody.schedule?.intervalHours, 6);
+    assert.equal(typeof syncBody.sources[0].configured, 'boolean');
+
+    const sheetsStatusGet = await adminAutomationHandler(
+      makeEvent({
+        httpMethod: 'GET',
+        path: '/api/admin/google-sheets/status',
+        headers: authHeaders,
+      })
+    );
+    assert.equal(sheetsStatusGet.statusCode, 200);
+    const sheetsBody = JSON.parse(sheetsStatusGet.body);
+    assert.equal(sheetsBody.success, true);
+    assert.equal(typeof sheetsBody.config?.configured, 'boolean');
+    assert.equal(sheetsBody.status?.lastStatus, 'never_run');
+    assert.ok(Array.isArray(sheetsBody.syncHistory));
+
+    const sheetsSyncNoDb = await adminAutomationHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/google-sheets/sync',
+        headers: authHeaders,
+      })
+    );
+    assert.equal(sheetsSyncNoDb.statusCode, 503);
+    assert.equal(JSON.parse(sheetsSyncNoDb.body).code, 'PERSISTENT_DB_NOT_CONFIGURED');
+
+    const adminInternshipsGet = await adminInternshipsHandler(
+      makeEvent({ httpMethod: 'GET', path: '/api/admin/internships', headers: authHeaders })
+    );
+    assert.equal(adminInternshipsGet.statusCode, 200);
+    assert.ok(JSON.parse(adminInternshipsGet.body).internships.length >= 4);
+
+    const exportJobsCsv = await adminExportHandler(
+      makeEvent({
+        httpMethod: 'GET',
+        path: '/api/admin/export',
+        queryStringParameters: { dataset: 'jobs', format: 'csv' },
+        headers: authHeaders,
+      })
+    );
+    assert.equal(exportJobsCsv.statusCode, 200);
+    assert.match(exportJobsCsv.headers?.['Content-Type'] || '', /text\/csv/);
+    assert.match(exportJobsCsv.body, /ID,Title,Employer/);
 
     const logoutRes = await adminAuthHandler(
       makeEvent({ httpMethod: 'POST', path: '/api/admin/logout', headers: authHeaders })
     );
     assert.equal(logoutRes.statusCode, 200);
     assert.ok(logoutRes.headers?.['Set-Cookie']?.includes('Max-Age=0'));
+
+    // Revoked session jti must be rejected immediately even if cookie is replayed
+    const replayedMeRes = await adminAuthHandler(
+      makeEvent({ httpMethod: 'GET', path: '/api/admin/me', headers: authHeaders })
+    );
+    assert.equal(replayedMeRes.statusCode, 401);
   });
+});
+
+test('admin auth enforces scrypt ADMIN_PASSWORD_HASH, optional TOTP 2FA, RBAC verifier restrictions, and rate limit lockout', async () => {
+  resetServerlessAdminRateLimiterForTest();
+  const scryptHash = hashPassword('ScryptStrong!Pass2026');
+  const totpSecret = generateTotpSecret();
+
+  await withAdminEnv(
+    async () => {
+      // Missing TOTP triggers 401 MFA_REQUIRED
+      const step1 = await adminAuthHandler(
+        makeEvent({
+          httpMethod: 'POST',
+          path: '/api/admin/login',
+          headers: { origin: 'https://bio-inexa-0.netlify.app', 'x-forwarded-for': '10.0.0.50' },
+          body: JSON.stringify({
+            username: 'verifier@bio-inexa.org',
+            password: 'ScryptStrong!Pass2026',
+          }),
+        })
+      );
+      assert.equal(step1.statusCode, 401);
+      assert.equal(JSON.parse(step1.body).code, 'MFA_REQUIRED');
+
+      // Valid TOTP succeeds with 'verifier' role
+      const code = computeTotpCode(totpSecret);
+      const step2 = await adminAuthHandler(
+        makeEvent({
+          httpMethod: 'POST',
+          path: '/api/admin/login',
+          headers: { origin: 'https://bio-inexa-0.netlify.app', 'x-forwarded-for': '10.0.0.50' },
+          body: JSON.stringify({
+            username: 'verifier@bio-inexa.org',
+            password: 'ScryptStrong!Pass2026',
+            totpCode: code,
+          }),
+        })
+      );
+      assert.equal(step2.statusCode, 200);
+      const cookie = extractCookiePair(step2.headers?.['Set-Cookie']);
+
+      // Verifier can read dashboard data
+      const dataOk = await adminDataHandler(
+        makeEvent({
+          httpMethod: 'GET',
+          path: '/api/admin/data',
+          headers: { origin: 'https://bio-inexa-0.netlify.app', cookie },
+        })
+      );
+      assert.equal(dataOk.statusCode, 200);
+
+      // Verifier is blocked (403) from backups & exporting audit_logs
+      const backupsDenied = await adminContentHandler(
+        makeEvent({
+          httpMethod: 'GET',
+          path: '/api/admin/backups',
+          headers: { origin: 'https://bio-inexa-0.netlify.app', cookie },
+        })
+      );
+      assert.equal(backupsDenied.statusCode, 403);
+      assert.equal(JSON.parse(backupsDenied.body).code, 'INSUFFICIENT_PERMISSIONS');
+
+      const exportAuditDenied = await adminExportHandler(
+        makeEvent({
+          httpMethod: 'GET',
+          path: '/api/admin/export',
+          queryStringParameters: { dataset: 'audit_logs', format: 'csv' },
+          headers: { origin: 'https://bio-inexa-0.netlify.app', cookie },
+        })
+      );
+      assert.equal(exportAuditDenied.statusCode, 403);
+      assert.equal(JSON.parse(exportAuditDenied.body).code, 'INSUFFICIENT_PERMISSIONS');
+
+      // Verifier CAN export jobs
+      const exportJobsOk = await adminExportHandler(
+        makeEvent({
+          httpMethod: 'GET',
+          path: '/api/admin/export',
+          queryStringParameters: { dataset: 'jobs', format: 'json' },
+          headers: { origin: 'https://bio-inexa-0.netlify.app', cookie },
+        })
+      );
+      assert.equal(exportJobsOk.statusCode, 200);
+
+      // 5 consecutive invalid login attempts trigger 429 RATE_LIMITED
+      for (let i = 0; i < 5; i++) {
+        const fail = await adminAuthHandler(
+          makeEvent({
+            httpMethod: 'POST',
+            path: '/api/admin/login',
+            headers: { origin: 'https://bio-inexa-0.netlify.app', 'x-forwarded-for': '10.0.0.99' },
+            body: JSON.stringify({ username: 'verifier@bio-inexa.org', password: 'Wrong' }),
+          })
+        );
+        assert.equal(fail.statusCode, 401);
+      }
+      const locked = await adminAuthHandler(
+        makeEvent({
+          httpMethod: 'POST',
+          path: '/api/admin/login',
+          headers: { origin: 'https://bio-inexa-0.netlify.app', 'x-forwarded-for': '10.0.0.99' },
+          body: JSON.stringify({
+            username: 'verifier@bio-inexa.org',
+            password: 'ScryptStrong!Pass2026',
+            totpCode: code,
+          }),
+        })
+      );
+      assert.equal(locked.statusCode, 429);
+      assert.equal(JSON.parse(locked.body).code, 'RATE_LIMITED');
+    },
+    {
+      username: 'verifier@bio-inexa.org',
+      passwordHash: scryptHash,
+      role: 'verifier',
+      totpSecret,
+    }
+  );
 });
 
 test('api-not-found returns structured 404 JSON instead of HTML', async () => {
@@ -388,4 +738,139 @@ test('api-not-found returns structured 404 JSON instead of HTML', async () => {
   assert.equal(body.success, false);
   assert.equal(body.code, 'API_ROUTE_NOT_FOUND');
   assert.equal(body.path, '/api/nonexistent');
+});
+
+test('community and admin-inbox endpoints enforce validation, admin auth, and honest 503 when DB unconfigured', async () => {
+  const badContact = await communityHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/contact',
+      body: JSON.stringify({ name: 'A', email: 'bad', message: 'short' }),
+    })
+  );
+  assert.equal(badContact.statusCode, 400);
+
+  const validContact = await communityHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/contact',
+      body: JSON.stringify({
+        name: 'Dr. Ananya Rao',
+        email: 'ananya@institute.res.in',
+        subject: 'Partnership Query',
+        message: 'We would like to verify our lab workshop schedule on BIO-INEXA.',
+      }),
+    })
+  );
+  assert.equal(validContact.statusCode, 503);
+  assert.equal(JSON.parse(validContact.body).code, 'PERSISTENT_DB_NOT_CONFIGURED');
+
+  const unauthInbox = await adminInboxHandler(
+    makeEvent({ httpMethod: 'GET', path: '/api/admin/contact-messages' })
+  );
+  assert.equal(unauthInbox.statusCode, 401);
+});
+
+test('runServerlessOpportunitySync persists Pending Verification jobs via SupabaseRepository and enforces overlap lock', async () => {
+  const storedJobs: any[] = [];
+  const syncLogs: any[] = [];
+  const contentStore = new Map<string, any>();
+  let lockHeld = false;
+
+  const mockRepo: any = {
+    getAllJobsAdmin: async () => [...storedJobs],
+    createJob: async (job: any) => {
+      const created = { id: `supa-job-${storedJobs.length + 1}`, ...job };
+      storedJobs.push(created);
+      return created;
+    },
+    updateJob: async (id: string, patch: any) => {
+      const idx = storedJobs.findIndex((j) => j.id === id);
+      if (idx < 0) return null;
+      storedJobs[idx] = { ...storedJobs[idx], ...patch };
+      return storedJobs[idx];
+    },
+    markExpiredListings: async () => 0,
+    recordSyncLog: async (entry: any) => {
+      syncLogs.push(entry);
+      return entry;
+    },
+    getContentRecord: async (key: string, defaultValue: any) =>
+      contentStore.has(key) ? contentStore.get(key) : defaultValue,
+    setContentRecord: async (key: string, value: any) => {
+      contentStore.set(key, value);
+    },
+    acquireSyncLock: async () => {
+      if (lockHeld) return false;
+      lockHeld = true;
+      return true;
+    },
+    releaseSyncLock: async () => {
+      lockHeld = false;
+    },
+  };
+
+  // Locked execution rejects with 409 SyncInProgressError
+  lockHeld = true;
+  await assert.rejects(
+    () => runServerlessOpportunitySync(mockRepo, { env: {} }),
+    (err: any) => err instanceof SyncInProgressError && err.statusCode === 409
+  );
+  lockHeld = false;
+
+  const report = await runServerlessOpportunitySync(mockRepo, {
+    env: {},
+    customCandidates: [
+      {
+        title: 'DBT Research Fellow (Genomics)',
+        employer: 'NIBMG Kalyani',
+        applicationUrl: 'https://www.nibmg.ac.in/careers/jrf-2099',
+        originalJobUrl: 'https://www.nibmg.ac.in/careers',
+        source: 'NIBMG Official Feed',
+        location: 'Kalyani, WB',
+        publicationDate: '2026-11-12',
+        expiryDate: '2099-12-15',
+        sector: 'Research Fellowships',
+        description: 'Whole-genome sequencing fellowship.',
+      },
+    ],
+  });
+
+  assert.equal(report.newImportedCount, 1);
+  assert.equal(storedJobs.length, 1);
+  assert.equal(storedJobs[0].verificationStatus, 'Pending Verification');
+  assert.equal(storedJobs[0].isApproved, false);
+  assert.equal(storedJobs[0].lastVerificationDate, '');
+  assert.equal(lockHeld, false);
+  assert.ok(contentStore.has('automated_sync_report'));
+  assert.equal(syncLogs.length, 1);
+
+  // Phase 09: Google Sheets serverless sync saves Pending Verification records & prevents overlap/deletions
+  const sheetsReport = await runServerlessGoogleSheetsSync(mockRepo, {
+    env: {},
+    overrideRawData: {
+      configured: true,
+      mode: 'service_account',
+      headers: ['Title', 'Organization', 'Location', 'Application URL', 'Application Deadline'],
+      rows: [
+        {
+          Title: 'Cell Culture Bioprocess Lead',
+          Organization: 'Serum Institute of India',
+          Location: 'Pune',
+          'Application URL': 'https://www.seruminstitute.com/careers/cell-culture-2099',
+          'Application Deadline': '2099-12-30',
+        },
+      ],
+      sourceUrlLabel: 'https://sheets.googleapis.com/v4/spreadsheets',
+    },
+  });
+
+  assert.equal(sheetsReport.importedCount, 1);
+  assert.equal(sheetsReport.deletedCount, 0);
+  assert.equal(storedJobs.length, 2);
+  assert.equal(storedJobs[1].verificationStatus, 'Pending Verification');
+  assert.equal(storedJobs[1].isApproved, false);
+  assert.equal(storedJobs[1].lastVerificationDate, '');
+  assert.ok(contentStore.has('google_sheets_sync_status'));
+  assert.equal(syncLogs.length, 2);
 });

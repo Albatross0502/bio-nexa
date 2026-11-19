@@ -12,6 +12,9 @@
   directory = "netlify/functions"
   node_bundler = "esbuild"
 
+[functions."sync-opportunities"]
+  schedule = "0 */6 * * *"
+
 # -----------------------------------------------------------------
 # API Routing to Modular Netlify Serverless Functions
 # Evaluated strictly BEFORE the SPA /* -> /index.html catch-all.
@@ -30,6 +33,16 @@
 [[redirects]]
   from = "/api/jobs/*"
   to = "/.netlify/functions/jobs/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/internships"
+  to = "/.netlify/functions/internships"
+  status = 200
+
+[[redirects]]
+  from = "/api/internships/*"
+  to = "/.netlify/functions/internships/:splat"
   status = 200
 
 [[redirects]]
@@ -98,6 +111,31 @@
   status = 200
 
 [[redirects]]
+  from = "/api/admin/audit-logs"
+  to = "/.netlify/functions/admin-auth/audit-logs"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/sessions"
+  to = "/.netlify/functions/admin-auth/sessions"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/sessions/*"
+  to = "/.netlify/functions/admin-auth/sessions/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/auth/*"
+  to = "/.netlify/functions/admin-auth/auth/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/password-reset/*"
+  to = "/.netlify/functions/admin-auth/password-reset/:splat"
+  status = 200
+
+[[redirects]]
   from = "/api/admin/data"
   to = "/.netlify/functions/admin-data"
   status = 200
@@ -110,6 +148,21 @@
 [[redirects]]
   from = "/api/admin/jobs/*"
   to = "/.netlify/functions/admin-jobs/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/internships"
+  to = "/.netlify/functions/admin-internships"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/internships/*"
+  to = "/.netlify/functions/admin-internships/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/export"
+  to = "/.netlify/functions/admin-export"
   status = 200
 
 [[redirects]]
@@ -165,6 +218,66 @@
 [[redirects]]
   from = "/api/admin/automated-sync/*"
   to = "/.netlify/functions/admin-automation/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/google-sheets/*"
+  to = "/.netlify/functions/admin-automation/google-sheets/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/opportunities"
+  to = "/.netlify/functions/admin-inbox/opportunities"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/opportunities/*"
+  to = "/.netlify/functions/admin-inbox/opportunities/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/contact-messages"
+  to = "/.netlify/functions/admin-inbox/contact-messages"
+  status = 200
+
+[[redirects]]
+  from = "/api/contact"
+  to = "/.netlify/functions/community/contact"
+  status = 200
+
+[[redirects]]
+  from = "/api/newsletter"
+  to = "/.netlify/functions/community/newsletter"
+  status = 200
+
+[[redirects]]
+  from = "/api/certificates"
+  to = "/.netlify/functions/community/certificates"
+  status = 200
+
+[[redirects]]
+  from = "/api/certificates/*"
+  to = "/.netlify/functions/community/certificates/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/applications"
+  to = "/.netlify/functions/community/applications"
+  status = 200
+
+[[redirects]]
+  from = "/api/applications/*"
+  to = "/.netlify/functions/community/applications/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/discussions"
+  to = "/.netlify/functions/community/discussions"
+  status = 200
+
+[[redirects]]
+  from = "/api/discussions/*"
+  to = "/.netlify/functions/community/discussions/:splat"
   status = 200
 
 # Catch unknown /api/* routes with structured JSON 404 instead of SPA HTML

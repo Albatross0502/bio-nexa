@@ -2,6 +2,8 @@
 /api/health                          /.netlify/functions/health                            200
 /api/jobs                            /.netlify/functions/jobs                              200
 /api/jobs/*                          /.netlify/functions/jobs/:splat                       200
+/api/internships                     /.netlify/functions/internships                       200
+/api/internships/*                   /.netlify/functions/internships/:splat                200
 /api/workshops                       /.netlify/functions/workshops                         200
 /api/workshops/*                     /.netlify/functions/workshops/:splat                  200
 /api/courses                         /.netlify/functions/courses                           200
@@ -15,9 +17,17 @@
 /api/admin/login                     /.netlify/functions/admin-auth/login                  200
 /api/admin/logout                    /.netlify/functions/admin-auth/logout                 200
 /api/admin/me                        /.netlify/functions/admin-auth/me                     200
+/api/admin/audit-logs                /.netlify/functions/admin-auth/audit-logs             200
+/api/admin/sessions                  /.netlify/functions/admin-auth/sessions               200
+/api/admin/sessions/*                /.netlify/functions/admin-auth/sessions/:splat        200
+/api/admin/auth/*                    /.netlify/functions/admin-auth/auth/:splat            200
+/api/admin/password-reset/*          /.netlify/functions/admin-auth/password-reset/:splat  200
 /api/admin/data                      /.netlify/functions/admin-data                        200
 /api/admin/jobs                      /.netlify/functions/admin-jobs                        200
 /api/admin/jobs/*                    /.netlify/functions/admin-jobs/:splat                 200
+/api/admin/internships               /.netlify/functions/admin-internships                 200
+/api/admin/internships/*             /.netlify/functions/admin-internships/:splat          200
+/api/admin/export                    /.netlify/functions/admin-export                      200
 /api/admin/workshops                 /.netlify/functions/admin-workshops                   200
 /api/admin/workshops/*               /.netlify/functions/admin-workshops/:splat            200
 /api/admin/courses                   /.netlify/functions/admin-courses                     200
@@ -29,6 +39,18 @@
 /api/admin/compliance-requests       /.netlify/functions/admin-content/compliance-requests 200
 /api/admin/compliance-requests/*     /.netlify/functions/admin-content/compliance-requests/:splat 200
 /api/admin/automated-sync/*          /.netlify/functions/admin-automation/:splat           200
+/api/admin/google-sheets/*           /.netlify/functions/admin-automation/google-sheets/:splat 200
+/api/admin/opportunities             /.netlify/functions/admin-inbox/opportunities           200
+/api/admin/opportunities/*           /.netlify/functions/admin-inbox/opportunities/:splat    200
+/api/admin/contact-messages          /.netlify/functions/admin-inbox/contact-messages        200
+/api/contact                         /.netlify/functions/community/contact                   200
+/api/newsletter                      /.netlify/functions/community/newsletter                200
+/api/certificates                    /.netlify/functions/community/certificates              200
+/api/certificates/*                  /.netlify/functions/community/certificates/:splat       200
+/api/applications                    /.netlify/functions/community/applications              200
+/api/applications/*                  /.netlify/functions/community/applications/:splat       200
+/api/discussions                     /.netlify/functions/community/discussions               200
+/api/discussions/*                   /.netlify/functions/community/discussions/:splat        200
 /api/*                               /.netlify/functions/api-not-found/:splat              200
 
 # Single-Page Application fallback

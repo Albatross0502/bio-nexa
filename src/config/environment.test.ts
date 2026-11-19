@@ -32,6 +32,14 @@ test('detects Netlify serverless production environment cleanly', () => {
   assert.equal(config.siteUrl, 'https://bio-inexa-0.netlify.app');
   assert.equal(config.adminCredentialsConfiguredInEnv, true);
   assert.equal(config.supabaseConfigured, false);
+  assert.equal(config.googleSheetsConfigured, false);
+
+  const saConfig = getRuntimeEnvironmentConfig({
+    GOOGLE_SHEETS_SPREADSHEET_ID: '1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms',
+    GOOGLE_SERVICE_ACCOUNT_EMAIL: 'sync@bionexa.iam.gserviceaccount.com',
+    GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----',
+  });
+  assert.equal(saConfig.googleSheetsConfigured, true);
 });
 
 test('resolveCorsOrigin allows configured origins and deploy previews, rejects unknown origins', () => {

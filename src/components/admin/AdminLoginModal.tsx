@@ -19,8 +19,10 @@ interface AdminLoginModalProps {
 }
 
 export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ onSuccess, onCancel }) => {
-  const [username, setUsername] = useState('admin@bionexa.org');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [requires2fa, setRequires2fa] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -33,12 +35,21 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ onSuccess, onC
 
     setIsLoading(true);
     setErrorMsg(null);
+    setRemainingAttempts(null);
+    setRetryAfterSec(null);
 
     try {
-      const response = await adminApi.login(username.trim(), password);
+      const response = await adminApi.login(
+        username.trim(),
+        password,
+        requires2fa ? totpCode.trim() : undefined
+      );
       onSuccess(response.user);
     } catch (err: any) {
       setErrorMsg(err.message || 'Authentication failed. Please verify credentials.');
+      if (err.requires2fa || err.code === 'MFA_REQUIRED' || err.code === 'INVALID_2FA_CODE') {
+        setRequires2fa(true);
+      }
       if (err.remainingAttempts !== undefined) {
         setRemainingAttempts(err.remainingAttempts);
       }
@@ -135,14 +146,40 @@ export const AdminLoginModal: React.FC<AdminLoginModalProps> = ({ onSuccess, onC
               </div>
             </div>
 
+            {requires2fa && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                    2FA Authenticator Code
+                  </label>
+                  <span className="text-[10px] text-teal-600 font-mono">RFC 6238 TOTP</span>
+                </div>
+                <div className="relative">
+                  <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    required
+                    autoFocus
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="Enter 6-digit code"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-[#0B2A5B]"
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Security Notice Box */}
             <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 space-y-1">
               <div className="flex items-center gap-1.5 font-bold text-slate-700 dark:text-slate-300">
                 <KeyRound className="w-3.5 h-3.5 text-teal-600" />
-                <span>Default Access Note:</span>
+                <span>Access Policy:</span>
               </div>
               <p>
-                Default master username is <code className="font-mono text-slate-800 dark:text-slate-200 font-bold">admin@bionexa.org</code>. Password configured via server environment.
+                Administrator username and password are verified via server environment configuration and HttpOnly session cookies.
               </p>
             </div>
 

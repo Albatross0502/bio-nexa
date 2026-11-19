@@ -1,17 +1,24 @@
 /**
- * BIO-NEXA Admin API Client
- * 
- * Communicates with the protected Express backend /api/admin/* endpoints.
- * Handles HttpOnly cookies and Bearer token fallback.
- * Never stores or exposes admin passwords in JavaScript.
+ * BIO-INEXA Admin API Client
+ *
+ * Communicates with the protected /api/admin/* endpoints.
+ * Relies strictly on server-issued HttpOnly session cookies (credentials: 'include').
+ * Never stores tokens or administrator credentials in JavaScript storage.
  */
+
+import type { AdminDashboardStats, AdminExportDataset } from './adminHelpers';
+
+export type { AdminDashboardStats, AdminExportDataset };
+
+export type AdminUserRole = 'super_admin' | 'moderator' | 'verifier' | 'editor' | 'admin';
 
 export interface AdminUser {
   id: string;
   username: string;
   email: string;
   name: string;
-  role: 'admin';
+  role: AdminUserRole;
+  permissions?: string[];
 }
 
 export interface AdminJob {
@@ -45,6 +52,47 @@ export interface AdminJob {
   verificationStatus?: string;
   lastVerificationDate?: string;
   verificationNotes?: string;
+}
+
+export interface AdminInternship {
+  id: string;
+  slug?: string;
+  title: string;
+  organization: string;
+  location: string;
+  mode: string;
+  workMode: string;
+  stipend: string;
+  duration: string;
+  deadline: string;
+  category: string;
+  eligibility: string;
+  description: string;
+  learningOutcomes?: string[];
+  skillsRequired: string[];
+  sourceName?: string;
+  sourceUrl?: string;
+  applicationUrl: string;
+  verificationStatus?: string;
+  verificationNotes?: string;
+  lastVerificationDate?: string;
+  status: string;
+  isApproved: boolean;
+  isActive: boolean;
+  featured: boolean;
+}
+
+export interface AdminSyncLog {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  status: string;
+  itemsFetched: number;
+  itemsAdded: number;
+  itemsUpdated: number;
+  itemsExpired: number;
+  details: string;
+  createdAt: string;
 }
 
 export interface AdminWorkshop {
@@ -124,99 +172,155 @@ export interface WebsiteContent {
   };
 }
 
+export interface AdminSubmittedOpportunity {
+  id: string;
+  title: string;
+  organization: string;
+  type: string;
+  subCategory: string;
+  description: string;
+  location: string;
+  workMode: string;
+  experience: string;
+  qualification: string;
+  branches: string[];
+  skills: string[];
+  salaryOrStipend: string;
+  salaryTier: string;
+  deadline: string;
+  postedDate: string;
+  sourceName: string;
+  sourceUrl: string;
+  applicationUrl: string;
+  contactEmail: string;
+  workshopDetails?: Record<string, unknown> | null;
+  isApproved: boolean;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminComplianceRequest {
+  id: string;
+  referenceId: string;
+  requestType: string;
+  subCategory: string;
+  requesterName: string;
+  requesterEmail: string;
+  organization: string;
+  targetTitleOrUrl: string;
+  details: string;
+  status: string;
+  resolutionNotes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminContactMessage {
+  id: string;
+  referenceId: string;
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+  status: string;
+  createdAt: string;
+}
+
+async function parseJsonResponse<T>(res: Response, fallbackMessage: string): Promise<T> {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.message || data.error || fallbackMessage);
+    (err as any).status = res.status;
+    (err as any).code = data.code;
+    throw err;
+  }
+  return data as T;
+}
+
 class AdminApiClient {
-  private sessionToken: string | null = null;
-
-  constructor() {
-    // Check in-memory / session storage for fallback bearer token
-    try {
-      this.sessionToken = sessionStorage.getItem('bionexa_admin_token');
-    } catch {
-      this.sessionToken = null;
-    }
-  }
-
   private getHeaders(extraHeaders: HeadersInit = {}): HeadersInit {
-    const headers: Record<string, string> = {
+    return {
       'Content-Type': 'application/json',
-      ...extraHeaders as Record<string, string>
+      ...(extraHeaders as Record<string, string>)
     };
-    if (this.sessionToken) {
-      headers['Authorization'] = `Bearer ${this.sessionToken}`;
-    }
-    return headers;
   }
 
-  public async login(username: string, password: string): Promise<{ success: boolean; user: AdminUser; token: string }> {
+  public async login(
+    username: string,
+    password: string,
+    totpCode?: string
+  ): Promise<{ success: boolean; user: AdminUser; permissions?: string[]; expiresAt?: number }> {
+    const payload: Record<string, string> = { username, password };
+    if (totpCode && totpCode.trim()) {
+      payload.totpCode = totpCode.trim();
+    }
+
     const res = await fetch('/api/admin/login', {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
+      body: JSON.stringify(payload)
     });
 
-    const data = await res.json();
+    const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const err = new Error(data.message || 'Login failed');
+      const err = new Error(data.message || data.error || 'Login failed');
       (err as any).status = res.status;
-      (err as any).remainingAttempts = data.remainingAttempts;
-      (err as any).retryAfterSec = data.retryAfterSec;
+      (err as any).code = data.code;
+      (err as any).remainingAttempts = data.remainingAttempts ?? data.details?.remainingAttempts;
+      (err as any).retryAfterSec = data.retryAfterSec ?? data.details?.retryAfterSec;
+      (err as any).requires2fa = Boolean(
+        data.requires2fa ?? data.details?.requires2fa ?? (data.code === 'MFA_REQUIRED' || data.code === 'INVALID_2FA_CODE')
+      );
       throw err;
-    }
-
-    this.sessionToken = data.token;
-    try {
-      sessionStorage.setItem('bionexa_admin_token', data.token);
-    } catch {
-      // Ignore storage restrictions
     }
 
     return data;
   }
 
   public async logout(): Promise<void> {
-    try {
-      await fetch('/api/admin/logout', {
-        method: 'POST',
-        headers: this.getHeaders()
-      });
-    } finally {
-      this.sessionToken = null;
-      try {
-        sessionStorage.removeItem('bionexa_admin_token');
-      } catch {
-        // Ignore
-      }
-    }
+    await fetch('/api/admin/logout', {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
   }
 
   public async checkAuth(): Promise<{ authenticated: boolean; user?: AdminUser }> {
     try {
       const res = await fetch('/api/admin/me', {
+        credentials: 'include',
         headers: this.getHeaders()
       });
       if (!res.ok) {
         return { authenticated: false };
       }
-      const data = await res.json();
-      return data;
+      return res.json();
     } catch {
       return { authenticated: false };
     }
   }
 
   public async getDashboardData(): Promise<{
+    stats?: AdminDashboardStats;
     jobs: AdminJob[];
+    internships?: AdminInternship[];
     workshops: AdminWorkshop[];
     courses: AdminCourse[];
     content: WebsiteContent;
+    submittedOpportunities?: AdminSubmittedOpportunity[];
+    contactMessages?: AdminContactMessage[];
+    complianceRequests?: AdminComplianceRequest[];
+    syncHistory?: AdminSyncLog[];
+    databaseEngine?: string;
+    persistentDbConfigured?: boolean;
   }> {
     const res = await fetch('/api/admin/data', {
+      credentials: 'include',
       headers: this.getHeaders()
     });
-    if (!res.ok) {
-      throw new Error(`Failed to fetch dashboard data: ${res.statusText}`);
-    }
-    return res.json();
+    return parseJsonResponse(res, `Failed to fetch dashboard data: ${res.statusText}`);
   }
 
   // --- Jobs CRUD ---
@@ -224,42 +328,130 @@ class AdminApiClient {
   public async createJob(job: Partial<AdminJob>): Promise<AdminJob> {
     const res = await fetch('/api/admin/jobs', {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(job)
     });
-    if (!res.ok) throw new Error('Failed to create job');
-    const data = await res.json();
+    const data = await parseJsonResponse<{ job: AdminJob }>(res, 'Failed to create job');
     return data.job;
   }
 
   public async updateJob(id: string, updates: Partial<AdminJob>): Promise<AdminJob> {
     const res = await fetch(`/api/admin/jobs/${encodeURIComponent(id)}`, {
       method: 'PUT',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(updates)
     });
-    if (!res.ok) throw new Error('Failed to update job');
-    const data = await res.json();
+    const data = await parseJsonResponse<{ job: AdminJob }>(res, 'Failed to update job');
     return data.job;
   }
 
   public async deleteJob(id: string): Promise<void> {
     const res = await fetch(`/api/admin/jobs/${encodeURIComponent(id)}`, {
       method: 'DELETE',
+      credentials: 'include',
       headers: this.getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to delete job');
+    await parseJsonResponse(res, 'Failed to delete job');
   }
 
-  public async updateJobStatus(id: string, payload: { status?: string; isApproved?: boolean; isExpired?: boolean }): Promise<AdminJob> {
+  public async updateJobStatus(
+    id: string,
+    payload: {
+      status?: string;
+      isApproved?: boolean;
+      isExpired?: boolean;
+      verificationStatus?: string;
+      verificationNotes?: string;
+    }
+  ): Promise<AdminJob> {
     const res = await fetch(`/api/admin/jobs/${encodeURIComponent(id)}/status`, {
       method: 'PATCH',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error('Failed to update job status');
-    const data = await res.json();
+    const data = await parseJsonResponse<{ job: AdminJob }>(res, 'Failed to update job status');
     return data.job;
+  }
+
+  // --- Internships CRUD & Verification ---
+
+  public async getInternships(): Promise<AdminInternship[]> {
+    const res = await fetch('/api/admin/internships', {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    const data = await parseJsonResponse<{ internships?: AdminInternship[] }>(res, 'Failed to load internships');
+    return data.internships || [];
+  }
+
+  public async createInternship(internship: Partial<AdminInternship>): Promise<AdminInternship> {
+    const res = await fetch('/api/admin/internships', {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify(internship)
+    });
+    const data = await parseJsonResponse<{ internship: AdminInternship }>(res, 'Failed to create internship');
+    return data.internship;
+  }
+
+  public async updateInternship(id: string, updates: Partial<AdminInternship>): Promise<AdminInternship> {
+    const res = await fetch(`/api/admin/internships/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates)
+    });
+    const data = await parseJsonResponse<{ internship: AdminInternship }>(res, 'Failed to update internship');
+    return data.internship;
+  }
+
+  public async updateInternshipStatus(
+    id: string,
+    payload: {
+      status?: string;
+      isApproved?: boolean;
+      isActive?: boolean;
+      verificationStatus?: string;
+      verificationNotes?: string;
+    }
+  ): Promise<AdminInternship> {
+    const res = await fetch(`/api/admin/internships/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify(payload)
+    });
+    const data = await parseJsonResponse<{ internship: AdminInternship }>(res, 'Failed to update internship status');
+    return data.internship;
+  }
+
+  public async verifyInternship(
+    id: string,
+    status: string = 'Verified',
+    notes: string = '',
+    lastVerificationDate?: string
+  ): Promise<AdminInternship> {
+    const res = await fetch(`/api/admin/internships/${encodeURIComponent(id)}/verify`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ status, notes, lastVerificationDate })
+    });
+    const data = await parseJsonResponse<{ internship: AdminInternship }>(res, 'Failed to verify internship');
+    return data.internship;
+  }
+
+  public async deleteInternship(id: string): Promise<void> {
+    const res = await fetch(`/api/admin/internships/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    await parseJsonResponse(res, 'Failed to delete internship');
   }
 
   // --- Workshops CRUD ---
@@ -267,12 +459,13 @@ class AdminApiClient {
   public async uploadWorkshopImage(filename: string, dataUrl: string): Promise<string> {
     const res = await fetch('/api/admin/workshops/upload-image', {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify({ filename, dataUrl })
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.imageUrl) {
-      throw new Error(data.message || 'Failed to upload workshop image');
+    const data = await parseJsonResponse<{ imageUrl?: string }>(res, 'Failed to upload workshop image');
+    if (!data.imageUrl) {
+      throw new Error('Failed to upload workshop image');
     }
     return data.imageUrl;
   }
@@ -280,45 +473,43 @@ class AdminApiClient {
   public async createWorkshop(workshop: Partial<AdminWorkshop>): Promise<AdminWorkshop> {
     const res = await fetch('/api/admin/workshops', {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(workshop)
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || 'Failed to create workshop');
+    const data = await parseJsonResponse<{ workshop: AdminWorkshop }>(res, 'Failed to create workshop');
     return data.workshop;
   }
 
   public async updateWorkshop(id: string, updates: Partial<AdminWorkshop>): Promise<AdminWorkshop> {
     const res = await fetch(`/api/admin/workshops/${encodeURIComponent(id)}`, {
       method: 'PUT',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(updates)
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || 'Failed to update workshop');
+    const data = await parseJsonResponse<{ workshop: AdminWorkshop }>(res, 'Failed to update workshop');
     return data.workshop;
   }
 
   public async quickUpdateWorkshop(id: string, updates: { status?: string; availability?: string; featured?: boolean }): Promise<AdminWorkshop> {
     const res = await fetch(`/api/admin/workshops/${encodeURIComponent(id)}/quick`, {
       method: 'PATCH',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(updates)
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || 'Failed to quickly update workshop');
+    const data = await parseJsonResponse<{ workshop: AdminWorkshop }>(res, 'Failed to quickly update workshop');
     return data.workshop;
   }
 
   public async deleteWorkshop(id: string): Promise<void> {
     const res = await fetch(`/api/admin/workshops/${encodeURIComponent(id)}`, {
       method: 'DELETE',
+      credentials: 'include',
       headers: this.getHeaders()
     });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.message || 'Failed to delete workshop');
-    }
+    await parseJsonResponse(res, 'Failed to delete workshop');
   }
 
   // --- Courses CRUD ---
@@ -326,12 +517,13 @@ class AdminApiClient {
   public async uploadCourseImage(filename: string, dataUrl: string): Promise<string> {
     const res = await fetch('/api/admin/courses/upload-image', {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify({ filename, dataUrl })
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data.imageUrl) {
-      throw new Error(data.message || 'Failed to upload course image');
+    const data = await parseJsonResponse<{ imageUrl?: string }>(res, 'Failed to upload course image');
+    if (!data.imageUrl) {
+      throw new Error('Failed to upload course image');
     }
     return data.imageUrl;
   }
@@ -339,22 +531,22 @@ class AdminApiClient {
   public async createCourse(course: Partial<AdminCourse>): Promise<AdminCourse> {
     const res = await fetch('/api/admin/courses', {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(course)
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || 'Failed to create course');
+    const data = await parseJsonResponse<{ course: AdminCourse }>(res, 'Failed to create course');
     return data.course;
   }
 
   public async updateCourse(id: string, updates: Partial<AdminCourse>): Promise<AdminCourse> {
     const res = await fetch(`/api/admin/courses/${encodeURIComponent(id)}`, {
       method: 'PUT',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(updates)
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || 'Failed to update course');
+    const data = await parseJsonResponse<{ course: AdminCourse }>(res, 'Failed to update course');
     return data.course;
   }
 
@@ -364,23 +556,21 @@ class AdminApiClient {
   ): Promise<AdminCourse> {
     const res = await fetch(`/api/admin/courses/${encodeURIComponent(id)}/quick`, {
       method: 'PATCH',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(updates)
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.message || 'Failed to update course');
+    const data = await parseJsonResponse<{ course: AdminCourse }>(res, 'Failed to update course');
     return data.course;
   }
 
   public async deleteCourse(id: string): Promise<void> {
     const res = await fetch(`/api/admin/courses/${encodeURIComponent(id)}`, {
       method: 'DELETE',
+      credentials: 'include',
       headers: this.getHeaders()
     });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.message || 'Failed to delete course');
-    }
+    await parseJsonResponse(res, 'Failed to delete course');
   }
 
   // --- Website Content ---
@@ -388,29 +578,54 @@ class AdminApiClient {
   public async updateContent(content: Partial<WebsiteContent>): Promise<WebsiteContent> {
     const res = await fetch('/api/admin/content', {
       method: 'PUT',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify(content)
     });
-    if (!res.ok) throw new Error('Failed to update website content');
-    const data = await res.json();
+    const data = await parseJsonResponse<{ content: WebsiteContent }>(res, 'Failed to update website content');
     return data.content;
   }
 
   // --- Job Verification Records ---
 
+  public async getJobVerificationHistory(id: string): Promise<{
+    id: string;
+    jobId: string;
+    verifiedBy: string;
+    verifiedAt: string;
+    sourceStatus: string;
+    notes: string;
+  }[]> {
+    const res = await fetch(`/api/admin/jobs/${encodeURIComponent(id)}/verifications`, {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    const data = await parseJsonResponse<{
+      verifications?: {
+        id: string;
+        jobId: string;
+        verifiedBy: string;
+        verifiedAt: string;
+        sourceStatus: string;
+        notes: string;
+      }[];
+    }>(res, 'Failed to fetch verification history');
+    return data.verifications || [];
+  }
+
   public async verifyJob(
-    id: string, 
-    status: string = 'Verified', 
-    notes: string = '', 
+    id: string,
+    status: string = 'Verified',
+    notes: string = '',
     lastVerificationDate?: string
   ): Promise<AdminJob> {
     const res = await fetch(`/api/admin/jobs/${encodeURIComponent(id)}/verify`, {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify({ status, notes, lastVerificationDate })
     });
-    if (!res.ok) throw new Error('Failed to record job verification');
-    const data = await res.json();
+    const data = await parseJsonResponse<{ job: AdminJob }>(res, 'Failed to record job verification');
     return data.job;
   }
 
@@ -419,19 +634,22 @@ class AdminApiClient {
   public async createBackup(): Promise<{ success: boolean; filename: string; sizeBytes: number }> {
     const res = await fetch('/api/admin/backups', {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to generate database backup');
-    const data = await res.json();
+    const data = await parseJsonResponse<{ backup: { success: boolean; filename: string; sizeBytes: number } }>(
+      res,
+      'Failed to generate database backup'
+    );
     return data.backup;
   }
 
   public async getBackups(): Promise<any[]> {
     const res = await fetch('/api/admin/backups', {
+      credentials: 'include',
       headers: this.getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to retrieve backup records');
-    const data = await res.json();
+    const data = await parseJsonResponse<{ backups?: any[] }>(res, 'Failed to retrieve backup records');
     return data.backups || [];
   }
 
@@ -441,13 +659,14 @@ class AdminApiClient {
     success: boolean;
     lastReport: any | null;
     sources: any[];
+    syncHistory?: AdminSyncLog[];
     isSyncing: boolean;
   }> {
     const res = await fetch('/api/admin/automated-sync/status', {
+      credentials: 'include',
       headers: this.getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to fetch automated sync status');
-    return res.json();
+    return parseJsonResponse(res, 'Failed to fetch automated sync status');
   }
 
   public async runAutomatedSync(): Promise<{
@@ -457,13 +676,10 @@ class AdminApiClient {
   }> {
     const res = await fetch('/api/admin/automated-sync/run', {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders()
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Automated sync failed');
-    }
-    return res.json();
+    return parseJsonResponse(res, 'Automated sync failed');
   }
 
   public async checkApplicationUrls(limit: number = 25): Promise<{
@@ -474,11 +690,11 @@ class AdminApiClient {
   }> {
     const res = await fetch('/api/admin/automated-sync/check-urls', {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders(),
       body: JSON.stringify({ limit })
     });
-    if (!res.ok) throw new Error('Failed to audit application URLs');
-    return res.json();
+    return parseJsonResponse(res, 'Failed to audit application URLs');
   }
 
   public async scanExpiredListings(): Promise<{
@@ -488,10 +704,279 @@ class AdminApiClient {
   }> {
     const res = await fetch('/api/admin/automated-sync/expire', {
       method: 'POST',
+      credentials: 'include',
       headers: this.getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to scan expired listings');
-    return res.json();
+    return parseJsonResponse(res, 'Failed to scan expired listings');
+  }
+
+  // --- Server-Side Google Sheets Integration (Phase 09) ---
+
+  public async getGoogleSheetsStatus(): Promise<{
+    success: boolean;
+    config: {
+      configured: boolean;
+      mode: 'service_account' | 'api_key' | 'webapp' | 'csv' | 'unconfigured';
+      maskedSpreadsheetId: string;
+      range: string;
+      serviceAccountConfigured: boolean;
+      apiKeyConfigured: boolean;
+      webAppConfigured: boolean;
+      csvUrlConfigured: boolean;
+      requiredColumns: string[];
+      allStandardColumns: string[];
+      note: string;
+    };
+    status: {
+      lastSyncAttemptAt: string | null;
+      lastSuccessfulSyncAt: string | null;
+      lastStatus: 'never_run' | 'success' | 'partial' | 'error';
+      lastError: string | null;
+      mode: string;
+      columnValidation: {
+        valid: boolean;
+        detectedHeaders: string[];
+        matchedColumns: Record<string, string>;
+        missingRequired: string[];
+        warnings: string[];
+      } | null;
+      lastReport: {
+        timestamp: string;
+        configured: boolean;
+        mode: string;
+        rowsFetched: number;
+        importedCount: number;
+        updatedCount: number;
+        duplicatesSkippedCount: number;
+        invalidRowsCount: number;
+        expiredSkippedCount: number;
+        deletedCount: number;
+        invalidRows: Array<{ rowNumber: number; title: string; reason: string }>;
+        error?: string;
+      } | null;
+    };
+    syncHistory: AdminSyncLog[];
+    isSyncing: boolean;
+    persistentDbConfigured?: boolean;
+  }> {
+    const res = await fetch('/api/admin/google-sheets/status', {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Failed to load server-side Google Sheets status');
+  }
+
+  public async runGoogleSheetsSync(): Promise<{
+    success: boolean;
+    message: string;
+    report: {
+      timestamp: string;
+      configured: boolean;
+      mode: string;
+      rowsFetched: number;
+      importedCount: number;
+      updatedCount: number;
+      duplicatesSkippedCount: number;
+      invalidRowsCount: number;
+      expiredSkippedCount: number;
+      deletedCount: number;
+      invalidRows: Array<{ rowNumber: number; title: string; reason: string }>;
+      columnValidation: {
+        valid: boolean;
+        detectedHeaders: string[];
+        matchedColumns: Record<string, string>;
+        missingRequired: string[];
+        warnings: string[];
+      } | null;
+      error?: string;
+    };
+  }> {
+    const res = await fetch('/api/admin/google-sheets/sync', {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Google Sheets synchronization failed');
+  }
+
+  // --- Submitted Opportunities Moderation ---
+
+  public async getSubmittedOpportunities(params?: {
+    type?: string;
+    search?: string;
+  }): Promise<AdminSubmittedOpportunity[]> {
+    const query = new URLSearchParams();
+    if (params?.type) query.set('type', params.type);
+    if (params?.search) query.set('search', params.search);
+    const qs = query.toString();
+    const res = await fetch(`/api/admin/opportunities${qs ? `?${qs}` : ''}`, {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    const data = await parseJsonResponse<{ opportunities?: AdminSubmittedOpportunity[] }>(
+      res,
+      'Failed to load submitted opportunities'
+    );
+    return data.opportunities || [];
+  }
+
+  public async moderateSubmittedOpportunity(
+    id: string,
+    updates: Partial<AdminSubmittedOpportunity> & { isApproved?: boolean; status?: string }
+  ): Promise<AdminSubmittedOpportunity> {
+    const res = await fetch(`/api/admin/opportunities/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify(updates)
+    });
+    const data = await parseJsonResponse<{ opportunity: AdminSubmittedOpportunity }>(
+      res,
+      'Failed to update submitted opportunity'
+    );
+    return data.opportunity;
+  }
+
+  public async deleteSubmittedOpportunity(id: string): Promise<void> {
+    const res = await fetch(`/api/admin/opportunities/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    await parseJsonResponse(res, 'Failed to delete submitted opportunity');
+  }
+
+  // --- Compliance Requests & Contact Messages ---
+
+  public async getComplianceRequests(params?: {
+    requestType?: string;
+    status?: string;
+  }): Promise<AdminComplianceRequest[]> {
+    const query = new URLSearchParams();
+    if (params?.requestType) query.set('requestType', params.requestType);
+    if (params?.status) query.set('status', params.status);
+    const qs = query.toString();
+    const res = await fetch(`/api/admin/compliance-requests${qs ? `?${qs}` : ''}`, {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    const data = await parseJsonResponse<{ requests?: AdminComplianceRequest[] }>(
+      res,
+      'Failed to load compliance requests'
+    );
+    return data.requests || [];
+  }
+
+  public async updateComplianceRequest(
+    id: string,
+    payload: { status: string; resolutionNotes?: string }
+  ): Promise<AdminComplianceRequest> {
+    const res = await fetch(`/api/admin/compliance-requests/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify(payload)
+    });
+    const data = await parseJsonResponse<{ request: AdminComplianceRequest }>(
+      res,
+      'Failed to update compliance request'
+    );
+    return data.request;
+  }
+
+  public async deleteComplianceRequest(id: string): Promise<void> {
+    const res = await fetch(`/api/admin/compliance-requests/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    await parseJsonResponse(res, 'Failed to delete compliance request');
+  }
+
+  public async getContactMessages(): Promise<AdminContactMessage[]> {
+    const res = await fetch('/api/admin/contact-messages', {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    const data = await parseJsonResponse<{ messages?: AdminContactMessage[] }>(
+      res,
+      'Failed to retrieve contact messages'
+    );
+    return data.messages || [];
+  }
+
+  // --- Security Audit Logs, Authorized Export, Sessions & Password Rotation ---
+
+  public async getAuditLogs(): Promise<{ logs: any[]; loginAttempts: any[] }> {
+    const res = await fetch('/api/admin/audit-logs', {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Failed to load administrator audit logs');
+  }
+
+  public getAllowedExportUrl(dataset: AdminExportDataset, format: 'csv' | 'json'): string {
+    const params = new URLSearchParams({ dataset, format });
+    return `/api/admin/export?${params.toString()}`;
+  }
+
+  public async downloadAuthorizedExport(
+    dataset: AdminExportDataset,
+    format: 'csv' | 'json'
+  ): Promise<{ blob: Blob; filename: string; contentType: string }> {
+    const effectiveFormat = dataset === 'all' ? 'json' : format;
+    const url = this.getAllowedExportUrl(dataset, effectiveFormat);
+    const res = await fetch(url, {
+      method: 'GET',
+      credentials: 'include'
+    });
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const err = new Error(errData.message || errData.error || `Export failed (HTTP ${res.status})`);
+      (err as any).status = res.status;
+      (err as any).code = errData.code;
+      throw err;
+    }
+    const contentDisposition = res.headers.get('content-disposition') || '';
+    const match = contentDisposition.match(/filename="?([^"]+)"?/i);
+    const filename =
+      match?.[1] || `bio-inexa-${dataset}-${new Date().toISOString().split('T')[0]}.${effectiveFormat}`;
+    const blob = await res.blob();
+    return {
+      blob,
+      filename,
+      contentType: res.headers.get('content-type') || 'application/octet-stream'
+    };
+  }
+
+  public async getSessions(): Promise<{ sessions: any[] }> {
+    const res = await fetch('/api/admin/sessions', {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Failed to load active administrator sessions');
+  }
+
+  public async revokeAllOtherSessions(): Promise<{ success: boolean; revokedCount: number; message: string }> {
+    const res = await fetch('/api/admin/sessions/revoke-all', {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Failed to revoke other administrator sessions');
+  }
+
+  public async changePassword(
+    currentPassword: string,
+    newPassword: string
+  ): Promise<{ success: boolean; message: string; revokedOtherSessions?: number }> {
+    const res = await fetch('/api/admin/auth/change-password', {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    return parseJsonResponse(res, 'Failed to update administrator password');
   }
 }
 

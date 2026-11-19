@@ -5,7 +5,9 @@ import {
   UnifiedJob,
   isApplicationLinkActionable,
   parseApplicationDestination,
+  getOfficialEmployerPortal,
 } from '../../services/jobs/jobService';
+import { bionexaApi } from '../../services/api/bionexaApiClient';
 import {
   Search,
   MapPin,
@@ -128,49 +130,47 @@ export const JobsPage: React.FC = () => {
     }
   };
 
-  const handleApplySubmit = (e: React.FormEvent) => {
+  const handleApplySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedJob) return;
 
-    applyToJob({
-      jobId: selectedJob.id,
-      jobTitle: selectedJob.title,
-      company: selectedJob.company,
-      applicantName,
-      applicantEmail,
-      phone,
-      qualification,
-      experienceYears,
-      coverNote: coverNote || 'I am keenly interested in contributing to this bioprocess / scientific opening.',
-    });
+    try {
+      await applyToJob({
+        jobId: selectedJob.id,
+        jobTitle: selectedJob.title,
+        company: selectedJob.company,
+        applicantName,
+        applicantEmail,
+        phone,
+        qualification,
+        experienceYears,
+        coverNote: coverNote || 'I am keenly interested in contributing to this bioprocess / scientific opening.',
+      });
 
-    setIsApplying(false);
-    setCoverNote('');
+      setIsApplying(false);
+      setCoverNote('');
+    } catch {
+      // Toast already surfaced by AppContext; keep modal open
+    }
   };
 
   const handleReportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedJob) return;
+    if (!selectedJob || isSubmittingReport) return;
     setIsSubmittingReport(true);
     try {
-      await fetch(`/api/jobs/${selectedJob.id}/report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          reason: reportReason,
-          details: reportNote,
-          reporterEmail: currentUser.email,
-        }),
+      const result = await bionexaApi.reportJob(selectedJob.id, {
+        reason: reportReason,
+        details: reportNote,
+        reporterEmail: currentUser.email,
       });
       const mappedReason = reportReason === 'Demanded Application Fee' ? 'Spam' : reportReason;
       addReport('Job', `${selectedJob.title} (${selectedJob.company})`, mappedReason);
-      addToast('Thank you for reporting. Our verification team will review this listing.', 'success');
+      addToast(result.message || 'Thank you for reporting. Our verification team will review this listing.', 'success');
       setIsReporting(false);
       setReportNote('');
-    } catch {
-      const mappedReason = reportReason === 'Demanded Application Fee' ? 'Spam' : reportReason;
-      addReport('Job', `${selectedJob.title} (${selectedJob.company})`, mappedReason);
-      setIsReporting(false);
+    } catch (err: any) {
+      addToast(err?.message || 'Unable to submit job report. Please try again.', 'error');
     } finally {
       setIsSubmittingReport(false);
     }
@@ -544,10 +544,20 @@ export const JobsPage: React.FC = () => {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
                 <div className="text-xs text-slate-500">
                   Application Deadline: <strong className={selectedJob.isExpired ? 'text-rose-600' : 'text-slate-900 dark:text-slate-100'}>{selectedJob.deadline}</strong>
-                  {selectedJob.isExpired ? (
+                  {selectedJob.isExpired || selectedJob.verificationStatus === 'Expired' || selectedJob.verificationStatus === 'Rejected' ? (
                     <span className="ml-2 inline-flex items-center gap-1 font-semibold text-rose-600 dark:text-rose-400">
                       <AlertTriangle className="w-3.5 h-3.5" />
                       Applications Closed
+                    </span>
+                  ) : selectedJob.verificationStatus === 'Link Unavailable' ? (
+                    <span className="ml-2 inline-flex items-center gap-1 font-semibold text-amber-600 dark:text-amber-400">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      Direct Link Unavailable
+                    </span>
+                  ) : selectedJob.verificationStatus === 'Pending Verification' ? (
+                    <span className="ml-2 inline-flex items-center gap-1 font-semibold text-amber-600 dark:text-amber-400">
+                      <AlertCircle className="w-3.5 h-3.5" />
+                      Pending Audit
                     </span>
                   ) : (
                     <span className="ml-2 inline-flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
@@ -627,9 +637,29 @@ export const JobsPage: React.FC = () => {
                   </div>
                   <div>
                     <span className="text-slate-400 block">Last Verification:</span>
-                    <strong className="text-slate-800 dark:text-slate-200">{selectedJob.lastVerificationDate || selectedJob.postedDate}</strong>
+                    <strong className="text-slate-800 dark:text-slate-200">{selectedJob.lastVerificationDate || 'Not yet verified'}</strong>
                   </div>
                 </div>
+                {selectedJob.verificationStatus === 'Link Unavailable' && (() => {
+                  const officialPortal = getOfficialEmployerPortal(selectedJob);
+                  if (!officialPortal) return null;
+                  return (
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-700/60 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                      <span className="text-slate-600 dark:text-slate-300">
+                        Direct link offline. Official employer career portal:
+                      </span>
+                      <a
+                        href={officialPortal.portalUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-bold text-[#0B2A5B] dark:text-sky-400 hover:underline inline-flex items-center gap-1"
+                      >
+                        <span>{officialPortal.portalLabel} ({officialPortal.portalDomain})</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Role Overview */}

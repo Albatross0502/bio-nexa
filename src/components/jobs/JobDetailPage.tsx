@@ -1,12 +1,17 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { 
   getJobByIdOrSlug, 
   getAllUnifiedJobs, 
   isApplicationLinkActionable, 
   parseApplicationDestination,
+  getOfficialEmployerPortal,
+  mapJobToUnified,
+  normalizeJobVerificationStatus,
   UnifiedJob 
 } from '../../services/jobs/jobService';
+import { Job } from '../../types';
+import { bionexaApi } from '../../services/api/bionexaApiClient';
 import { NotFoundPage } from '../pages/NotFoundPage';
 import {
   Building2,
@@ -46,14 +51,98 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
   const { jobs, isItemSaved, toggleSaveItem, applyToJob, addReport, addToast, currentUser, navigate } = useApp();
 
   // Resolve job from state and seed sources
-  const job = useMemo<UnifiedJob | null>(() => {
+  const inMemoryJob = useMemo<UnifiedJob | null>(() => {
     return getJobByIdOrSlug(jobId, jobs);
   }, [jobId, jobs]);
+
+  const [fetchedJob, setFetchedJob] = useState<UnifiedJob | null>(null);
+  const [isLoadingJob, setIsLoadingJob] = useState<boolean>(() => !inMemoryJob);
+  const job = inMemoryJob || fetchedJob;
 
   // Destination intelligence
   const destinationInfo = useMemo(() => {
     return job ? parseApplicationDestination(job) : null;
   }, [job]);
+
+  const officialPortal = useMemo(() => {
+    return job ? getOfficialEmployerPortal(job) : null;
+  }, [job]);
+
+  // Persistent verification audit history from backend
+  const [verificationHistory, setVerificationHistory] = useState<
+    Array<{ id: string; verifiedBy: string; verifiedAt: string; sourceStatus: string; notes: string }>
+  >([]);
+
+  useEffect(() => {
+    const targetId = inMemoryJob?.id || jobId;
+    if (!targetId) return;
+    let active = true;
+    if (!inMemoryJob) {
+      setIsLoadingJob(true);
+    }
+    bionexaApi
+      .getJobById(targetId)
+      .then((res) => {
+        if (!active) return;
+        if (res?.verifications) {
+          setVerificationHistory(res.verifications);
+        }
+        if (!inMemoryJob && res?.job) {
+          const j = res.job;
+          const verStatus = normalizeJobVerificationStatus(j.verificationStatus);
+          setFetchedJob(
+            mapJobToUnified({
+              id: j.id,
+              slug: j.id,
+              title: j.title,
+              company: j.employer,
+              employer: j.employer,
+              location: j.location,
+              type: (j.employmentType || 'Full-time') as Job['type'],
+              sector: (j.sector || 'Private Biopharma') as Job['sector'],
+              experienceLevel: 'Mid-level (2-5 yrs)',
+              qualification: (j.qualification || 'M.Sc / M.Tech') as Job['qualification'],
+              salary: j.salary || 'Not Disclosed',
+              postedDate: j.publicationDate || '',
+              deadline: j.expiryDate || 'Not Specified',
+              publicationDate: j.publicationDate || '',
+              expiryDate: j.expiryDate || 'Not Specified',
+              lastVerificationDate: j.lastVerificationDate || '',
+              verificationStatus: verStatus,
+              verificationNotes: j.verificationNotes,
+              isVerified: verStatus === 'Verified',
+              description: j.description || '',
+              responsibilities: j.responsibilities || [],
+              requirements: j.requirements || [],
+              skills: j.skills || [],
+              source: {
+                name: j.source || 'BIO-INEXA Portal',
+                url: j.originalJobUrl || j.applicationUrl || '',
+                isExternal: true,
+              },
+              originalJobUrl: j.originalJobUrl || j.applicationUrl || '',
+              applicationUrl: j.applicationUrl || '',
+              featured: Boolean(j.featured),
+            })
+          );
+        } else if (!inMemoryJob) {
+          setFetchedJob(null);
+        }
+      })
+      .catch(() => {
+        if (active && !inMemoryJob) {
+          setFetchedJob(null);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoadingJob(false);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [inMemoryJob?.id, jobId]);
 
   // Modals state
   const [isQuickApplying, setIsQuickApplying] = useState(false);
@@ -89,6 +178,14 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
       .slice(0, 3);
   }, [job, jobs]);
 
+  if (!job && isLoadingJob) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 py-20 text-center text-sm text-slate-500 dark:text-slate-400">
+        Loading job verification record...
+      </div>
+    );
+  }
+
   // If job was not found in any source -> render dedicated 404
   if (!job) {
     return (
@@ -122,49 +219,48 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
     addToast(`Navigating to ${destinationInfo?.domain || 'external portal'}...`, 'info');
   };
 
-  const handleQuickApplySubmit = (e: React.FormEvent) => {
+  const handleQuickApplySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    applyToJob({
-      jobId: job.id,
-      jobTitle: job.title,
-      company: job.company,
-      applicantName,
-      applicantEmail,
-      phone,
-      qualification,
-      experienceYears,
-      coverNote: coverNote || 'I am keenly interested in contributing to this bioprocess / scientific opening.',
-    });
-    setIsQuickApplying(false);
-    setCoverNote('');
+    try {
+      await applyToJob({
+        jobId: job.id,
+        jobTitle: job.title,
+        company: job.company,
+        applicantName,
+        applicantEmail,
+        phone,
+        qualification,
+        experienceYears,
+        coverNote: coverNote || 'I am keenly interested in contributing to this bioprocess / scientific opening.',
+      });
+      setIsQuickApplying(false);
+      setCoverNote('');
+    } catch {
+      // Keep modal open; error toast handled by AppContext
+    }
   };
 
   const handleReportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await fetch(`/api/jobs/${encodeURIComponent(job.id)}/report`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          reason: reportReason,
-          details: reportDetails,
-          reportedBy: reporterEmail
-        })
+      const result = await bionexaApi.reportJob(job.id, {
+        reason: reportReason,
+        details: reportDetails,
+        reportedBy: reporterEmail
       });
-    } catch {
-      // Non-blocking fallback
+
+      const appReason = 
+        reportReason.includes('Expired') ? 'Expired' :
+        reportReason.includes('Broken') ? 'Broken Link' :
+        reportReason.includes('Fee') ? 'Spam' : 'Incorrect Information';
+
+      addReport('Job', `${job.title} (${job.company}) - ${reportReason}`, appReason);
+      setIsReporting(false);
+      setReportDetails('');
+      addToast(result.message || 'Report logged. BIO-INEXA Trust & Safety team will audit this vacancy within 24 hours.', 'success');
+    } catch (err: any) {
+      addToast(err?.message || 'Unable to submit job report. Please verify fields and retry.', 'error');
     }
-
-    // Map to AppContext reason category
-    const appReason = 
-      reportReason.includes('Expired') ? 'Expired' :
-      reportReason.includes('Broken') ? 'Broken Link' :
-      reportReason.includes('Fee') ? 'Spam' : 'Incorrect Information';
-
-    addReport('Job', `${job.title} (${job.company}) - ${reportReason}`, appReason);
-    setIsReporting(false);
-    setReportDetails('');
-    addToast('Report logged. BIO-INEXA Trust & Safety team will audit this vacancy within 24 hours.', 'info');
   };
 
   // Status Badge Rendering Helper
@@ -463,10 +559,14 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
             <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200/70 dark:border-slate-700/70 space-y-1">
               <span className="text-slate-400 font-medium block">7. Last Verification Date</span>
               <div className="font-bold text-slate-900 dark:text-slate-100 text-sm">
-                {job.lastVerificationDate || (job.isVerified ? '2026-11-07' : 'Pending Verification')}
+                {job.lastVerificationDate || 'Not yet verified'}
               </div>
               <span className="text-[11px] text-slate-500 block">
-                {job.isVerified ? 'Audited by BIO-INEXA Operations' : 'Awaiting Administrative Audit'}
+                {job.verificationStatus === 'Pending Verification'
+                  ? 'Awaiting Administrative Audit'
+                  : job.isVerified
+                    ? 'Audited by BIO-INEXA Operations'
+                    : `Status Audited: ${job.verificationStatus}`}
               </span>
             </div>
 
@@ -476,13 +576,33 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                 {job.verificationStatus}
               </div>
               <span className="text-[11px] text-slate-500 block truncate">
-                {job.verificationNotes || 'Status audited and validated'}
+                {job.verificationNotes || (job.verificationStatus === 'Pending Verification' ? 'Pending verification audit' : 'Status recorded in verification ledger')}
               </span>
             </div>
           </div>
 
-          {/* Verification Warning Notice if unverified or suspicious */}
-          {!job.isVerified && (
+          {verificationHistory.length > 0 && (
+            <div className="p-3.5 bg-slate-50/80 dark:bg-slate-800/40 rounded-2xl border border-slate-200/70 dark:border-slate-700/70 space-y-1.5 text-[11px]">
+              <div className="font-bold text-slate-700 dark:text-slate-200">
+                Verification Audit Log ({verificationHistory.length})
+              </div>
+              <div className="space-y-1">
+                {verificationHistory.slice(0, 3).map((rec) => (
+                  <div key={rec.id} className="flex flex-wrap items-center justify-between gap-2 text-slate-600 dark:text-slate-300">
+                    <span>
+                      <strong>{rec.sourceStatus}</strong> — {rec.notes || 'Audit completed'}
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      {rec.verifiedBy} · {new Date(rec.verifiedAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Verification Warning Notice if Pending */}
+          {job.verificationStatus === 'Pending Verification' && (
             <div className="p-4 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-2xl flex items-start gap-3 text-xs">
               <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
               <div className="space-y-1">
@@ -490,7 +610,7 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                   Notice: This listing is currently Pending Administrative Verification
                 </h4>
                 <p className="text-amber-800 dark:text-amber-300">
-                  BIO-INEXA adheres to strict verification transparency. This vacancy was aggregated from public career bulletins but has not yet completed full editorial verification of employer identity and application destination. Always exercise caution and verify credentials directly on the employer website.
+                  BIO-INEXA adheres to strict verification transparency. This vacancy was submitted or aggregated from public career bulletins and has not yet completed full editorial verification of employer identity and application destination. Always verify credentials directly on the employer website.
                 </p>
               </div>
             </div>
@@ -499,13 +619,24 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
           {job.verificationStatus === 'Link Unavailable' && (
             <div className="p-4 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl flex items-start gap-3 text-xs">
               <AlertTriangle className="w-5 h-5 text-slate-600 shrink-0 mt-0.5" />
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <h4 className="font-bold text-slate-900 dark:text-white">
                   Destination Link Offline / Temporarily Unavailable
                 </h4>
                 <p className="text-slate-600 dark:text-slate-300">
-                  The employer application portal for this listing is currently unreachable. Direct application links have been disabled until the hiring organization restores portal access.
+                  The specific employer application destination for this listing is currently unreachable. Direct application links are disabled to protect candidates.
                 </p>
+                {officialPortal && (
+                  <a
+                    href={officialPortal.portalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 font-bold text-[#0B2A5B] dark:text-sky-400 hover:underline"
+                  >
+                    <span>Check Official Employer Career Portal: {officialPortal.portalLabel} ({officialPortal.portalDomain})</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                )}
               </div>
             </div>
           )}
@@ -709,20 +840,33 @@ export const JobDetailPage: React.FC<JobDetailPageProps> = ({ jobId }) => {
                     <ExternalLink className="w-4 h-4" />
                   </button>
                 ) : (
-                  <button
-                    disabled
-                    className="w-full py-3.5 px-4 bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold text-sm rounded-2xl cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    <span>
-                      {job.isExpired || job.verificationStatus === 'Expired'
-                        ? 'Applications Closed / Expired' 
-                        : job.verificationStatus === 'Link Unavailable'
-                          ? 'Application Link Unavailable'
-                          : job.verificationStatus === 'Rejected'
-                            ? 'Listing Rejected / Inactive'
-                            : 'Application Link Unavailable'}
-                    </span>
-                  </button>
+                  <div className="space-y-2">
+                    <button
+                      disabled
+                      className="w-full py-3.5 px-4 bg-slate-200 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold text-sm rounded-2xl cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <span>
+                        {job.isExpired || job.verificationStatus === 'Expired'
+                          ? 'Applications Closed / Expired' 
+                          : job.verificationStatus === 'Link Unavailable'
+                            ? 'Application Link Unavailable'
+                            : job.verificationStatus === 'Rejected'
+                              ? 'Listing Rejected / Inactive'
+                              : 'Application Link Unavailable'}
+                      </span>
+                    </button>
+                    {job.verificationStatus === 'Link Unavailable' && officialPortal && (
+                      <a
+                        href={officialPortal.portalUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full py-2.5 px-4 bg-slate-50 dark:bg-slate-800/80 hover:bg-slate-100 dark:hover:bg-slate-700 text-[#0B2A5B] dark:text-sky-400 border border-slate-200 dark:border-slate-700 font-bold text-xs rounded-2xl transition-colors flex items-center justify-center gap-1.5"
+                      >
+                        <span>Visit Official Career Portal</span>
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                    )}
+                  </div>
                 )}
 
                 {/* Quick Apply Button (Native submission modal) */}

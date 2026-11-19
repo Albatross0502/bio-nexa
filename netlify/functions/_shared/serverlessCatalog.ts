@@ -7,7 +7,7 @@
  * Supabase persistence is provisioned.
  */
 
-import { SEED_JOBS } from '../../../src/data/seedData';
+import { SEED_JOBS, SEED_INTERNSHIPS } from '../../../src/data/seedData';
 import { normalizeCourseCategory, normalizeCourseStatus } from '../../../src/services/courses/courseHelpers';
 
 export interface ServerlessJobRecord {
@@ -596,7 +596,7 @@ export const SERVERLESS_JOBS: ServerlessJobRecord[] = SEED_JOBS.map((j) => {
     publicationDate: j.publicationDate || j.postedDate,
     expiryDate: j.expiryDate || j.deadline,
     lastVerificationDate: j.lastVerificationDate || '',
-    verificationStatus: j.verificationStatus || 'Verified',
+    verificationStatus: j.verificationStatus || 'Pending Verification',
     verificationNotes: j.verificationNotes || '',
     isActive,
     isApproved,
@@ -674,3 +674,73 @@ export const SERVERLESS_COURSES: ServerlessCourseRecord[] = SERVERLESS_COURSES_R
     updatedAt: '2026-11-07T08:00:00.000Z',
   };
 });
+
+export interface ServerlessInternshipRecord {
+  id: string;
+  slug: string;
+  title: string;
+  organization: string;
+  location: string;
+  mode: string;
+  workMode: string;
+  stipend: string;
+  duration: string;
+  deadline: string;
+  category: string;
+  eligibility: string;
+  description: string;
+  learningOutcomes: string[];
+  skillsRequired: string[];
+  source: { name: string; url: string; isExternal: boolean };
+  sourceName: string;
+  sourceUrl: string;
+  applicationUrl: string;
+  verificationStatus: string;
+  verificationNotes: string;
+  lastVerificationDate: string;
+  isVerified: boolean;
+  isApproved: boolean;
+  isActive: boolean;
+  featured: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export const SERVERLESS_INTERNSHIPS: ServerlessInternshipRecord[] = SEED_INTERNSHIPS.map((i) => ({
+  id: i.id,
+  slug: i.slug,
+  title: i.title,
+  organization: i.organization,
+  location: i.location,
+  mode: i.mode,
+  workMode: i.mode,
+  stipend: i.stipend,
+  duration: i.duration,
+  deadline: i.deadline,
+  category: i.category,
+  eligibility: i.eligibility,
+  description: i.description,
+  learningOutcomes: i.learningOutcomes || [],
+  skillsRequired: i.skillsRequired || [],
+  source: i.source,
+  sourceName: i.source?.name || 'Verified Partner Program',
+  sourceUrl: i.source?.url || i.applicationUrl || '',
+  applicationUrl: i.applicationUrl || i.source?.url || '',
+  verificationStatus: 'Verified',
+  verificationNotes: 'Verified host research internship program.',
+  lastVerificationDate: '2026-11-07',
+  isVerified: true,
+  isApproved: true,
+  isActive: true,
+  featured: Boolean(i.featured),
+  createdAt: '2026-11-01T08:00:00.000Z',
+  updatedAt: '2026-11-07T08:00:00.000Z',
+}));
+
+export function formatServerlessInternshipForAdmin(i: ServerlessInternshipRecord) {
+  return {
+    ...i,
+    status: i.verificationStatus === 'Rejected' ? 'Rejected' : !i.isActive ? 'Expired' : 'Active',
+  };
+}
+

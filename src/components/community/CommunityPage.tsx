@@ -33,29 +33,37 @@ export const CommunityPage: React.FC = () => {
     (d) => selectedCategory === 'all' || d.category === selectedCategory
   );
 
-  const handleCreateTopic = (e: React.FormEvent) => {
+  const handleCreateTopic = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTopicTitle || !newTopicContent) return;
+    if (!newTopicTitle.trim() || !newTopicContent.trim()) return;
 
-    addDiscussion({
-      title: newTopicTitle,
-      authorName: currentUser.name,
-      authorRole: currentUser.title || 'BIO-INEXA Member',
-      category: newTopicCategory,
-      content: newTopicContent
-    });
+    try {
+      await addDiscussion({
+        title: newTopicTitle.trim(),
+        authorName: currentUser.name,
+        authorRole: currentUser.title || 'BIO-INEXA Member',
+        category: newTopicCategory,
+        content: newTopicContent.trim()
+      });
 
-    setNewTopicTitle('');
-    setNewTopicContent('');
-    setShowNewTopicModal(false);
+      setNewTopicTitle('');
+      setNewTopicContent('');
+      setShowNewTopicModal(false);
+    } catch {
+      // Error toast is shown by AppContext; keep draft intact
+    }
   };
 
-  const handlePostReply = (topicId: string) => {
+  const handlePostReply = async (topicId: string) => {
     const text = replyTextMap[topicId];
     if (!text || !text.trim()) return;
 
-    addDiscussionReply(topicId, text.trim());
-    setReplyTextMap((prev) => ({ ...prev, [topicId]: '' }));
+    try {
+      await addDiscussionReply(topicId, text.trim());
+      setReplyTextMap((prev) => ({ ...prev, [topicId]: '' }));
+    } catch {
+      // Error toast is shown by AppContext; preserve reply input
+    }
   };
 
   const handleConfirmBooking = (e: React.FormEvent) => {

@@ -4,6 +4,25 @@ import { SEED_JOBS } from '../../data/seedData';
 import { SEED_OPPORTUNITIES } from '../opportunities/seedOpportunities';
 import { opportunityStore } from '../opportunities/opportunityStore';
 import { getDaysUntilDeadline } from '../opportunities/expiryManager';
+import {
+  VALID_JOB_VERIFICATION_STATUSES,
+  normalizeJobVerificationStatus,
+  validateApplicationUrl,
+  getOfficialEmployerPortal,
+  findDuplicateJob,
+  isJobExpiredByDeadline,
+  isVerificationDateAllowed,
+} from './jobVerification';
+
+export {
+  VALID_JOB_VERIFICATION_STATUSES,
+  normalizeJobVerificationStatus,
+  validateApplicationUrl,
+  getOfficialEmployerPortal,
+  findDuplicateJob,
+  isJobExpiredByDeadline,
+  isVerificationDateAllowed,
+};
 
 export interface UnifiedJob {
   id: string;
@@ -63,23 +82,30 @@ export function mapJobToUnified(job: Job): UnifiedJob {
   const locLower = (job.location || '').toLowerCase();
   const workMode = locLower.includes('remote') ? 'Remote' : locLower.includes('hybrid') ? 'Hybrid' : 'On-site';
 
-  // Compute verification status strictly based on record
-  let verificationStatus: JobVerificationStatus = job.verificationStatus || 'Verified';
+  // Never default unverified records to 'Verified'
+  let verificationStatus: JobVerificationStatus = job.verificationStatus
+    ? normalizeJobVerificationStatus(job.verificationStatus)
+    : job.isVerified === true
+      ? 'Verified'
+      : 'Pending Verification';
+
   if (isExpired) {
     verificationStatus = 'Expired';
-  } else if (job.verificationStatus) {
-    verificationStatus = job.verificationStatus;
   }
 
   // Verification is true ONLY if verificationStatus === 'Verified'
   const isVerified = verificationStatus === 'Verified';
 
-  const sourceName = job.source?.name || 'Verified Career Portal';
+  const sourceName = job.source?.name || 'Submitted Career Listing';
   const originalJobUrl = job.originalJobUrl || job.source?.url || job.applicationUrl || '';
   const applicationUrl = job.applicationUrl || job.source?.url || '';
   const pubDate = job.publicationDate || job.postedDate || '';
   const expDate = job.expiryDate || job.deadline || 'Not Specified';
-  const lastVerDate = job.lastVerificationDate || (isVerified ? (pubDate || '2026-11-01') : '');
+  // Never generate artificial verification dates; Pending Verification has no verification date
+  const lastVerDate =
+    verificationStatus === 'Pending Verification'
+      ? ''
+      : (job.lastVerificationDate || '');
 
   return {
     id: job.id,
@@ -110,7 +136,7 @@ export function mapJobToUnified(job: Job): UnifiedJob {
     applicationUrl,
     lastVerificationDate: lastVerDate,
     verificationStatus,
-    verificationNotes: job.verificationNotes || (isVerified ? 'Employer identity and application link audited by BIO-INEXA team.' : undefined),
+    verificationNotes: job.verificationNotes || undefined,
     status,
     isExpired,
     isClosed: false,
@@ -150,16 +176,21 @@ export function mapOpportunityToUnified(opp: Opportunity): UnifiedJob {
 
   const appUrl = opp.applicationUrl || opp.sourceUrl || '';
   const origUrl = opp.source?.originalUrl || opp.sourceUrl || appUrl;
-  const isVerified = Boolean(opp.isVerified);
+  const rawVerStatus = opp.verificationStatus ? normalizeJobVerificationStatus(opp.verificationStatus) : undefined;
   const verificationStatus: JobVerificationStatus = isExpired
     ? 'Expired'
-    : isVerified
-      ? 'Verified'
-      : (opp.status === 'source_unavailable' ? 'Link Unavailable' : 'Pending Verification');
+    : opp.status === 'source_unavailable' || opp.status === 'Source Unavailable'
+      ? 'Link Unavailable'
+      : rawVerStatus || (opp.isVerified === true ? 'Verified' : 'Pending Verification');
+  const isVerified = verificationStatus === 'Verified';
 
   const pubDate = opp.postedDate || opp.createdAt || '';
   const expDate = opp.deadline || opp.applicationDeadline || 'Not Specified';
-  const lastVerDate = isVerified ? (pubDate || '2026-11-01') : '';
+  // Never generate artificial verification dates
+  const lastVerDate =
+    verificationStatus === 'Pending Verification'
+      ? ''
+      : (opp.lastVerifiedDate || '');
 
   return {
     id: opp.id,
@@ -184,13 +215,13 @@ export function mapOpportunityToUnified(opp: Opportunity): UnifiedJob {
     requirements: opp.requirements || opp.qualifications || [],
     skills: opp.skills || [],
     benefits: (opp as any).benefits || [],
-    sourceName: opp.source?.name || opp.sourceName || 'Official Career Gazette',
+    sourceName: opp.source?.name || opp.sourceName || 'Submitted Opportunity Feed',
     sourceUrl: opp.source?.originalUrl || opp.sourceUrl || appUrl,
     originalJobUrl: origUrl,
     applicationUrl: appUrl,
     lastVerificationDate: lastVerDate,
     verificationStatus,
-    verificationNotes: isVerified ? 'Verified via official career gazette / institutional registry.' : undefined,
+    verificationNotes: undefined,
     status,
     isExpired,
     isClosed,

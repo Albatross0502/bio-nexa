@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
+import { bionexaApi } from '../../services/api/bionexaApiClient';
 import {
   ShieldCheck,
   Search,
@@ -22,34 +23,56 @@ export const VerifyCertificatePage: React.FC = () => {
   const { certificates, addToast } = useApp();
   const [certInput, setCertInput] = useState('');
   const [searched, setSearched] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
   const [matchedCert, setMatchedCert] = useState<any | null>(null);
+
+  const performLookup = async (rawSerial: string, notify: boolean) => {
+    const trimmed = rawSerial.trim().toUpperCase();
+    if (!trimmed) return;
+    setIsVerifying(true);
+    setVerifyError(null);
+
+    try {
+      const apiCert = await bionexaApi.verifyCertificate(trimmed);
+      setSearched(true);
+      if (apiCert) {
+        setMatchedCert(apiCert);
+        if (notify) {
+          addToast(`Certificate #${apiCert.certificateNumber} is authentic and verified!`, 'success');
+        }
+      } else {
+        setMatchedCert(null);
+      }
+    } catch (err: any) {
+      // Fallback check only on unexpected transport failure
+      const localMatch = certificates.find((c) => c.certificateNumber.toUpperCase() === trimmed);
+      if (localMatch) {
+        setSearched(true);
+        setMatchedCert(localMatch);
+      } else {
+        const msg = err?.message || 'Unable to reach credential verification service.';
+        setVerifyError(msg);
+        addToast(msg, 'error');
+      }
+    } finally {
+      setIsVerifying(false);
+    }
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const idParam = params.get('id');
     if (idParam) {
       setCertInput(idParam);
-      const match = certificates.find(
-        (c) => c.certificateNumber.toLowerCase() === idParam.toLowerCase()
-      );
-      setSearched(true);
-      setMatchedCert(match || null);
+      performLookup(idParam, false);
     }
-  }, [certificates]);
+  }, []);
 
-  const handleVerify = (e: React.FormEvent) => {
+  const handleVerify = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!certInput.trim()) return;
-
-    const trimmed = certInput.trim().toUpperCase();
-    const match = certificates.find(
-      (c) => c.certificateNumber.toUpperCase() === trimmed
-    );
-    setSearched(true);
-    setMatchedCert(match || null);
-    if (match) {
-      addToast(`Certificate #${match.certificateNumber} is authentic and verified!`, 'success');
-    }
+    if (!certInput.trim() || isVerifying) return;
+    await performLookup(certInput, true);
   };
 
   return (
@@ -81,11 +104,18 @@ export const VerifyCertificatePage: React.FC = () => {
           </div>
           <button
             type="submit"
-            className="px-6 py-2.5 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold text-xs rounded-xl transition-colors shrink-0 shadow-xs"
+            disabled={isVerifying}
+            className="px-6 py-2.5 bg-[#0B2A5B] hover:bg-blue-900 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-colors shrink-0 shadow-xs cursor-pointer"
           >
-            Verify Now
+            {isVerifying ? 'Checking...' : 'Verify Now'}
           </button>
         </form>
+
+        {verifyError && (
+          <div role="alert" className="max-w-md mx-auto p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
+            {verifyError}
+          </div>
+        )}
       </div>
 
       {/* Verification Result Card */}
@@ -221,14 +251,34 @@ export const ContactPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [subject, setSubject] = useState('Institutional Partnership / Job Posting Query');
   const [message, setMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [submittedRef, setSubmittedRef] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !email || !message) return;
-    addContactMessage({ name, email, subject, message });
-    setName('');
-    setEmail('');
-    setMessage('');
+    if (!name.trim() || !email.trim() || !message.trim() || isSubmitting) return;
+    setErrorMsg(null);
+    setSubmittedRef(null);
+    setIsSubmitting(true);
+    try {
+      const res = await addContactMessage({
+        name: name.trim(),
+        email: email.trim(),
+        subject,
+        message: message.trim()
+      });
+      if (res.ok) {
+        setSubmittedRef(res.referenceId || 'LOGGED');
+        setName('');
+        setEmail('');
+        setMessage('');
+      } else {
+        setErrorMsg(res.error || 'Failed to send message.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -274,7 +324,18 @@ export const ContactPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="md:col-span-7 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+        <div className="md:col-span-7 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          {submittedRef && (
+            <div role="status" className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-200 flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>Inquiry received! Tracking Reference: <strong className="font-mono">{submittedRef}</strong></span>
+            </div>
+          )}
+          {errorMsg && (
+            <div role="alert" className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
+              {errorMsg}
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4 text-xs">
             <div>
               <label className="block font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -336,10 +397,11 @@ export const ContactPage: React.FC = () => {
 
             <button
               type="submit"
-              className="px-6 py-2.5 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-lg transition-colors flex items-center gap-1.5 shadow-xs"
+              disabled={isSubmitting}
+              className="px-6 py-2.5 bg-[#0B2A5B] hover:bg-blue-900 disabled:opacity-50 text-white font-bold rounded-lg transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>Send Message</span>
+              <span>{isSubmitting ? 'Sending...' : 'Send Message'}</span>
             </button>
           </form>
         </div>

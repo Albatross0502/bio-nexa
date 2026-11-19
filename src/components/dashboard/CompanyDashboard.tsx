@@ -40,37 +40,45 @@ export const CompanyDashboard: React.FC = () => {
   const [responsibilitiesText, setResponsibilitiesText] = useState('Operate 50L bioreactors\nEnsure cGMP compliance\nDesign DoE matrix');
   const [requirementsText, setRequirementsText] = useState('M.Sc in Biotechnology or Biochemical Engineering\n2+ years wet lab experience\nStrong data integrity acumen');
   const [skillsText, setSkillsText] = useState('Fermentation, Bioreactors, cGMP, HPLC');
+  const [isSubmittingJob, setIsSubmittingJob] = useState(false);
 
-  const handleCreateJob = (e: React.FormEvent) => {
+  const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title || !description) return;
+    if (!title.trim() || !description.trim() || isSubmittingJob) return;
 
-    addJob({
-      title,
-      company: currentUser.institution || 'Biocon Biologics',
-      location,
-      type,
-      sector,
-      experienceLevel,
-      qualification,
-      salary,
-      deadline,
-      description,
-      responsibilities: responsibilitiesText.split('\n').filter((l) => l.trim().length > 0),
-      requirements: requirementsText.split('\n').filter((l) => l.trim().length > 0),
-      skills: skillsText.split(',').map((s) => s.trim()).filter((s) => s.length > 0),
-      benefits: ['Medical Insurance', 'Provident Fund', 'Annual Bonus'],
-      source: {
-        name: `${currentUser.institution || 'Company'} Recruiter Portal`,
-        url: window.location.href,
-        isExternal: false
-      },
-      featured: true
-    });
+    setIsSubmittingJob(true);
+    try {
+      await addJob({
+        title: title.trim(),
+        company: currentUser.institution || 'Biocon Biologics',
+        location,
+        type,
+        sector,
+        experienceLevel,
+        qualification,
+        salary,
+        deadline,
+        description: description.trim(),
+        responsibilities: responsibilitiesText.split('\n').filter((l) => l.trim().length > 0),
+        requirements: requirementsText.split('\n').filter((l) => l.trim().length > 0),
+        skills: skillsText.split(',').map((s) => s.trim()).filter((s) => s.length > 0),
+        benefits: ['Medical Insurance', 'Provident Fund', 'Annual Bonus'],
+        source: {
+          name: `${currentUser.institution || 'Company'} Recruiter Portal`,
+          url: window.location.href,
+          isExternal: false
+        },
+        featured: true
+      });
 
-    setTitle('');
-    setDescription('');
-    setActiveTab('my-jobs');
+      setTitle('');
+      setDescription('');
+      setActiveTab('my-jobs');
+    } catch {
+      // Error toast handled by AppContext; keep form state intact
+    } finally {
+      setIsSubmittingJob(false);
+    }
   };
 
   const companyJobs = jobs.filter(
@@ -392,9 +400,10 @@ export const CompanyDashboard: React.FC = () => {
             <div className="pt-2 flex justify-end">
               <button
                 type="submit"
-                className="px-6 py-2.5 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-lg transition-colors shadow-xs"
+                disabled={isSubmittingJob}
+                className="px-6 py-2.5 bg-[#0B2A5B] hover:bg-blue-900 disabled:opacity-50 text-white font-bold rounded-lg transition-colors shadow-xs"
               >
-                Publish Opening Now
+                {isSubmittingJob ? 'Publishing...' : 'Publish Opening Now'}
               </button>
             </div>
           </form>

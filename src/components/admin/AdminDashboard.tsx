@@ -30,21 +30,35 @@ import {
   HardDrive,
   Star,
   Upload,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Download,
+  Check,
+  Inbox,
+  MessageSquare,
+  History
 } from 'lucide-react';
 import {
   adminApi,
   AdminUser,
   AdminJob,
+  AdminInternship,
   AdminWorkshop,
   AdminCourse,
+  AdminSubmittedOpportunity,
+  AdminComplianceRequest,
+  AdminContactMessage,
+  AdminDashboardStats,
+  AdminSyncLog,
+  AdminExportDataset,
   WebsiteContent,
   AnnouncementItem
 } from '../../services/admin/adminApiClient';
+import { ADMIN_EXPORT_DATASETS, hasExportDatasetPermission } from '../../services/admin/adminHelpers';
 import { useApp } from '../../context/AppContext';
-import { googleSheetsSync } from '../../services/opportunities/googleSheetsSync';
 import { DATA_SOURCES } from '../../services/opportunities/sourcesRegistry';
 import { AutomatedJobsPanel } from './AutomatedJobsPanel';
+import { GoogleSheetsSyncPanel } from './GoogleSheetsSyncPanel';
+import { validateApplicationUrl } from '../../services/jobs/jobVerification';
 import {
   DEFAULT_WORKSHOP_IMAGE,
   isValidWorkshopImageUrl,
@@ -76,17 +90,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   const { addToast, navigate } = useApp();
 
   // Active Management Tab
-  const [activeTab, setActiveTab] = useState<'jobs' | 'workshops' | 'courses' | 'content' | 'sheets' | 'sources' | 'backups' | 'automation'>('jobs');
+  const [activeTab, setActiveTab] = useState<
+    | 'jobs'
+    | 'internships'
+    | 'workshops'
+    | 'courses'
+    | 'submissions'
+    | 'content'
+    | 'sheets'
+    | 'sources'
+    | 'backups'
+    | 'automation'
+    | 'audit'
+  >('jobs');
   const [jobFilterTab, setJobFilterTab] = useState<'all' | 'pending' | 'verified' | 'unverified' | 'broken' | 'expired'>('all');
+  const [internshipFilterTab, setInternshipFilterTab] = useState<'all' | 'pending' | 'verified' | 'rejected' | 'expired'>('all');
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [backups, setBackups] = useState<any[]>([]);
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [databaseEngine, setDatabaseEngine] = useState<string>('SQLite 3 (Node.js)');
 
   // Loaded Entities from Backend API
+  const [stats, setStats] = useState<AdminDashboardStats | null>(null);
   const [jobs, setJobs] = useState<AdminJob[]>([]);
+  const [internships, setInternships] = useState<AdminInternship[]>([]);
   const [workshops, setWorkshops] = useState<AdminWorkshop[]>([]);
   const [courses, setCourses] = useState<AdminCourse[]>([]);
+  const [submittedOpportunities, setSubmittedOpportunities] = useState<AdminSubmittedOpportunity[]>([]);
+  const [complianceRequests, setComplianceRequests] = useState<AdminComplianceRequest[]>([]);
+  const [contactMessages, setContactMessages] = useState<AdminContactMessage[]>([]);
+  const [syncHistory, setSyncHistory] = useState<AdminSyncLog[]>([]);
   const [content, setContent] = useState<WebsiteContent | null>(null);
 
   // Search & Filters within Admin Dashboard
@@ -96,9 +132,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   const [isJobModalOpen, setIsJobModalOpen] = useState(false);
   const [editingJob, setEditingJob] = useState<AdminJob | null>(null);
 
+  // Internship Modals state
+  const [isInternshipModalOpen, setIsInternshipModalOpen] = useState(false);
+  const [editingInternship, setEditingInternship] = useState<AdminInternship | null>(null);
+  const [isInternshipVerificationModalOpen, setIsInternshipVerificationModalOpen] = useState(false);
+  const [verifyingInternship, setVerifyingInternship] = useState<AdminInternship | null>(null);
+
   // Phase 07 Verification Modal state
   const [isVerificationModalOpen, setIsVerificationModalOpen] = useState(false);
   const [verifyingJob, setVerifyingJob] = useState<AdminJob | null>(null);
+  const [verifyingJobHistory, setVerifyingJobHistory] = useState<
+    Array<{ id: string; jobId: string; verifiedBy: string; verifiedAt: string; sourceStatus: string; notes: string }>
+  >([]);
+  const [isLoadingJobHistory, setIsLoadingJobHistory] = useState(false);
+  const [verifyModalStatus, setVerifyModalStatus] = useState<string>('Pending Verification');
+  const [verifyModalDate, setVerifyModalDate] = useState<string>('');
 
   const [isWorkshopModalOpen, setIsWorkshopModalOpen] = useState(false);
   const [editingWorkshop, setEditingWorkshop] = useState<AdminWorkshop | null>(null);
@@ -116,39 +164,104 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   const [courseCategoryFilter, setCourseCategoryFilter] = useState<string>('all');
   const [courseStatusFilter, setCourseStatusFilter] = useState<'all' | 'available' | 'closed'>('all');
 
+  // Submissions & Compliance Management state
+  const [submissionFilterTab, setSubmissionFilterTab] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [isSubmissionEditModalOpen, setIsSubmissionEditModalOpen] = useState(false);
+  const [editingSubmission, setEditingSubmission] = useState<AdminSubmittedOpportunity | null>(null);
+  const [complianceTypeFilter, setComplianceTypeFilter] = useState<string>('all');
+  const [complianceNotesDrafts, setComplianceNotesDrafts] = useState<Record<string, string>>({});
+  const [complianceStatusDrafts, setComplianceStatusDrafts] = useState<Record<string, string>>({});
+
+  // Announcement Edit state
+  const [editingAnnouncement, setEditingAnnouncement] = useState<AnnouncementItem | null>(null);
+
+  // Audit Logs & Export state
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [loginAttempts, setLoginAttempts] = useState<any[]>([]);
+  const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
+  const [auditLogsForbidden, setAuditLogsForbidden] = useState(false);
+  const [auditLogsError, setAuditLogsError] = useState<string | null>(null);
+  const [exportDataset, setExportDataset] = useState<AdminExportDataset>('jobs');
+  const [exportFormat, setExportFormat] = useState<'csv' | 'json'>('csv');
+  const [isExporting, setIsExporting] = useState(false);
+
   // Confirm Delete Dialog state
   const [deleteConfirm, setDeleteConfirm] = useState<{
-    type: 'job' | 'workshop' | 'course' | 'announcement';
+    type: 'job' | 'internship' | 'workshop' | 'course' | 'announcement' | 'submission' | 'compliance';
     id: string;
     title: string;
   } | null>(null);
 
   // Fetch all administrative data from server
-  const loadDashboardData = async () => {
-    setIsLoading(true);
+  const loadDashboardData = async (silent: boolean = false) => {
+    if (silent) {
+      setIsRefreshing(true);
+    } else {
+      setIsLoading(true);
+    }
     setErrorMsg(null);
     try {
       const data = await adminApi.getDashboardData();
+      setStats(data.stats || null);
       setJobs(data.jobs || []);
+      setInternships(data.internships || []);
       setWorkshops(data.workshops || []);
       setCourses(data.courses || []);
+      setSubmittedOpportunities(data.submittedOpportunities || []);
+      setComplianceRequests(data.complianceRequests || []);
+      setContactMessages(data.contactMessages || []);
+      setSyncHistory(data.syncHistory || []);
       setContent(data.content || null);
+      if (data.databaseEngine) {
+        setDatabaseEngine(data.databaseEngine);
+      }
+      setLastRefreshedAt(new Date().toISOString());
       try {
         const backupList = await adminApi.getBackups();
         setBackups(backupList);
       } catch {
-        // non-blocking
+        // non-blocking for roles without backups:manage
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to load administrative dataset from server.');
+      if (silent) {
+        addToast(err.message || 'Failed to refresh administrative dataset.', 'error');
+      } else {
+        setErrorMsg(err.message || 'Failed to load administrative dataset from server.');
+      }
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  };
+
+  const loadAuditLogs = async () => {
+    setIsLoadingAuditLogs(true);
+    setAuditLogsForbidden(false);
+    setAuditLogsError(null);
+    try {
+      const res = await adminApi.getAuditLogs();
+      setAuditLogs(res.logs || []);
+      setLoginAttempts(res.loginAttempts || []);
+    } catch (err: any) {
+      if (err?.status === 403) {
+        setAuditLogsForbidden(true);
+      } else {
+        setAuditLogsError(err?.message || 'Unable to load activity logs.');
+      }
+    } finally {
+      setIsLoadingAuditLogs(false);
     }
   };
 
   useEffect(() => {
-    loadDashboardData();
+    loadDashboardData(false);
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'audit') {
+      loadAuditLogs();
+    }
+  }, [activeTab]);
 
   const handleCreateBackup = async () => {
     setIsBackingUp(true);
@@ -157,6 +270,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       addToast(`Point-in-time backup created: ${res.filename} (${(res.sizeBytes / 1024).toFixed(1)} KB)`, 'success');
       const updatedList = await adminApi.getBackups();
       setBackups(updatedList);
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Backup failed', 'error');
     } finally {
@@ -169,6 +283,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       const updated = await adminApi.verifyJob(jobId, 'Verified', 'Official career page confirmed by administrator');
       setJobs(jobs.map((j) => (j.id === jobId ? updated : j)));
       addToast(`Verified & logged source audit for "${title}".`, 'success');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Failed to verify job.', 'error');
     }
@@ -237,6 +352,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       }
       setIsJobModalOpen(false);
       setEditingJob(null);
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error saving job.', 'error');
     }
@@ -251,6 +367,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       });
       setJobs(jobs.map((j) => (j.id === id ? updated : j)));
       addToast(`Job status updated to ${newStatus}.`, 'info');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error updating status.', 'error');
     }
@@ -259,12 +376,270 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   const handleToggleJobApproval = async (id: string, currentApproval: boolean) => {
     try {
       const updated = await adminApi.updateJobStatus(id, {
-        isApproved: !currentApproval
+        isApproved: !currentApproval,
+        status: !currentApproval ? 'Approved' : 'Rejected'
       });
       setJobs(jobs.map((j) => (j.id === id ? updated : j)));
       addToast(`Job ${!currentApproval ? 'approved and published' : 'rejected'}.`, 'success');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error changing approval.', 'error');
+    }
+  };
+
+  const handleApproveJobDirect = async (id: string, title: string) => {
+    try {
+      const updated = await adminApi.updateJobStatus(id, {
+        isApproved: true,
+        isExpired: false,
+        status: 'Approved',
+        verificationStatus: 'Verified'
+      });
+      setJobs(jobs.map((j) => (j.id === id ? updated : j)));
+      addToast(`Approved & published "${title}".`, 'success');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Error approving job.', 'error');
+    }
+  };
+
+  const handleRejectJob = async (id: string, title: string) => {
+    try {
+      const updated = await adminApi.updateJobStatus(id, {
+        isApproved: false,
+        isExpired: true,
+        status: 'Rejected',
+        verificationStatus: 'Rejected'
+      });
+      setJobs(jobs.map((j) => (j.id === id ? updated : j)));
+      addToast(`Rejected job listing "${title}".`, 'info');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Error rejecting job.', 'error');
+    }
+  };
+
+  // -------------------------------------------------------------
+  // Internships Handlers
+  // -------------------------------------------------------------
+
+  const handleSaveInternship = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+
+    const payload: Partial<AdminInternship> = {
+      title: String(formData.get('title') || '').trim(),
+      organization: String(formData.get('organization') || '').trim(),
+      category: String(formData.get('category') || 'Industrial R&D').trim(),
+      location: String(formData.get('location') || 'India').trim(),
+      mode: String(formData.get('workMode') || 'On-site Lab').trim(),
+      workMode: String(formData.get('workMode') || 'On-site Lab').trim(),
+      stipend: String(formData.get('stipend') || 'Competitive Stipend').trim(),
+      duration: String(formData.get('duration') || '3 Months').trim(),
+      deadline: String(formData.get('deadline') || '').trim(),
+      eligibility: String(formData.get('eligibility') || '').trim(),
+      sourceName: String(formData.get('sourceName') || 'BIO-INEXA Admin Portal').trim(),
+      sourceUrl: String(formData.get('sourceUrl') || formData.get('applicationUrl') || '').trim(),
+      applicationUrl: String(formData.get('applicationUrl') || '').trim(),
+      verificationStatus: String(formData.get('verificationStatus') || 'Verified'),
+      verificationNotes: String(formData.get('verificationNotes') || '').trim(),
+      description: String(formData.get('description') || '').trim(),
+      learningOutcomes: String(formData.get('learningOutcomes') || '')
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      skillsRequired: String(formData.get('skillsRequired') || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      featured: formData.get('featured') === 'on'
+    };
+
+    try {
+      if (editingInternship) {
+        const updated = await adminApi.updateInternship(editingInternship.id, payload);
+        setInternships(internships.map((i) => (i.id === editingInternship.id ? updated : i)));
+        addToast(`Updated internship "${updated.title}".`, 'success');
+      } else {
+        const created = await adminApi.createInternship(payload);
+        setInternships([created, ...internships]);
+        addToast(`Created internship "${created.title}".`, 'success');
+      }
+      setIsInternshipModalOpen(false);
+      setEditingInternship(null);
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Error saving internship.', 'error');
+    }
+  };
+
+  const handleApproveInternship = async (id: string, title: string) => {
+    try {
+      const updated = await adminApi.updateInternshipStatus(id, {
+        status: 'Approved',
+        isApproved: true,
+        isActive: true,
+        verificationStatus: 'Verified'
+      });
+      setInternships(internships.map((i) => (i.id === id ? updated : i)));
+      addToast(`Approved & published internship "${title}".`, 'success');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to approve internship.', 'error');
+    }
+  };
+
+  const handleRejectInternship = async (id: string, title: string) => {
+    try {
+      const updated = await adminApi.updateInternshipStatus(id, {
+        status: 'Rejected',
+        isApproved: false,
+        isActive: false,
+        verificationStatus: 'Rejected'
+      });
+      setInternships(internships.map((i) => (i.id === id ? updated : i)));
+      addToast(`Rejected internship "${title}".`, 'info');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to reject internship.', 'error');
+    }
+  };
+
+  const handleToggleInternshipActive = async (intern: AdminInternship) => {
+    try {
+      const nextStatus = intern.isActive ? 'Expired' : 'Active';
+      const updated = await adminApi.updateInternshipStatus(intern.id, {
+        status: nextStatus,
+        isActive: !intern.isActive
+      });
+      setInternships(internships.map((i) => (i.id === intern.id ? updated : i)));
+      addToast(`Internship "${intern.title}" marked as ${nextStatus}.`, 'info');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to update internship status.', 'error');
+    }
+  };
+
+  // -------------------------------------------------------------
+  // Submissions & Compliance Handlers
+  // -------------------------------------------------------------
+
+  const handleApproveSubmittedOpportunity = async (id: string) => {
+    try {
+      const updated = await adminApi.moderateSubmittedOpportunity(id, {
+        isApproved: true,
+        status: 'Active'
+      });
+      setSubmittedOpportunities((prev) => prev.map((o) => (o.id === id ? updated : o)));
+      addToast(`Approved & published "${updated.title}" to Opportunities portal.`, 'success');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to approve submitted opportunity.', 'error');
+    }
+  };
+
+  const handleRejectSubmittedOpportunity = async (id: string, title: string) => {
+    try {
+      const updated = await adminApi.moderateSubmittedOpportunity(id, {
+        isApproved: false,
+        status: 'Rejected'
+      });
+      setSubmittedOpportunities((prev) => prev.map((o) => (o.id === id ? updated : o)));
+      addToast(`Marked submission "${title}" as Rejected.`, 'info');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to reject submitted opportunity.', 'error');
+    }
+  };
+
+  const handleSaveEditedSubmission = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!editingSubmission) return;
+    const formData = new FormData(e.currentTarget);
+
+    const statusVal = String(formData.get('status') || editingSubmission.status || 'Pending Verification');
+    const updates: Partial<AdminSubmittedOpportunity> = {
+      title: String(formData.get('title') || '').trim(),
+      organization: String(formData.get('organization') || '').trim(),
+      type: String(formData.get('type') || editingSubmission.type).trim(),
+      location: String(formData.get('location') || '').trim(),
+      workMode: String(formData.get('workMode') || '').trim(),
+      deadline: String(formData.get('deadline') || '').trim(),
+      salaryOrStipend: String(formData.get('salaryOrStipend') || '').trim(),
+      applicationUrl: String(formData.get('applicationUrl') || '').trim(),
+      description: String(formData.get('description') || '').trim(),
+      skills: String(formData.get('skills') || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+      status: statusVal,
+      isApproved: statusVal === 'Active' || statusVal === 'Approved'
+    };
+
+    try {
+      const updated = await adminApi.moderateSubmittedOpportunity(editingSubmission.id, updates);
+      setSubmittedOpportunities((prev) => prev.map((o) => (o.id === editingSubmission.id ? updated : o)));
+      addToast(`Updated submission "${updated.title}".`, 'success');
+      setIsSubmissionEditModalOpen(false);
+      setEditingSubmission(null);
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to update submitted opportunity.', 'error');
+    }
+  };
+
+  const handleDeleteSubmittedOpportunity = async (id: string, title: string) => {
+    try {
+      await adminApi.deleteSubmittedOpportunity(id);
+      setSubmittedOpportunities((prev) => prev.filter((o) => o.id !== id));
+      addToast(`Removed submission "${title}".`, 'info');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to remove submitted opportunity.', 'error');
+    }
+  };
+
+  const handleSaveComplianceUpdate = async (reqItem: AdminComplianceRequest) => {
+    const nextStatus = complianceStatusDrafts[reqItem.id] || reqItem.status || 'Pending';
+    const nextNotes =
+      complianceNotesDrafts[reqItem.id] !== undefined
+        ? complianceNotesDrafts[reqItem.id]
+        : reqItem.resolutionNotes || '';
+
+    try {
+      const updated = await adminApi.updateComplianceRequest(reqItem.id, {
+        status: nextStatus,
+        resolutionNotes: nextNotes
+      });
+      setComplianceRequests((prev) => prev.map((r) => (r.id === reqItem.id ? updated : r)));
+      addToast(`Updated ${reqItem.referenceId} to "${updated.status}".`, 'success');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to update compliance request.', 'error');
+    }
+  };
+
+  const handleDownloadExport = async () => {
+    setIsExporting(true);
+    try {
+      const effectiveFormat = exportDataset === 'all' ? 'json' : exportFormat;
+      const { blob, filename } = await adminApi.downloadAuthorizedExport(exportDataset, effectiveFormat);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      addToast(`Exported ${filename} successfully.`, 'success');
+      if (activeTab === 'audit') {
+        await loadAuditLogs();
+      }
+    } catch (err: any) {
+      addToast(err.message || 'Authorized export failed.', 'error');
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -277,6 +652,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
         await adminApi.deleteJob(id);
         setJobs(jobs.filter((j) => j.id !== id));
         addToast(`Deleted job "${title}".`, 'info');
+      } else if (type === 'internship') {
+        await adminApi.deleteInternship(id);
+        setInternships(internships.filter((i) => i.id !== id));
+        addToast(`Deleted internship "${title}".`, 'info');
       } else if (type === 'workshop') {
         await adminApi.deleteWorkshop(id);
         setWorkshops(workshops.filter((w) => w.id !== id));
@@ -285,12 +664,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
         await adminApi.deleteCourse(id);
         setCourses(courses.filter((c) => c.id !== id));
         addToast(`Deleted course "${title}".`, 'info');
+      } else if (type === 'submission') {
+        await adminApi.deleteSubmittedOpportunity(id);
+        setSubmittedOpportunities(submittedOpportunities.filter((o) => o.id !== id));
+        addToast(`Deleted submission "${title}".`, 'info');
+      } else if (type === 'compliance') {
+        await adminApi.deleteComplianceRequest(id);
+        setComplianceRequests(complianceRequests.filter((r) => r.id !== id));
+        addToast(`Deleted compliance record "${title}".`, 'info');
       } else if (type === 'announcement' && content) {
         const updatedAnnouncements = content.announcements.filter((a) => a.id !== id);
         await adminApi.updateContent({ announcements: updatedAnnouncements });
         setContent({ ...content, announcements: updatedAnnouncements });
         addToast(`Removed announcement "${title}".`, 'info');
       }
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Failed to delete item.', 'error');
     } finally {
@@ -322,6 +710,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       const updated = await adminApi.quickUpdateWorkshop(workshop.id, { featured: nextFeatured });
       setWorkshops(workshops.map((w) => (w.id === workshop.id ? updated : w)));
       addToast(`"${updated.title}" is now ${nextFeatured ? 'featured on homepage' : 'removed from featured'}.`, 'success');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error updating featured status.', 'error');
     }
@@ -332,6 +721,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       const updated = await adminApi.quickUpdateWorkshop(workshop.id, { status: newStatus });
       setWorkshops(workshops.map((w) => (w.id === workshop.id ? updated : w)));
       addToast(`Status updated to "${newStatus}".`, 'success');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error updating status.', 'error');
     }
@@ -342,6 +732,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       const updated = await adminApi.quickUpdateWorkshop(workshop.id, { availability: newAvail });
       setWorkshops(workshops.map((w) => (w.id === workshop.id ? updated : w)));
       addToast(`Availability updated to "${newAvail}".`, 'success');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error updating availability.', 'error');
     }
@@ -408,6 +799,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       }
       setIsWorkshopModalOpen(false);
       setEditingWorkshop(null);
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error saving workshop.', 'error');
     }
@@ -437,6 +829,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       const updated = await adminApi.quickUpdateCourse(course.id, { featured: nextFeatured });
       setCourses(courses.map((c) => (c.id === course.id ? updated : c)));
       addToast(`"${updated.title}" is now ${nextFeatured ? 'featured on homepage' : 'removed from featured'}.`, 'success');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error updating course featured status.', 'error');
     }
@@ -447,6 +840,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       const updated = await adminApi.quickUpdateCourse(course.id, { status: newStatus });
       setCourses(courses.map((c) => (c.id === course.id ? updated : c)));
       addToast(`"${updated.title}" marked as ${newStatus === 'closed' ? 'Closed' : 'Available'}.`, 'success');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error updating course status.', 'error');
     }
@@ -524,6 +918,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       }
       setIsCourseModalOpen(false);
       setEditingCourse(null);
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error saving course.', 'error');
     }
@@ -549,6 +944,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       const updated = await adminApi.updateContent({ homepageHighlights: updatedHighlights });
       setContent(updated);
       addToast('Homepage highlights updated successfully.', 'success');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error saving highlights.', 'error');
     }
@@ -557,7 +953,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   const handleAddAnnouncement = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!content) return;
-    const formData = new FormData(e.currentTarget);
+    const formEl = e.currentTarget;
+    const formData = new FormData(formEl);
 
     const newAnnouncement: AnnouncementItem = {
       id: `ann-${Date.now()}`,
@@ -573,7 +970,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       const updated = await adminApi.updateContent({ announcements: updatedList });
       setContent(updated);
       addToast('Announcement posted successfully.', 'success');
-      e.currentTarget.reset();
+      formEl.reset();
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error posting announcement.', 'error');
     }
@@ -588,14 +986,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       const updated = await adminApi.updateContent({ announcements: updatedAnnouncements });
       setContent(updated);
       addToast(`Announcement ${!currentActive ? 'activated' : 'paused'}.`, 'info');
+      await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Error updating announcement.', 'error');
     }
   };
 
+  const handleSaveEditedAnnouncement = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (!content || !editingAnnouncement) return;
+    const formData = new FormData(e.currentTarget);
+    const title = String(formData.get('title') || '').trim();
+    const tag = String(formData.get('tag') || 'Announcement').trim();
+    const link = String(formData.get('link') || '/opportunities').trim() || '/opportunities';
+    const date = String(formData.get('date') || editingAnnouncement.date).trim();
+    const active = formData.get('active') === 'on';
+
+    if (!title) {
+      addToast('Announcement title is required.', 'error');
+      return;
+    }
+
+    const updatedAnnouncements = content.announcements.map((a) =>
+      a.id === editingAnnouncement.id ? { ...a, title, tag, link, date, active } : a
+    );
+
+    try {
+      const updated = await adminApi.updateContent({ announcements: updatedAnnouncements });
+      setContent(updated);
+      setEditingAnnouncement(null);
+      addToast('Announcement updated successfully.', 'success');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Error updating announcement.', 'error');
+    }
+  };
+
+  const isPendingJob = (j: AdminJob) =>
+    j.verificationStatus === 'Pending Verification' || (!j.isApproved && j.verificationStatus !== 'Rejected');
+
   // Filtered views
   const filteredJobs = jobs.filter((j) => {
-    if (jobFilterTab === 'pending' && j.isApproved && j.verificationStatus !== 'Pending Verification') return false;
+    if (jobFilterTab === 'pending' && !isPendingJob(j)) return false;
     if (jobFilterTab === 'verified' && j.verificationStatus !== 'Verified') return false;
     if (jobFilterTab === 'unverified' && j.verificationStatus !== 'Pending Verification' && j.verificationStatus !== 'Rejected') return false;
     if (jobFilterTab === 'broken' && j.verificationStatus !== 'Link Unavailable') return false;
@@ -647,6 +1079,67 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
     );
   });
 
+  const isPendingInternship = (intern: AdminInternship) =>
+    intern.verificationStatus === 'Pending Verification' ||
+    (!intern.isApproved && intern.verificationStatus !== 'Rejected');
+
+  const filteredInternships = internships.filter((intern) => {
+    if (internshipFilterTab === 'pending' && !isPendingInternship(intern)) return false;
+    if (internshipFilterTab === 'verified' && intern.verificationStatus !== 'Verified') return false;
+    if (internshipFilterTab === 'rejected' && intern.verificationStatus !== 'Rejected') return false;
+    if (internshipFilterTab === 'expired' && intern.isActive && intern.verificationStatus !== 'Expired') return false;
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      intern.title.toLowerCase().includes(q) ||
+      intern.organization.toLowerCase().includes(q) ||
+      intern.location.toLowerCase().includes(q) ||
+      intern.category.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredSubmissions = submittedOpportunities.filter((opp) => {
+    if (submissionFilterTab === 'pending' && (opp.isApproved || opp.status === 'Rejected')) return false;
+    if (submissionFilterTab === 'approved' && !opp.isApproved) return false;
+    if (submissionFilterTab === 'rejected' && opp.status !== 'Rejected') return false;
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      opp.title.toLowerCase().includes(q) ||
+      opp.organization.toLowerCase().includes(q) ||
+      opp.type.toLowerCase().includes(q) ||
+      opp.location.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredComplianceRequests = complianceRequests.filter((reqItem) => {
+    if (complianceTypeFilter !== 'all' && reqItem.requestType !== complianceTypeFilter) return false;
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      reqItem.referenceId.toLowerCase().includes(q) ||
+      reqItem.requesterName.toLowerCase().includes(q) ||
+      reqItem.requesterEmail.toLowerCase().includes(q) ||
+      reqItem.targetTitleOrUrl.toLowerCase().includes(q) ||
+      reqItem.details.toLowerCase().includes(q)
+    );
+  });
+
+  const filteredContactMessages = contactMessages.filter((msg) => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      msg.name.toLowerCase().includes(q) ||
+      msg.email.toLowerCase().includes(q) ||
+      msg.subject.toLowerCase().includes(q) ||
+      msg.message.toLowerCase().includes(q)
+    );
+  });
+
+  const pendingApprovalsCount =
+    jobs.filter((j) => !j.isApproved && j.verificationStatus !== 'Rejected').length +
+    submittedOpportunities.filter((o) => !o.isApproved && o.status !== 'Rejected').length;
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Top Admin Navigation & Status Banner */}
@@ -660,14 +1153,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
             BIO-INEXA Portal Management
           </h1>
           <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
-            Manage live jobs, workshops, academy courses, and website highlights securely without touching source code.
+            Manage live jobs, internships, workshops, academy courses, moderation queues, and website highlights from the relational database.
           </p>
         </div>
 
-        {/* Authenticated Admin Badge & Logout */}
-        <div className="flex flex-wrap items-center gap-3">
+        {/* Authenticated Admin Badge, Live Refresh & Logout */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => loadDashboardData(true)}
+            disabled={isRefreshing || isLoading}
+            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 disabled:opacity-50 text-white font-bold text-xs rounded-xl border border-white/20 transition-all flex items-center gap-1.5 cursor-pointer"
+            title="Refresh live statistics and database records"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh Data'}</span>
+          </button>
+
           <div className="px-3.5 py-2 rounded-xl bg-white/10 backdrop-blur-md border border-white/15 text-xs font-mono">
-            <div className="text-teal-300 text-[10px]">Logged in as</div>
+            <div className="text-teal-300 text-[10px]">
+              Logged in as {lastRefreshedAt ? `· Synced ${new Date(lastRefreshedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}
+            </div>
             <div className="font-bold text-white truncate max-w-[180px]">{adminUser.email}</div>
           </div>
 
@@ -681,26 +1187,75 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
         </div>
       </div>
 
+      {/* Live Database KPI Summary Strip */}
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-xs">
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Live Jobs</div>
+            <div className="text-xl font-bold font-mono text-[#0B2A5B] dark:text-sky-400 mt-1">{stats.activeJobs}</div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {stats.totalJobs} total · <span className="text-amber-600 font-semibold">{stats.pendingJobs} pending</span>
+            </div>
+          </div>
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Internships</div>
+            <div className="text-xl font-bold font-mono text-teal-600 dark:text-teal-400 mt-1">{stats.activeInternships}</div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {stats.totalInternships} total · {stats.verifiedInternships} verified
+            </div>
+          </div>
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Academy Catalog</div>
+            <div className="text-xl font-bold font-mono text-slate-900 dark:text-white mt-1">
+              {stats.totalWorkshops + stats.totalCourses}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {stats.totalWorkshops} workshops · {stats.totalCourses} courses
+            </div>
+          </div>
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Moderation &amp; Reports</div>
+            <div className="text-xl font-bold font-mono text-amber-600 mt-1">
+              {stats.pendingSubmissions + stats.openComplianceRequests}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {stats.pendingSubmissions} submissions · {stats.openJobReportsCount} open reports
+            </div>
+          </div>
+          <div className="col-span-2 sm:col-span-1 bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Inbox &amp; Sync Logs</div>
+            <div className="text-xl font-bold font-mono text-emerald-600 mt-1">{stats.syncRunsCount}</div>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              {stats.contactMessagesCount} messages · {stats.auditLogsCount} audit events
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Tabs Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
         <div className="flex flex-wrap gap-1.5 text-xs">
           {[
-            ['jobs', `A. Jobs (${jobs.length})`, Briefcase],
-            ['workshops', `B. Workshops (${workshops.length})`, Calendar],
-            ['courses', `C. Courses (${courses.length})`, GraduationCap],
-            ['content', 'D. Website Content', Globe],
-            ['sheets', 'E. Google Sheets Sync', Database],
-            ['sources', 'F. Sources Registry', Layers],
-            ['backups', `G. Database & Backups (${backups.length})`, HardDrive],
-            ['automation', `H. Automated Feeds (${jobs.filter((j) => !j.isApproved).length} pending)`, Sparkles]
+            ['jobs', `Jobs (${jobs.length})`, Briefcase],
+            ['internships', `Internships (${internships.length})`, Star],
+            ['workshops', `Workshops (${workshops.length})`, Calendar],
+            ['courses', `Courses (${courses.length})`, GraduationCap],
+            ['submissions', `Submissions & Reports (${submittedOpportunities.length + complianceRequests.length})`, Inbox],
+            ['content', 'Website Content', Globe],
+            ['sheets', 'Sheets Sync', Database],
+            ['sources', 'Sources Registry', Layers],
+            ['backups', `Backups (${backups.length})`, HardDrive],
+            ['automation', `Feeds (${pendingApprovalsCount} pending)`, Sparkles],
+            ['audit', 'Logs & Export', History]
           ].map(([tabKey, label, Icon]: any) => (
             <button
               key={tabKey}
+              type="button"
               onClick={() => {
                 setActiveTab(tabKey);
                 setSearchQuery('');
               }}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl font-bold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl font-bold transition-all cursor-pointer ${
                 activeTab === tabKey
                   ? 'bg-[#0B2A5B] text-white shadow-xs'
                   : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
@@ -713,7 +1268,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
         </div>
 
         {/* Quick Search */}
-        {(activeTab === 'jobs' || activeTab === 'workshops' || activeTab === 'courses') && (
+        {(activeTab === 'jobs' || activeTab === 'internships' || activeTab === 'workshops' || activeTab === 'courses' || activeTab === 'submissions') && (
           <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs w-full sm:w-64">
             <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <input
@@ -724,7 +1279,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
               className="bg-transparent text-slate-800 dark:text-slate-100 placeholder-slate-400 focus:outline-none w-full"
             />
             {searchQuery && (
-              <button onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600">
+              <button type="button" onClick={() => setSearchQuery('')} className="text-slate-400 hover:text-slate-600">
                 <X className="w-3.5 h-3.5" />
               </button>
             )}
@@ -747,7 +1302,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
             <span>{errorMsg}</span>
           </div>
           <button
-            onClick={loadDashboardData}
+            type="button"
+            onClick={() => loadDashboardData(false)}
             className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold"
           >
             Retry
@@ -803,7 +1359,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
               <div className="flex flex-wrap items-center gap-2">
                 {[
                   ['all', `All (${jobs.length})`],
-                  ['pending', `Pending Audit (${jobs.filter((j) => j.verificationStatus === 'Pending Verification' || !j.isApproved).length})`],
+                  ['pending', `Pending Audit (${jobs.filter(isPendingJob).length})`],
                   ['verified', `Verified (${jobs.filter((j) => j.verificationStatus === 'Verified').length})`],
                   ['unverified', `Unverified (${jobs.filter((j) => j.verificationStatus === 'Pending Verification' || j.verificationStatus === 'Rejected').length})`],
                   ['broken', `Broken Links (${jobs.filter((j) => j.verificationStatus === 'Link Unavailable').length})`],
@@ -915,11 +1471,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                                   </a>
                                 )}
 
+                                {/* Approve / Reject Inline Controls */}
+                                {(!job.isApproved || job.verificationStatus === 'Pending Verification' || job.verificationStatus === 'Rejected') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleApproveJobDirect(job.id, job.title)}
+                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                                    title="Approve & Publish Job"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>Approve</span>
+                                  </button>
+                                )}
+
+                                {job.verificationStatus !== 'Rejected' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRejectJob(job.id, job.title)}
+                                    className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-bold border border-rose-200 cursor-pointer"
+                                    title="Reject Job Listing"
+                                  >
+                                    Reject
+                                  </button>
+                                )}
+
                                 {/* Audit & Verify Dedicated Modal */}
                                 <button
+                                  type="button"
                                   onClick={() => {
+                                    const initialStatus = job.verificationStatus || 'Pending Verification';
                                     setVerifyingJob(job);
+                                    setVerifyModalStatus(initialStatus);
+                                    setVerifyModalDate(
+                                      initialStatus === 'Pending Verification' ? '' : (job.lastVerificationDate || '')
+                                    );
+                                    setVerifyingJobHistory([]);
                                     setIsVerificationModalOpen(true);
+                                    setIsLoadingJobHistory(true);
+                                    adminApi
+                                      .getJobVerificationHistory(job.id)
+                                      .then((records) => setVerifyingJobHistory(records))
+                                      .catch(() => setVerifyingJobHistory([]))
+                                      .finally(() => setIsLoadingJobHistory(false));
                                   }}
                                   className="px-2.5 py-1 bg-teal-50 dark:bg-teal-950/60 hover:bg-teal-100 text-teal-700 dark:text-teal-300 rounded-lg text-[11px] font-bold border border-teal-200 dark:border-teal-800 transition-colors flex items-center gap-1 cursor-pointer"
                                   title="Audit Employer, Source & Destination"
@@ -930,6 +1523,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
                                 {/* Status Switch */}
                                 <button
+                                  type="button"
                                   onClick={() => handleToggleJobStatus(job.id, job.isExpired ? 'Active' : 'Expired')}
                                   className={`px-2 py-1 rounded text-[11px] font-bold ${
                                     job.isExpired
@@ -943,10 +1537,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
                                 {/* Edit Job */}
                                 <button
+                                  type="button"
                                   onClick={() => {
                                     setEditingJob(job);
                                     setIsJobModalOpen(true);
                                   }}
+                                  aria-label={`Edit job ${job.title}`}
                                   className="p-1.5 text-slate-500 hover:text-sky-600 rounded-lg hover:bg-slate-100"
                                   title="Edit Job Details"
                                 >
@@ -955,6 +1551,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
                                 {/* Delete Job with Confirmation */}
                                 <button
+                                  type="button"
                                   onClick={() =>
                                     setDeleteConfirm({
                                       type: 'job',
@@ -962,8 +1559,216 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                                       title: job.title
                                     })
                                   }
+                                  aria-label={`Delete job ${job.title}`}
                                   className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50"
                                   title="Permanently Delete Job"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* PANEL A2: INTERNSHIPS MANAGEMENT                          */}
+          {/* ========================================================= */}
+          {activeTab === 'internships' && (
+            <div className="space-y-4 text-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                    <span>Biotechnology Internships &amp; Fellowships Control</span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300">
+                      {internships.length} Listings
+                    </span>
+                  </h2>
+                  <p className="text-slate-500 text-[11px] mt-0.5">
+                    Manage summer research fellowships, industrial biotech internships, stipends, and host portal verification.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingInternship(null);
+                    setIsInternshipModalOpen(true);
+                  }}
+                  className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer text-xs"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Internship</span>
+                </button>
+              </div>
+
+              {/* Filter Chips */}
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  ['all', `All (${internships.length})`],
+                  ['pending', `Pending (${internships.filter(isPendingInternship).length})`],
+                  ['verified', `Verified (${internships.filter((i) => i.verificationStatus === 'Verified').length})`],
+                  ['rejected', `Rejected (${internships.filter((i) => i.verificationStatus === 'Rejected').length})`],
+                  ['expired', `Closed / Expired (${internships.filter((i) => !i.isActive || i.verificationStatus === 'Expired').length})`]
+                ].map(([tabKey, label]: any) => (
+                  <button
+                    key={tabKey}
+                    type="button"
+                    onClick={() => setInternshipFilterTab(tabKey)}
+                    className={`px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                      internshipFilterTab === tabKey
+                        ? 'bg-[#0B2A5B] text-white shadow-xs'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200 dark:border-slate-700 text-[11px]">
+                      <tr>
+                        <th className="py-3 px-4">Title &amp; Host Organization</th>
+                        <th className="py-3 px-4">Category &amp; Mode</th>
+                        <th className="py-3 px-4">Stipend / Deadline</th>
+                        <th className="py-3 px-4">Verification Audit</th>
+                        <th className="py-3 px-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {filteredInternships.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-8 text-center text-slate-400">
+                            No internships found matching your current filter.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredInternships.map((intern) => (
+                          <tr key={intern.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors">
+                            <td className="py-3 px-4">
+                              <div className="font-bold text-slate-900 dark:text-slate-100">{intern.title}</div>
+                              <div className="text-[11px] text-teal-600 font-semibold">{intern.organization}</div>
+                            </td>
+                            <td className="py-3 px-4">
+                              <div>{intern.category}</div>
+                              <div className="text-[11px] text-slate-400">{intern.location} ({intern.workMode})</div>
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="font-mono text-emerald-600 font-semibold">{intern.stipend}</div>
+                              <div className="text-[11px] text-slate-400">{intern.duration} · Deadline: {intern.deadline || 'Rolling'}</div>
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="flex flex-col gap-1 items-start">
+                                {intern.verificationStatus === 'Verified' && intern.isApproved ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100/70 dark:bg-emerald-950 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800">
+                                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                    <span>Verified</span>
+                                  </span>
+                                ) : intern.verificationStatus === 'Rejected' ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-700 bg-rose-100/70 px-2 py-0.5 rounded-full border border-rose-300">
+                                    <XCircle className="w-3 h-3 text-rose-600" />
+                                    <span>Rejected</span>
+                                  </span>
+                                ) : !intern.isActive ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-700 bg-slate-200 px-2 py-0.5 rounded-full">
+                                    <Clock className="w-3 h-3" />
+                                    <span>Closed</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded-full border border-amber-300">
+                                    <Clock className="w-3 h-3 text-amber-600" />
+                                    <span>{intern.verificationStatus || 'Pending Verification'}</span>
+                                  </span>
+                                )}
+                                <div className="text-[10px] text-slate-400">
+                                  Source: {intern.sourceName || 'Verified Partner'}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {intern.applicationUrl && (
+                                  <a
+                                    href={intern.applicationUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1.5 text-slate-400 hover:text-teal-600 rounded-lg hover:bg-teal-50"
+                                    title="Open Official Portal"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                  </a>
+                                )}
+                                {(!intern.isApproved || intern.verificationStatus !== 'Verified') && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleApproveInternship(intern.id, intern.title)}
+                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>Approve</span>
+                                  </button>
+                                )}
+                                {intern.verificationStatus !== 'Rejected' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRejectInternship(intern.id, intern.title)}
+                                    className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 rounded-lg text-[11px] font-bold border border-rose-200 cursor-pointer"
+                                  >
+                                    Reject
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setVerifyingInternship(intern);
+                                    setIsInternshipVerificationModalOpen(true);
+                                  }}
+                                  className="px-2.5 py-1 bg-teal-50 dark:bg-teal-950/60 hover:bg-teal-100 text-teal-700 dark:text-teal-300 rounded-lg text-[11px] font-bold border border-teal-200 dark:border-teal-800 flex items-center gap-1 cursor-pointer"
+                                >
+                                  <FileCheck className="w-3 h-3" />
+                                  <span>Verify</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleInternshipActive(intern)}
+                                  className={`px-2 py-1 rounded text-[11px] font-bold cursor-pointer ${
+                                    intern.isActive
+                                      ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                      : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                  }`}
+                                >
+                                  {intern.isActive ? 'Expire' : 'Reopen'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingInternship(intern);
+                                    setIsInternshipModalOpen(true);
+                                  }}
+                                  aria-label={`Edit internship ${intern.title}`}
+                                  className="p-1.5 text-slate-500 hover:text-sky-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setDeleteConfirm({
+                                      type: 'internship',
+                                      id: intern.id,
+                                      title: intern.title
+                                    })
+                                  }
+                                  aria-label={`Delete internship ${intern.title}`}
+                                  className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -1551,8 +2356,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   </p>
                 </div>
 
-                <form onSubmit={handleSaveHighlights} className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <form key={JSON.stringify(content.homepageHighlights || {})} onSubmit={handleSaveHighlights} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="space-y-1">
                       <label className="block font-bold text-slate-700 dark:text-slate-300">
                         Hero Announcement Badge
@@ -1573,6 +2378,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                         type="text"
                         name="activeVacanciesCount"
                         defaultValue={content.homepageHighlights?.activeVacanciesCount}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="block font-bold text-slate-700 dark:text-slate-300">
+                        Participating Institutes Metric Text
+                      </label>
+                      <input
+                        type="text"
+                        name="participatingInstitutesCount"
+                        defaultValue={content.homepageHighlights?.participatingInstitutesCount}
+                        placeholder="e.g. 45+ CSIR, DBT & Biopharma Centers"
                         className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                       />
                     </div>
@@ -1616,7 +2434,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
                 {/* Add Announcement Form */}
                 <form onSubmit={handleAddAnnouncement} className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                  <div className="sm:col-span-6 space-y-1">
+                  <div className="sm:col-span-5 space-y-1">
                     <label className="block font-bold text-slate-700 dark:text-slate-300 text-[11px]">
                       Announcement Title
                     </label>
@@ -1628,7 +2446,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                       className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs focus:outline-none"
                     />
                   </div>
-                  <div className="sm:col-span-3 space-y-1">
+                  <div className="sm:col-span-2 space-y-1">
                     <label className="block font-bold text-slate-700 dark:text-slate-300 text-[11px]">
                       Category Tag
                     </label>
@@ -1639,7 +2457,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                       className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs focus:outline-none"
                     />
                   </div>
-                  <div className="sm:col-span-3">
+                  <div className="sm:col-span-3 space-y-1">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 text-[11px]">
+                      Destination Link / Route
+                    </label>
+                    <input
+                      type="text"
+                      name="link"
+                      defaultValue="/opportunities"
+                      placeholder="/opportunities or https://..."
+                      className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs font-mono focus:outline-none"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
                     <button
                       type="submit"
                       className="w-full py-2 bg-[#14A3A0] hover:bg-teal-600 text-white font-bold rounded-lg transition-colors flex items-center justify-center gap-1 cursor-pointer text-xs"
@@ -1649,6 +2479,73 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     </button>
                   </div>
                 </form>
+
+                {/* Inline Edit Announcement Form */}
+                {editingAnnouncement && (
+                  <form
+                    onSubmit={handleSaveEditedAnnouncement}
+                    className="p-4 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-200 dark:border-amber-800 grid grid-cols-1 sm:grid-cols-12 gap-3 items-end"
+                  >
+                    <div className="sm:col-span-4 space-y-1">
+                      <label className="block font-bold text-amber-900 dark:text-amber-200 text-[11px]">
+                        Edit Announcement Title *
+                      </label>
+                      <input
+                        type="text"
+                        name="title"
+                        required
+                        defaultValue={editingAnnouncement.title}
+                        className="w-full px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs focus:outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-2 space-y-1">
+                      <label className="block font-bold text-amber-900 dark:text-amber-200 text-[11px]">Tag</label>
+                      <input
+                        type="text"
+                        name="tag"
+                        defaultValue={editingAnnouncement.tag}
+                        className="w-full px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs focus:outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-3 space-y-1">
+                      <label className="block font-bold text-amber-900 dark:text-amber-200 text-[11px]">Link</label>
+                      <input
+                        type="text"
+                        name="link"
+                        defaultValue={editingAnnouncement.link}
+                        className="w-full px-3 py-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 text-xs font-mono focus:outline-none"
+                      />
+                    </div>
+                    <div className="sm:col-span-1 space-y-1">
+                      <label className="block font-bold text-amber-900 dark:text-amber-200 text-[11px]">Active</label>
+                      <label className="flex items-center gap-1.5 h-8 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          name="active"
+                          defaultChecked={editingAnnouncement.active}
+                          className="rounded text-[#0B2A5B]"
+                        />
+                        <span className="text-[11px]">Live</span>
+                      </label>
+                    </div>
+                    <input type="hidden" name="date" value={editingAnnouncement.date} />
+                    <div className="sm:col-span-2 flex items-center gap-1.5">
+                      <button
+                        type="submit"
+                        className="flex-1 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-lg text-xs cursor-pointer"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEditingAnnouncement(null)}
+                        className="px-2.5 py-2 text-slate-600 hover:bg-slate-200 rounded-lg text-xs cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
 
                 {/* Announcements List */}
                 <div className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1669,8 +2566,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
                       <div className="flex items-center gap-2 shrink-0">
                         <button
+                          type="button"
+                          onClick={() => setEditingAnnouncement(ann)}
+                          aria-label={`Edit announcement ${ann.title}`}
+                          className="p-1.5 text-slate-500 hover:text-sky-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+                          title="Edit Announcement"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handleToggleAnnouncement(ann.id, ann.active)}
-                          className={`px-2.5 py-1 rounded text-xs font-bold ${
+                          className={`px-2.5 py-1 rounded text-xs font-bold cursor-pointer ${
                             ann.active
                               ? 'bg-amber-50 text-amber-700 hover:bg-amber-100'
                               : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
@@ -1679,6 +2586,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                           {ann.active ? 'Pause' : 'Activate'}
                         </button>
                         <button
+                          type="button"
                           onClick={() =>
                             setDeleteConfirm({
                               type: 'announcement',
@@ -1686,7 +2594,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                               title: ann.title
                             })
                           }
-                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50"
+                          aria-label={`Delete announcement ${ann.title}`}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -1699,25 +2608,306 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
           )}
 
           {/* ========================================================= */}
-          {/* PANEL E: GOOGLE SHEETS REAL-TIME SYNC CONSOLE             */}
+          {/* PANEL D2: USER SUBMISSIONS, REPORTS & COMPLIANCE INBOX    */}
           {/* ========================================================= */}
-          {activeTab === 'sheets' && (
-            <div className="space-y-4 text-xs">
-              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
-                <div className="flex items-center gap-2">
-                  <Database className="w-5 h-5 text-teal-600" />
-                  <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                    Google Sheets &amp; Apps Script Real-Time Data Pipeline
-                  </h2>
+          {activeTab === 'submissions' && (
+            <div className="space-y-6 text-xs">
+              {/* Section 1: User-Submitted Opportunities */}
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+                <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      User-Submitted Opportunities Moderation ({filteredSubmissions.length})
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Approve, edit, reject (preserved in database with Rejected status), or permanently remove organizer submissions.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(['all', 'pending', 'approved', 'rejected'] as const).map((statusKey) => (
+                      <button
+                        key={statusKey}
+                        type="button"
+                        onClick={() => setSubmissionFilterTab(statusKey)}
+                        className={`px-3 py-1.5 rounded-xl font-bold uppercase text-[10px] cursor-pointer transition-colors ${
+                          submissionFilterTab === statusKey
+                            ? 'bg-[#0B2A5B] text-white'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                        }`}
+                      >
+                        {statusKey}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <p className="text-slate-500 text-[11px]">
-                  Synchronize your 19-column Google Sheet directly with BIO-INEXA without redeploying code.
-                </p>
-                <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl font-mono text-[11px] text-slate-700 dark:text-slate-300">
-                  Endpoint: {googleSheetsSync.getConfig().scriptUrl || 'Default Embedded Endpoint Active'}
+
+                {filteredSubmissions.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400">No submitted opportunities match your current filter.</div>
+                ) : (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredSubmissions.map((opp) => (
+                      <div key={opp.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
+                        <div className="space-y-1 max-w-2xl">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                opp.status === 'Rejected'
+                                  ? 'bg-rose-100 text-rose-800'
+                                  : opp.isApproved
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {opp.type} · {opp.status === 'Rejected' ? 'Rejected' : opp.isApproved ? 'Approved' : 'Pending Review'}
+                            </span>
+                            <span className="text-[10px] font-mono text-slate-400">{opp.id}</span>
+                          </div>
+                          <div className="font-bold text-slate-900 dark:text-slate-100 text-sm">{opp.title}</div>
+                          <div className="text-teal-600 font-semibold text-[11px]">
+                            {opp.organization} · {opp.location} ({opp.workMode}) · Deadline: {opp.deadline || 'Not specified'}
+                          </div>
+                          <p className="text-slate-500 text-[11px] line-clamp-2">{opp.description}</p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                          {opp.applicationUrl && (
+                            <a
+                              href={opp.applicationUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1.5 text-slate-400 hover:text-teal-600 rounded-lg border border-slate-200 dark:border-slate-700"
+                              title="Verify Submission Link"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                          )}
+                          {!opp.isApproved && (
+                            <button
+                              type="button"
+                              onClick={() => handleApproveSubmittedOpportunity(opp.id)}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg flex items-center gap-1 cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Approve</span>
+                            </button>
+                          )}
+                          {opp.status !== 'Rejected' && (
+                            <button
+                              type="button"
+                              onClick={() => handleRejectSubmittedOpportunity(opp.id, opp.title)}
+                              className="px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 font-bold rounded-lg border border-amber-200 cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSubmission(opp);
+                              setIsSubmissionEditModalOpen(true);
+                            }}
+                            aria-label={`Edit submission ${opp.title}`}
+                            className="p-1.5 text-slate-500 hover:text-sky-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDeleteConfirm({
+                                type: 'submission',
+                                id: opp.id,
+                                title: opp.title
+                              })
+                            }
+                            aria-label={`Delete submission ${opp.title}`}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Section 2: Reported Opportunities & Compliance / Takedown Requests */}
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+                <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Reported Opportunities &amp; Compliance Queue ({filteredComplianceRequests.length})
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Triage candidate job reports, content removal requests, DPDP privacy notices, and grievances.
+                    </p>
+                  </div>
+                  <select
+                    value={complianceTypeFilter}
+                    onChange={(e) => setComplianceTypeFilter(e.target.value)}
+                    className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold text-xs focus:outline-none"
+                  >
+                    <option value="all">All Request Types ({complianceRequests.length})</option>
+                    <option value="job_report">Reported Opportunities</option>
+                    <option value="content_removal">Content Takedowns</option>
+                    <option value="privacy_request">DPDP Privacy Requests</option>
+                    <option value="grievance">Grievances</option>
+                  </select>
                 </div>
+
+                {filteredComplianceRequests.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400">No compliance or opportunity report records found.</div>
+                ) : (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredComplianceRequests.map((reqItem) => {
+                      const currentStatus = complianceStatusDrafts[reqItem.id] ?? reqItem.status;
+                      const currentNotes = complianceNotesDrafts[reqItem.id] ?? reqItem.resolutionNotes ?? '';
+                      return (
+                        <div key={reqItem.id} className="p-4 space-y-3 hover:bg-slate-50/40 dark:hover:bg-slate-800/30">
+                          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-mono font-bold text-[#0B2A5B] dark:text-sky-400">{reqItem.referenceId}</span>
+                                <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-bold uppercase text-slate-700 dark:text-slate-300">
+                                  {reqItem.requestType.replace('_', ' ')} · {reqItem.subCategory || 'General'}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    reqItem.status === 'Resolved' || reqItem.status === 'Action Taken'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : reqItem.status === 'In Review'
+                                      ? 'bg-sky-100 text-sky-800'
+                                      : 'bg-amber-100 text-amber-800'
+                                  }`}
+                                >
+                                  {reqItem.status}
+                                </span>
+                              </div>
+                              <div className="font-bold text-slate-900 dark:text-slate-100">
+                                Target: {reqItem.targetTitleOrUrl || 'N/A'}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                From: <strong>{reqItem.requesterName}</strong> ({reqItem.requesterEmail})
+                                {reqItem.organization ? ` · ${reqItem.organization}` : ''} · {new Date(reqItem.createdAt).toLocaleString()}
+                              </div>
+                              <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">{reqItem.details}</p>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDeleteConfirm({
+                                  type: 'compliance',
+                                  id: reqItem.id,
+                                  title: `${reqItem.referenceId} (${reqItem.requestType})`
+                                })
+                              }
+                              className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 self-start cursor-pointer"
+                              title="Delete Compliance Record"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center pt-2 border-t border-slate-100 dark:border-slate-800">
+                            <div className="sm:col-span-3">
+                              <select
+                                aria-label={`Status for ${reqItem.referenceId}`}
+                                value={currentStatus}
+                                onChange={(e) =>
+                                  setComplianceStatusDrafts((prev) => ({ ...prev, [reqItem.id]: e.target.value }))
+                                }
+                                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold text-xs focus:outline-none"
+                              >
+                                <option value="Pending">Pending</option>
+                                <option value="In Review">In Review</option>
+                                <option value="Action Taken">Action Taken</option>
+                                <option value="Resolved">Resolved</option>
+                              </select>
+                            </div>
+                            <div className="sm:col-span-7">
+                              <input
+                                type="text"
+                                aria-label={`Resolution notes for ${reqItem.referenceId}`}
+                                value={currentNotes}
+                                onChange={(e) =>
+                                  setComplianceNotesDrafts((prev) => ({ ...prev, [reqItem.id]: e.target.value }))
+                                }
+                                placeholder="Enter moderation action or resolution notes..."
+                                className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs focus:outline-none"
+                              />
+                            </div>
+                            <div className="sm:col-span-2">
+                              <button
+                                type="button"
+                                onClick={() => handleSaveComplianceUpdate(reqItem)}
+                                className="w-full py-1.5 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-lg text-xs cursor-pointer"
+                              >
+                                Update Status
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Section 3: Contact Messages Inbox */}
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+                <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="w-4 h-4 text-teal-600" />
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Institutional &amp; Candidate Inquiries ({filteredContactMessages.length})
+                    </h2>
+                  </div>
+                </div>
+                {filteredContactMessages.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400">No contact inquiries found.</div>
+                ) : (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredContactMessages.map((msg) => (
+                      <div key={msg.id} className="p-4 space-y-1">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-[11px] font-bold text-teal-600">{msg.referenceId}</span>
+                            <span className="font-bold text-slate-900 dark:text-slate-100">{msg.subject}</span>
+                          </div>
+                          <span className="text-[11px] text-slate-400">{new Date(msg.createdAt).toLocaleString()}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500">
+                          {msg.name} &lt;{msg.email}&gt;
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">{msg.message}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* PANEL E: SERVER-SIDE GOOGLE SHEETS SYNC CONSOLE           */}
+          {/* ========================================================= */}
+          {activeTab === 'sheets' && (
+            <GoogleSheetsSyncPanel
+              pendingReviewCount={jobs.filter((j) => !j.isApproved).length}
+              pendingSheetsJobs={jobs.filter(
+                (j) =>
+                  !j.isApproved &&
+                  String(j.sourceName || j.originalSource || '')
+                    .toLowerCase()
+                    .includes('google sheets')
+              )}
+              onApproveJob={handleApproveJobDirect}
+              onRejectJob={handleRejectJob}
+              onRefreshDashboard={() => loadDashboardData(true)}
+              onNavigateToReview={() => setActiveTab('automation')}
+            />
           )}
 
           {/* ========================================================= */}
@@ -1787,13 +2977,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
                   <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div className="text-slate-500 text-[11px] font-medium">Database Engine</div>
-                    <div className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5">SQLite 3 / Node.js 22</div>
-                    <div className="text-[10px] text-teal-600 mt-0.5">WAL Mode Active · Full ACID Compliance</div>
+                    <div className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5">{databaseEngine}</div>
+                    <div className="text-[10px] text-teal-600 mt-0.5">Live Persistent Relational Storage</div>
                   </div>
                   <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
                     <div className="text-slate-500 text-[11px] font-medium">Stored Records</div>
                     <div className="text-sm font-bold text-[#0B2A5B] dark:text-sky-400 mt-0.5">
-                      {jobs.length} Jobs · {workshops.length} Workshops · {courses.length} Courses
+                      {jobs.length} Jobs · {internships.length} Internships · {workshops.length} Workshops · {courses.length} Courses
                     </div>
                     <div className="text-[10px] text-slate-400 mt-0.5">Full relational integrity &amp; audit trails</div>
                   </div>
@@ -1849,11 +3039,197 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
           {activeTab === 'automation' && (
             <AutomatedJobsPanel
               jobs={jobs}
-              onRefreshAll={loadDashboardData}
+              submittedOpportunities={submittedOpportunities}
+              syncHistory={syncHistory}
+              onRefreshAll={() => loadDashboardData(true)}
               onApproveJob={async (id) => {
-                await handleToggleJobApproval(id, false);
+                await handleApproveJobDirect(id, jobs.find((j) => j.id === id)?.title || id);
+              }}
+              onRejectJob={handleRejectJob}
+              onApproveSubmittedOpportunity={handleApproveSubmittedOpportunity}
+              onRejectSubmittedOpportunity={handleRejectSubmittedOpportunity}
+              onEditSubmittedOpportunity={(opp) => {
+                setEditingSubmission(opp);
+                setIsSubmissionEditModalOpen(true);
+              }}
+              onDeleteSubmittedOpportunity={async (id, title) => {
+                setDeleteConfirm({ type: 'submission', id, title });
               }}
             />
+          )}
+
+          {/* ========================================================= */}
+          {/* PANEL K: ADMINISTRATOR ACTIVITY LOGS & AUTHORIZED EXPORT  */}
+          {/* ========================================================= */}
+          {activeTab === 'audit' && (
+            <div className="space-y-6 text-xs">
+              {/* Authorized Record Export Card */}
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                      <Download className="w-4 h-4 text-teal-600" />
+                      <span>Authorized Database Record Export</span>
+                    </h2>
+                    <p className="text-slate-500 text-[11px] mt-0.5">
+                      Export authorized records in CSV (formula-safe) or structured JSON. Every export is audited and RBAC-verified.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end p-4 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="sm:col-span-5 space-y-1">
+                    <label htmlFor="admin-export-dataset" className="block font-bold text-slate-700 dark:text-slate-300 text-[11px]">
+                      Authorized Dataset
+                    </label>
+                    <select
+                      id="admin-export-dataset"
+                      value={exportDataset}
+                      onChange={(e) => {
+                        const val = e.target.value as AdminExportDataset;
+                        setExportDataset(val);
+                        if (val === 'all') setExportFormat('json');
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold text-xs focus:outline-none"
+                    >
+                      {ADMIN_EXPORT_DATASETS.map((ds) => {
+                        const permitted = hasExportDatasetPermission(adminUser.permissions, ds);
+                        return (
+                          <option key={ds} value={ds} disabled={!permitted}>
+                            {ds.replace('_', ' ').toUpperCase()}{!permitted ? ' (Requires Higher Role)' : ''}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  <div className="sm:col-span-3 space-y-1">
+                    <label htmlFor="admin-export-format" className="block font-bold text-slate-700 dark:text-slate-300 text-[11px]">
+                      File Format
+                    </label>
+                    <select
+                      id="admin-export-format"
+                      value={exportDataset === 'all' ? 'json' : exportFormat}
+                      disabled={exportDataset === 'all'}
+                      onChange={(e) => setExportFormat(e.target.value as 'csv' | 'json')}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-semibold text-xs focus:outline-none disabled:opacity-60"
+                    >
+                      <option value="csv">CSV Spreadsheet</option>
+                      <option value="json">JSON Archive</option>
+                    </select>
+                  </div>
+
+                  <div className="sm:col-span-4">
+                    <button
+                      type="button"
+                      onClick={handleDownloadExport}
+                      disabled={isExporting || !hasExportDatasetPermission(adminUser.permissions, exportDataset)}
+                      className="w-full py-2 px-4 bg-[#0B2A5B] hover:bg-blue-900 disabled:opacity-50 text-white font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>{isExporting ? 'Preparing Export...' : 'Download Authorized Export'}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Administrator Activity Logs */}
+              <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-xs">
+                <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                      Administrator Activity &amp; Security Audit Trail ({auditLogs.length})
+                    </h2>
+                    <p className="text-[11px] text-slate-500">
+                      Immutable record of administrative mutations, moderation decisions, backups, and exports.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadAuditLogs}
+                    disabled={isLoadingAuditLogs}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 font-semibold flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${isLoadingAuditLogs ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+
+                {auditLogsForbidden ? (
+                  <div className="p-6 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-xs flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 shrink-0" />
+                    <span>
+                      Your current role ({adminUser.role}) does not include the <code>audit:read</code> permission required to inspect administrator security logs.
+                    </span>
+                  </div>
+                ) : auditLogsError ? (
+                  <div className="p-6 text-rose-600 text-xs">{auditLogsError}</div>
+                ) : auditLogs.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400">
+                    {isLoadingAuditLogs ? 'Loading activity logs...' : 'No administrator activity logs recorded yet.'}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 uppercase tracking-wider font-semibold border-b border-slate-200 dark:border-slate-700 text-[10px]">
+                        <tr>
+                          <th className="py-2.5 px-4">Timestamp</th>
+                          <th className="py-2.5 px-4">Actor</th>
+                          <th className="py-2.5 px-4">Action</th>
+                          <th className="py-2.5 px-4">Target</th>
+                          <th className="py-2.5 px-4">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {auditLogs.map((log, idx) => (
+                          <tr key={log.id || idx} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40">
+                            <td className="py-2.5 px-4 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                              {new Date(log.createdAt || log.timestamp).toLocaleString()}
+                            </td>
+                            <td className="py-2.5 px-4">
+                              <div className="font-bold text-slate-900 dark:text-slate-100">{log.actorEmail || log.actorUsername || 'admin'}</div>
+                              <div className="text-[10px] text-slate-400 uppercase">{log.actorRole || 'admin'}</div>
+                            </td>
+                            <td className="py-2.5 px-4 font-mono text-[11px] text-teal-700 dark:text-teal-400 font-bold">
+                              {log.action}
+                            </td>
+                            <td className="py-2.5 px-4 text-[11px] text-slate-600 dark:text-slate-300">
+                              {log.targetType || '-'}{log.targetId ? `: ${log.targetId}` : ''}
+                            </td>
+                            <td className="py-2.5 px-4 text-[11px] text-slate-500 max-w-xs truncate">
+                              {typeof log.details === 'string' ? log.details : JSON.stringify(log.details || {})}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {loginAttempts.length > 0 && (
+                  <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30">
+                    <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-2">
+                      Recent Authentication Events ({loginAttempts.length})
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {loginAttempts.slice(0, 8).map((att, idx) => (
+                        <span
+                          key={att.id || idx}
+                          className={`px-2.5 py-1 rounded-lg text-[10px] font-mono border ${
+                            att.success
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                              : 'bg-rose-50 border-rose-200 text-rose-800'
+                          }`}
+                        >
+                          {att.username || 'unknown'} · {att.success ? 'OK' : 'DENIED'} ·{' '}
+                          {new Date(att.createdAt || att.timestamp).toLocaleTimeString()}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </>
       )}
@@ -2143,9 +3519,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
               onSubmit={async (e) => {
                 e.preventDefault();
                 const form = e.currentTarget;
-                const status = (form.elements.namedItem('verificationStatus') as HTMLSelectElement).value;
-                const notes = (form.elements.namedItem('verificationNotes') as HTMLTextAreaElement).value;
-                const lastVerificationDate = (form.elements.namedItem('lastVerificationDate') as HTMLInputElement).value;
+                const status = verifyModalStatus;
+                const notes = (form.elements.namedItem('verificationNotes') as HTMLTextAreaElement).value.trim();
+                const lastVerificationDate =
+                  status === 'Pending Verification' ? '' : (verifyModalDate || new Date().toISOString().split('T')[0]);
 
                 try {
                   const updated = await adminApi.verifyJob(verifyingJob.id, status, notes, lastVerificationDate);
@@ -2153,6 +3530,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   addToast(`Audit decision saved for "${verifyingJob.title}": Status set to ${status}.`, 'success');
                   setIsVerificationModalOpen(false);
                   setVerifyingJob(null);
+                  await loadDashboardData(true);
                 } catch (err: any) {
                   addToast(err.message || 'Failed to update verification status.', 'error');
                 }
@@ -2197,57 +3575,80 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
               </div>
 
               {/* URLs Review & Interactive Test */}
-              <div className="space-y-2">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <label className="font-bold text-slate-700 dark:text-slate-300">
-                      3. Application Destination URL
-                    </label>
-                    {verifyingJob.applicationUrl && (
-                      <a
-                        href={verifyingJob.applicationUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] font-bold text-teal-600 hover:underline flex items-center gap-1"
+              {(() => {
+                const urlCheck = validateApplicationUrl(verifyingJob.applicationUrl);
+                return (
+                  <div className="space-y-2">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="font-bold text-slate-700 dark:text-slate-300">
+                          3. Application Destination URL
+                        </label>
+                        {verifyingJob.applicationUrl && (
+                          <a
+                            href={verifyingJob.applicationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] font-bold text-teal-600 hover:underline flex items-center gap-1"
+                          >
+                            <span>Test Destination in New Tab</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        disabled
+                        value={verifyingJob.applicationUrl || 'No application URL specified'}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono text-[11px]"
+                      />
+                      <div
+                        className={`px-3 py-2 rounded-xl border text-[11px] flex items-center gap-2 ${
+                          urlCheck.valid
+                            ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300'
+                            : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300'
+                        }`}
                       >
-                        <span>Test Destination in New Tab</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
-                  </div>
-                  <input
-                    type="text"
-                    disabled
-                    value={verifyingJob.applicationUrl || 'No application URL specified'}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono text-[11px]"
-                  />
-                </div>
+                        {urlCheck.valid ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                        ) : (
+                          <AlertTriangle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        )}
+                        <span>
+                          {urlCheck.valid
+                            ? `URL Validation Passed (${urlCheck.domain})${urlCheck.isOfficialDomain ? ' — Recognized official/academic domain' : ''}`
+                            : urlCheck.reason}
+                        </span>
+                      </div>
+                    </div>
 
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <label className="font-bold text-slate-700 dark:text-slate-300">
-                      4. Original Listing / Notification Source URL
-                    </label>
-                    {(verifyingJob.originalJobUrl || verifyingJob.sourceUrl) && (
-                      <a
-                        href={verifyingJob.originalJobUrl || verifyingJob.sourceUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-[11px] font-bold text-[#0B2A5B] dark:text-sky-400 hover:underline flex items-center gap-1"
-                      >
-                        <span>Verify Original Source Link</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="font-bold text-slate-700 dark:text-slate-300">
+                          4. Original Listing / Notification Source URL
+                        </label>
+                        {(verifyingJob.originalJobUrl || verifyingJob.sourceUrl) && (
+                          <a
+                            href={verifyingJob.originalJobUrl || verifyingJob.sourceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] font-bold text-[#0B2A5B] dark:text-sky-400 hover:underline flex items-center gap-1"
+                          >
+                            <span>Verify Original Source Link</span>
+                            <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        disabled
+                        value={verifyingJob.originalJobUrl || verifyingJob.sourceUrl || verifyingJob.applicationUrl}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono text-[11px]"
+                      />
+                    </div>
                   </div>
-                  <input
-                    type="text"
-                    disabled
-                    value={verifyingJob.originalJobUrl || verifyingJob.sourceUrl || verifyingJob.applicationUrl}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono text-[11px]"
-                  />
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Dates & Status Decisions */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -2277,14 +3678,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
                 <div className="space-y-1">
                   <label className="block font-bold text-slate-700 dark:text-slate-300">
-                    7. Last Verification Date *
+                    7. Last Verification Date {verifyModalStatus !== 'Pending Verification' ? '*' : ''}
                   </label>
                   <input
                     type="date"
                     name="lastVerificationDate"
-                    required
-                    defaultValue={verifyingJob.lastVerificationDate || new Date().toISOString().split('T')[0]}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
+                    required={verifyModalStatus !== 'Pending Verification'}
+                    disabled={verifyModalStatus === 'Pending Verification'}
+                    value={verifyModalDate}
+                    onChange={(e) => setVerifyModalDate(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-bold focus:outline-none disabled:opacity-50 disabled:bg-slate-100 dark:disabled:bg-slate-800"
                   />
                 </div>
               </div>
@@ -2296,7 +3699,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 </label>
                 <select
                   name="verificationStatus"
-                  defaultValue={verifyingJob.verificationStatus || 'Verified'}
+                  value={verifyModalStatus}
+                  onChange={(e) => {
+                    const nextStatus = e.target.value;
+                    setVerifyModalStatus(nextStatus);
+                    if (nextStatus === 'Pending Verification') {
+                      setVerifyModalDate('');
+                    } else if (!verifyModalDate) {
+                      setVerifyModalDate(new Date().toISOString().split('T')[0]);
+                    }
+                  }}
                   className="w-full px-3 py-2.5 rounded-xl border-2 border-teal-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-bold text-xs focus:outline-none"
                 >
                   <option value="Verified">Verified — Legitimate employer identity &amp; application destination confirmed</option>
@@ -2315,17 +3727,54 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 <textarea
                   rows={2}
                   name="verificationNotes"
-                  defaultValue={verifyingJob.verificationNotes || 'Official career page confirmed by administrator. Zero candidate fees required.'}
+                  defaultValue={verifyingJob.verificationNotes || ''}
                   placeholder="Record your verification steps (e.g. checked CSIR careers website; confirmed recruitment portal is operational without charging fees)..."
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                 />
+              </div>
+
+              {/* Recorded Verification History Timeline */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-bold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                    <History className="w-3.5 h-3.5 text-teal-600" />
+                    <span>Recorded Verification History</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    {verifyingJobHistory.length} {verifyingJobHistory.length === 1 ? 'record' : 'records'}
+                  </span>
+                </div>
+                {isLoadingJobHistory ? (
+                  <p className="text-[11px] text-slate-400">Loading audit history...</p>
+                ) : verifyingJobHistory.length === 0 ? (
+                  <p className="text-[11px] text-slate-400">
+                    No prior verification decisions have been logged for this job yet.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
+                    {verifyingJobHistory.map((rec) => (
+                      <div
+                        key={rec.id}
+                        className="p-2 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px]"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-bold text-slate-800 dark:text-slate-200">{rec.sourceStatus}</span>
+                          <span className="text-[10px] text-slate-400">
+                            {rec.verifiedBy} · {new Date(rec.verifiedAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        {rec.notes && <p className="text-slate-600 dark:text-slate-400 mt-0.5">{rec.notes}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Candidate Protection Warning */}
               <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-[11px] text-amber-800 dark:text-amber-300 flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <span>
-                  <strong>Legal &amp; Trust Requirement:</strong> Only mark as "Verified" if the employer identity and application destination have actually been tested. Never mark an opportunity as verified without auditing.
+                  <strong>Legal &amp; Trust Requirement:</strong> Only mark as &ldquo;Verified&rdquo; if the employer identity and application destination have actually been tested. Never mark an opportunity as verified without auditing.
                 </span>
               </div>
 
@@ -3099,6 +4548,470 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 >
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{editingCourse ? 'Save Course Changes' : 'Add Course'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* ADD / EDIT INTERNSHIP MODAL                               */}
+      {/* ========================================================= */}
+      {isInternshipModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                {editingInternship ? `Edit Internship: ${editingInternship.title}` : 'Add Biotechnology Internship'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsInternshipModalOpen(false);
+                  setEditingInternship(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveInternship} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Program Title *</label>
+                  <input
+                    type="text"
+                    name="title"
+                    required
+                    defaultValue={editingInternship?.title}
+                    placeholder="e.g. Summer Research Fellowship in Structural Biology"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Host Organization / Institute *</label>
+                  <input
+                    type="text"
+                    name="organization"
+                    required
+                    defaultValue={editingInternship?.organization}
+                    placeholder="e.g. NCBS-TIFR / Biocon Academy"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Category</label>
+                  <select
+                    name="category"
+                    defaultValue={editingInternship?.category || 'Summer Fellowship'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  >
+                    <option value="Summer Fellowship">Summer Fellowship</option>
+                    <option value="Industrial R&D">Industrial R&amp;D</option>
+                    <option value="Academic Dissertation">Academic Dissertation</option>
+                    <option value="Clinical Research">Clinical Research</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Work Mode</label>
+                  <select
+                    name="workMode"
+                    defaultValue={editingInternship?.workMode || 'On-site Lab'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  >
+                    <option value="On-site Lab">On-site Lab</option>
+                    <option value="Hybrid">Hybrid</option>
+                    <option value="Remote / Dry Lab">Remote / Dry Lab</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Location</label>
+                  <input
+                    type="text"
+                    name="location"
+                    defaultValue={editingInternship?.location || 'Bengaluru, Karnataka'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Stipend</label>
+                  <input
+                    type="text"
+                    name="stipend"
+                    defaultValue={editingInternship?.stipend || '₹15,000 / month'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Duration</label>
+                  <input
+                    type="text"
+                    name="duration"
+                    defaultValue={editingInternship?.duration || '8 Weeks'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Deadline</label>
+                  <input
+                    type="date"
+                    name="deadline"
+                    defaultValue={editingInternship?.deadline || '2026-12-20'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Official Application URL *</label>
+                  <input
+                    type="url"
+                    name="applicationUrl"
+                    required
+                    defaultValue={editingInternship?.applicationUrl}
+                    placeholder="https://institute.res.in/fellowship"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Eligibility</label>
+                  <input
+                    type="text"
+                    name="eligibility"
+                    defaultValue={editingInternship?.eligibility || 'B.Sc / M.Sc / B.Tech in Life Sciences'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Source Name</label>
+                  <input
+                    type="text"
+                    name="sourceName"
+                    defaultValue={editingInternship?.sourceName || 'Verified Academic Portal'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Verification Status</label>
+                  <select
+                    name="verificationStatus"
+                    defaultValue={editingInternship?.verificationStatus || 'Verified'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
+                  >
+                    <option value="Verified">Verified</option>
+                    <option value="Pending Verification">Pending Verification</option>
+                    <option value="Rejected">Rejected</option>
+                    <option value="Expired">Expired</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Program Description *</label>
+                <textarea
+                  rows={2}
+                  name="description"
+                  required
+                  defaultValue={editingInternship?.description}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Learning Outcomes (one per line)</label>
+                  <textarea
+                    rows={2}
+                    name="learningOutcomes"
+                    defaultValue={editingInternship?.learningOutcomes?.join('\n')}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Skills Required (comma-separated)</label>
+                  <textarea
+                    rows={2}
+                    name="skillsRequired"
+                    defaultValue={editingInternship?.skillsRequired?.join(', ')}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-700 dark:text-slate-300">
+                  <input type="checkbox" name="featured" defaultChecked={editingInternship?.featured} className="rounded text-[#0B2A5B]" />
+                  <span>Feature Internship</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsInternshipModalOpen(false);
+                      setEditingInternship(null);
+                    }}
+                    className="px-4 py-2 text-slate-500 hover:bg-slate-100 rounded-xl"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl shadow-xs cursor-pointer"
+                  >
+                    {editingInternship ? 'Save Internship' : 'Create Internship'}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* INTERNSHIP VERIFICATION MODAL                             */}
+      {/* ========================================================= */}
+      {isInternshipVerificationModalOpen && verifyingInternship && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Verify Internship: {verifyingInternship.title}
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsInternshipVerificationModalOpen(false);
+                  setVerifyingInternship(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const formData = new FormData(e.currentTarget);
+                const status = String(formData.get('verificationStatus') || 'Verified');
+                const notes = String(formData.get('verificationNotes') || '');
+                const dateVal = String(formData.get('lastVerificationDate') || new Date().toISOString().split('T')[0]);
+                try {
+                  const updated = await adminApi.verifyInternship(verifyingInternship.id, status, notes, dateVal);
+                  setInternships(internships.map((i) => (i.id === verifyingInternship.id ? updated : i)));
+                  addToast(`Internship "${verifyingInternship.title}" marked as ${status}.`, 'success');
+                  setIsInternshipVerificationModalOpen(false);
+                  setVerifyingInternship(null);
+                  await loadDashboardData(true);
+                } catch (err: any) {
+                  addToast(err.message || 'Failed to verify internship.', 'error');
+                }
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Verification Status *</label>
+                <select
+                  name="verificationStatus"
+                  defaultValue={verifyingInternship.verificationStatus || 'Verified'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
+                >
+                  <option value="Verified">Verified</option>
+                  <option value="Pending Verification">Pending Verification</option>
+                  <option value="Rejected">Rejected</option>
+                  <option value="Expired">Expired</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Verification Date *</label>
+                <input
+                  type="date"
+                  name="lastVerificationDate"
+                  required
+                  defaultValue={verifyingInternship.lastVerificationDate || new Date().toISOString().split('T')[0]}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Audit Notes</label>
+                <textarea
+                  rows={2}
+                  name="verificationNotes"
+                  defaultValue={verifyingInternship.verificationNotes || 'Confirmed official fellowship portal link.'}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsInternshipVerificationModalOpen(false);
+                    setVerifyingInternship(null);
+                  }}
+                  className="px-4 py-2 text-slate-500 hover:bg-slate-100 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-[#0B2A5B] text-white font-bold rounded-xl cursor-pointer"
+                >
+                  Save Verification
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* EDIT SUBMITTED OPPORTUNITY MODAL                          */}
+      {/* ========================================================= */}
+      {isSubmissionEditModalOpen && editingSubmission && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="w-full max-w-xl bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 p-6 space-y-4 max-h-[90vh] overflow-y-auto text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-900 dark:text-slate-100">
+                Edit Submitted Opportunity
+              </h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSubmissionEditModalOpen(false);
+                  setEditingSubmission(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveEditedSubmission} className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Title *</label>
+                  <input
+                    type="text"
+                    name="title"
+                    required
+                    defaultValue={editingSubmission.title}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Organization *</label>
+                  <input
+                    type="text"
+                    name="organization"
+                    required
+                    defaultValue={editingSubmission.organization}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Type</label>
+                  <input
+                    type="text"
+                    name="type"
+                    defaultValue={editingSubmission.type}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Location</label>
+                  <input
+                    type="text"
+                    name="location"
+                    defaultValue={editingSubmission.location}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Moderation Status</label>
+                  <select
+                    name="status"
+                    defaultValue={editingSubmission.status || 'Pending Verification'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-bold"
+                  >
+                    <option value="Pending Verification">Pending Verification</option>
+                    <option value="Active">Approved / Active</option>
+                    <option value="Rejected">Rejected</option>
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Work Mode</label>
+                  <input
+                    type="text"
+                    name="workMode"
+                    defaultValue={editingSubmission.workMode}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Deadline</label>
+                  <input
+                    type="text"
+                    name="deadline"
+                    defaultValue={editingSubmission.deadline}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Application URL *</label>
+                <input
+                  type="url"
+                  name="applicationUrl"
+                  required
+                  defaultValue={editingSubmission.applicationUrl}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Description</label>
+                <textarea
+                  rows={3}
+                  name="description"
+                  defaultValue={editingSubmission.description}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">Skills (comma-separated)</label>
+                <input
+                  type="text"
+                  name="skills"
+                  defaultValue={(editingSubmission.skills || []).join(', ')}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSubmissionEditModalOpen(false);
+                    setEditingSubmission(null);
+                  }}
+                  className="px-4 py-2 text-slate-500 hover:bg-slate-100 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="px-5 py-2 bg-[#0B2A5B] text-white font-bold rounded-xl cursor-pointer">
+                  Save Submission
                 </button>
               </div>
             </form>

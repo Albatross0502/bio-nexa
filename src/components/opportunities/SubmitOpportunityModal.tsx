@@ -53,6 +53,8 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
   const [instructors, setInstructors] = useState('');
 
   const [submitted, setSubmitted] = useState(false);
+  const [submittedId, setSubmittedId] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [legalConsentAccepted, setLegalConsentAccepted] = useState(false);
 
@@ -66,8 +68,16 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
     );
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const normalizeWorkMode = (val: string): WorkMode => {
+    const lower = val.toLowerCase();
+    if (lower === 'remote') return 'Remote';
+    if (lower === 'hybrid') return 'Hybrid';
+    return 'On-site';
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError(null);
 
     if (!title.trim() || !organization.trim() || !location.trim() || !applicationUrl.trim()) {
@@ -85,27 +95,30 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
       return;
     }
 
+    const salaryOrStipend =
+      hasDisclosedComp && compAmount.trim()
+        ? `₹${compAmount.trim()} / ${compPeriod}`
+        : 'Not Disclosed';
+
+    setIsSubmitting(true);
     try {
-      opportunityStore.submitOpportunity({
+      const result = await opportunityStore.submitOpportunityToBackend({
         title: title.trim(),
         organization: organization.trim(),
         type,
+        description: description.trim() || 'No detailed description provided by organizer.',
         location: location.trim(),
-        workMode,
-        experience: experience || undefined,
+        workMode: normalizeWorkMode(workMode),
+        experience: experience || 'Not Specified',
         qualification: qualification.trim() || undefined,
         branches: selectedBranches,
-        description: description.trim() || 'No detailed description provided by organizer.',
-        applicationUrl: applicationUrl.trim(),
+        salaryOrStipend,
+        salaryTier: hasDisclosedComp && compAmount.trim() ? 'paid' : 'not_disclosed',
         deadline: deadline || undefined,
-        compensation: hasDisclosedComp && compAmount.trim() ? {
-          amount: compAmount.trim(),
-          currency: '₹',
-          period: compPeriod,
-          isDisclosed: true,
-        } : {
-          isDisclosed: false,
-        },
+        sourceName: 'Direct Employer / Organizer Submission',
+        sourceUrl: applicationUrl.trim(),
+        applicationUrl: applicationUrl.trim(),
+        contactEmail: contactEmail.trim() || undefined,
         workshopDetails: type === 'workshop' ? {
           mode: workshopMode,
           registrationFee: isFreeWorkshop ? 'Free' : (workshopFee.trim() || 'Paid'),
@@ -113,19 +126,15 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
           dates: workshopDates.trim() || undefined,
           speakers: instructors.trim() ? instructors.split(',').map(s => s.trim()) : undefined,
         } : undefined,
-        source: {
-          id: 'direct-employer',
-          name: 'Direct Employer / Organizer Submission',
-          permissionStatus: 'direct_submission',
-          type: 'direct_employer',
-          originalUrl: applicationUrl.trim(),
-        },
       });
 
+      setSubmittedId(result.id);
       setSubmitted(true);
       if (onSuccess) onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit opportunity.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -136,7 +145,9 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
     setDescription('');
     setApplicationUrl('');
     setCompAmount('');
+    setContactEmail('');
     setSubmitted(false);
+    setSubmittedId(null);
     setError(null);
     setLegalConsentAccepted(false);
     onClose();
@@ -171,8 +182,13 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
               <CheckCircle2 className="w-10 h-10" />
             </div>
             <h4 className="text-xl font-bold text-slate-900 dark:text-white">Submission Received!</h4>
+            {submittedId && (
+              <div className="inline-block px-3 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-xs font-mono text-slate-700 dark:text-slate-300">
+                Reference ID: {submittedId}
+              </div>
+            )}
             <p className="text-sm text-slate-600 dark:text-slate-400 max-w-md mx-auto">
-              Your opportunity has been successfully queued for BIO-INEXA verification. Once reviewed by our moderation team, it will appear in public listings.
+              Your opportunity has been saved to the BIO-INEXA verification database queue. Once approved by an administrator, it will appear in public listings.
             </p>
             <div className="pt-4">
               <button
@@ -186,7 +202,7 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
         ) : (
           <form onSubmit={handleSubmit} className="p-6 md:p-8 space-y-5">
             {error && (
-              <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
+              <div role="alert" className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 rounded-xl text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0" />
                 <span>{error}</span>
               </div>
@@ -274,9 +290,9 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
                   onChange={(e) => setWorkMode(e.target.value as WorkMode)}
                   className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-hidden focus:ring-2 focus:ring-sky-500"
                 >
-                  <option value="onsite">On-Site (Laboratory / Office)</option>
-                  <option value="remote">Remote (Work From Home)</option>
-                  <option value="hybrid">Hybrid</option>
+                  <option value="On-site">On-Site (Laboratory / Office)</option>
+                  <option value="Remote">Remote (Work From Home)</option>
+                  <option value="Hybrid">Hybrid</option>
                 </select>
               </div>
             </div>
@@ -545,10 +561,11 @@ export const SubmitOpportunityModal: React.FC<SubmitOpportunityModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-linear-to-r from-sky-600 to-teal-600 hover:from-sky-500 hover:to-teal-500 rounded-xl shadow-md"
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-linear-to-r from-sky-600 to-teal-600 hover:from-sky-500 hover:to-teal-500 disabled:opacity-50 rounded-xl shadow-md cursor-pointer"
               >
                 <Send className="w-4 h-4" />
-                Submit for Verification
+                <span>{isSubmitting ? 'Submitting...' : 'Submit for Verification'}</span>
               </button>
             </div>
           </form>

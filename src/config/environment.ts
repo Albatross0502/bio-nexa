@@ -19,6 +19,7 @@ export interface RuntimeEnvironmentConfig {
   cookieSameSite: 'lax' | 'strict' | 'none';
   supabaseConfigured: boolean;
   adzunaConfigured: boolean;
+  googleSheetsConfigured: boolean;
   adminCredentialsConfiguredInEnv: boolean;
   sessionSecretConfiguredInEnv: boolean;
 }
@@ -94,9 +95,21 @@ export function getRuntimeEnvironmentConfig(
   const adzunaAppKey = (env.ADZUNA_APP_KEY || '').trim();
   const adzunaConfigured = Boolean(adzunaAppId && adzunaAppKey);
 
+  const spreadsheetId = (env.GOOGLE_SHEETS_SPREADSHEET_ID || '').trim();
+  const googleSheetsConfigured = Boolean(
+    (spreadsheetId &&
+      (((env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '').trim() &&
+        (env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || '').trim()) ||
+        (env.GOOGLE_SHEETS_API_KEY || '').trim())) ||
+      (env.GOOGLE_SHEETS_WEBAPP_URL || '').trim() ||
+      (env.GOOGLE_SHEETS_CSV_URL || '').trim()
+  );
+
   const adminPassword = (env.ADMIN_PASSWORD || '').trim();
-  const adminCredentialsConfiguredInEnv = Boolean(adminPassword);
-  const sessionSecretConfiguredInEnv = Boolean((env.ADMIN_SESSION_SECRET || '').trim() || adminPassword);
+  const adminPasswordHash = (env.ADMIN_PASSWORD_HASH || '').trim();
+  const sessionSecret = (env.ADMIN_SESSION_SECRET || '').trim();
+  const adminCredentialsConfiguredInEnv = Boolean(adminPassword || adminPasswordHash);
+  const sessionSecretConfiguredInEnv = Boolean(sessionSecret && sessionSecret !== adminPassword);
 
   const cookieSecure = isProduction || resolvedSiteOrigin.startsWith('https://');
 
@@ -112,6 +125,7 @@ export function getRuntimeEnvironmentConfig(
     cookieSameSite: 'lax',
     supabaseConfigured,
     adzunaConfigured,
+    googleSheetsConfigured,
     adminCredentialsConfiguredInEnv,
     sessionSecretConfiguredInEnv,
   };
@@ -157,29 +171,44 @@ export function resolveCorsOrigin(
 
 export interface ServerlessAdminCredentialConfig {
   username: string;
-  password: string;
+  password?: string;
+  passwordHash?: string;
   sessionSecret: string;
+  role: string;
+  totpSecret?: string;
 }
 
 /**
  * Reads administrator credentials for serverless handlers from environment variables.
- * Returns null in production/Netlify when ADMIN_PASSWORD is not configured so we
- * never expose a hardcoded production fallback password.
+ * Returns null when credentials or dedicated session secret are not configured so we
+ * never expose a hardcoded fallback password or reuse the password as an HMAC signing key.
  */
 export function getServerlessAdminCredentials(
   env: Record<string, string | undefined> = process.env
 ): ServerlessAdminCredentialConfig | null {
   const password = (env.ADMIN_PASSWORD || '').trim();
-  if (!password) {
+  const passwordHash = (env.ADMIN_PASSWORD_HASH || '').trim();
+  const username = (env.ADMIN_USERNAME || '').trim();
+  const sessionSecret = (env.ADMIN_SESSION_SECRET || '').trim();
+
+  if ((!password && !passwordHash) || !username) {
     return null;
   }
 
-  const username = (env.ADMIN_USERNAME || 'admin@bionexa.org').trim();
-  const sessionSecret = (env.ADMIN_SESSION_SECRET || password).trim();
+  // Require an explicit session secret distinct from the password
+  if (!sessionSecret || sessionSecret.length < 16 || (password && sessionSecret === password)) {
+    return null;
+  }
+
+  const role = (env.ADMIN_ROLE || 'super_admin').trim();
+  const totpSecret = (env.ADMIN_TOTP_SECRET || '').trim() || undefined;
 
   return {
     username,
-    password,
+    ...(password ? { password } : {}),
+    ...(passwordHash ? { passwordHash } : {}),
     sessionSecret,
+    role,
+    ...(totpSecret ? { totpSecret } : {}),
   };
 }

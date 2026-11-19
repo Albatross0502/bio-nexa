@@ -1,23 +1,23 @@
-import { DEFAULT_APPS_SCRIPT_URL, googleSheetsSync } from '../services/opportunities/googleSheetsSync';
 import { canSendNonEssentialTelemetry } from '../services/legal/legalCompliance';
 
-export const BIO_NEXA_TRACKING_URL = DEFAULT_APPS_SCRIPT_URL;
+const DEFAULT_PUBLIC_VISITOR_PING_URL =
+  'https://script.google.com/macros/s/AKfycbwCSGpoOJHEtqnVEKqf07kORQ3jfb0EqfMQn8NOo5QiAqYLGg4C33Oy2G7JXQ7iPwi8/exec';
+
+export const BIO_NEXA_TRACKING_URL =
+  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_VISITOR_TRACKING_URL) ||
+  DEFAULT_PUBLIC_VISITOR_PING_URL;
 
 let bioNexaEntrySent = false;
 
 /**
- * Sends visitor entry to Google Sheets via Google Apps Script Web App.
- * Uses GET with mode: 'no-cors', cache: 'no-store', keepalive: true.
- * Respects DPDP / Cookie consent ("Essential Only") and DNT preference.
+ * Sends anonymous session entry ping if user consent permits non-essential telemetry.
  * Duplicate protection ensures each session triggers at most one entry.
  */
 export function sendBioNexaVisitorEntry(): boolean {
-  // Prevent duplicate tracking requests
   if (bioNexaEntrySent) {
     return false;
   }
 
-  // Respect visitor opt-out / Essential Only privacy choice
   if (!canSendNonEssentialTelemetry()) {
     return false;
   }
@@ -25,32 +25,23 @@ export function sendBioNexaVisitorEntry(): boolean {
   bioNexaEntrySent = true;
 
   try {
-    const config = typeof window !== 'undefined' ? googleSheetsSync.getConfig() : null;
-    const targetUrl = config?.scriptUrl || BIO_NEXA_TRACKING_URL;
-
-    // Send visitor entry to Google Sheets
-    fetch(targetUrl, {
-      method: "GET",
-      mode: "no-cors",
-      cache: "no-store",
-      keepalive: true
-    }).catch(error => {
-      console.error("BIO-NEXA tracking request failed:", error);
+    fetch(BIO_NEXA_TRACKING_URL, {
+      method: 'GET',
+      mode: 'no-cors',
+      cache: 'no-store',
+      keepalive: true,
+    }).catch((error) => {
+      console.error('BIO-INEXA tracking request failed:', error);
     });
     return true;
   } catch (error) {
-    console.error("BIO-NEXA tracking dispatch error:", error);
+    console.error('BIO-INEXA tracking dispatch error:', error);
     return false;
   }
 }
 
-/**
- * Resets the entry sent flag (useful for testing or session reset)
- */
 export function resetBioNexaTrackingFlag(): void {
   bioNexaEntrySent = false;
 }
 
-// Retain alias for backwards compatibility
 export const sendVisitorTracking = sendBioNexaVisitorEntry;
-

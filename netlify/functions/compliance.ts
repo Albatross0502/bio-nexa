@@ -12,6 +12,7 @@ import {
   errorResponse,
   extractSubPath,
   handleCorsPreflight,
+  jsonResponse,
   methodNotAllowedResponse,
   NetlifyEvent,
   NetlifyResponse,
@@ -19,6 +20,7 @@ import {
   sanitizeString,
   serviceUnavailableResponse,
 } from './_shared/http';
+import { getSupabaseRepository } from './_shared/supabaseDb';
 
 const ALLOWED_METHODS = ['POST'];
 const BASE_PREFIXES = ['/.netlify/functions/compliance', '/api/compliance'];
@@ -71,10 +73,26 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     );
   }
 
-  return serviceUnavailableResponse(
+  const repo = getSupabaseRepository();
+  if (!repo) {
+    return serviceUnavailableResponse(
+      event,
+      'Compliance and grievance request storage is not yet provisioned in serverless production. Configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to record submissions reliably.',
+      'PERSISTENT_DB_NOT_CONFIGURED',
+      ALLOWED_METHODS
+    );
+  }
+
+  const created = await repo.createComplianceRequest(input);
+  return jsonResponse(
     event,
-    'Compliance and grievance request storage is not yet provisioned in serverless production. Persistent database storage (Phase 04) is required to record submissions reliably.',
-    'PERSISTENT_DB_NOT_CONFIGURED',
+    201,
+    {
+      success: true,
+      referenceId: created.referenceId,
+      request: created,
+      message: `Compliance request ${created.referenceId} logged securely for grievance officer review.`,
+    },
     ALLOWED_METHODS
   );
 };

@@ -80,6 +80,8 @@ export const HomePage: React.FC = () => {
 
   useEffect(() => {
     let isMounted = true;
+    opportunityStore.refreshFromBackend().catch(() => {});
+
     fetch('/api/workshops')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -128,11 +130,18 @@ export const HomePage: React.FC = () => {
   const handleManualRefresh = async () => {
     setIsSyncing(true);
     try {
-      const res = await opportunityStore.syncWithGoogleSheets(true);
+      const [backendOpps, sheetRes] = await Promise.all([
+        opportunityStore.refreshFromBackend(),
+        opportunityStore.syncWithGoogleSheets(true)
+      ]);
       setLastSyncTime('Just now');
-      addToast(res.message || 'Opportunities updated from Google Sheets!', 'success');
+      if (sheetRes.success && !sheetRes.isFallback) {
+        addToast(sheetRes.message || `Synced ${backendOpps.length} live opportunities.`, 'success');
+      } else {
+        addToast(`Refreshed ${backendOpps.length} opportunities from database.`, 'info');
+      }
     } catch (err: any) {
-      addToast('Sync notice: Using verified opportunities feed.', 'info');
+      addToast(err?.message || 'Unable to refresh opportunities feed.', 'error');
     } finally {
       setIsSyncing(false);
     }
@@ -177,7 +186,17 @@ export const HomePage: React.FC = () => {
   // Filter public, non-expired opportunities (merging live DB workshops & courses)
   const activeOpportunities = useMemo(() => {
     const baseFiltered = opportunities.filter((o) => {
-      if (!o.isApproved || o.type === 'workshop' || o.status === 'Expired' || o.status === 'Closed') {
+      const statusLower = String(o.status || '').toLowerCase();
+      const verStatusLower = String((o as any).verificationStatus || '').toLowerCase();
+      if (
+        !o.isApproved ||
+        o.type === 'workshop' ||
+        statusLower === 'expired' ||
+        statusLower === 'closed' ||
+        statusLower === 'rejected' ||
+        verStatusLower === 'rejected' ||
+        verStatusLower === 'expired'
+      ) {
         return false;
       }
       if (dbCoursesLoaded && o.type === 'course') {
@@ -306,13 +325,13 @@ export const HomePage: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-3xl mx-auto space-y-4">
             
-            {/* Live Google Sheets & Systems Connection Pill */}
+            {/* Live Verified Database & Feeds Status Pill */}
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-[#0B2A5B] dark:text-sky-300 bg-blue-50/90 dark:bg-slate-800 rounded-full border border-blue-200 dark:border-slate-700 shadow-xs">
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span>Google Sheets &amp; Gazette Sync Active</span>
+              <span>Verified Database &amp; Official Feeds</span>
               <span className="text-slate-300 dark:text-slate-600">|</span>
               <span className="font-mono text-slate-500 dark:text-slate-400">Refreshed: {lastSyncTime}</span>
               <button
@@ -381,7 +400,7 @@ export const HomePage: React.FC = () => {
                 <span className="text-2xl font-bold font-mono text-[#0B2A5B] dark:text-sky-300 tabular-nums">
                   {activeOpportunities.length}
                 </span>
-                <span className="text-xs text-slate-500 block mt-0.5">Automated Sheets Sync</span>
+                <span className="text-xs text-slate-500 block mt-0.5">Verified Career Directory</span>
               </div>
 
               <div className="p-4 bg-white dark:bg-slate-800/80 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xs">

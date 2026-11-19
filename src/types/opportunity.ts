@@ -130,6 +130,7 @@ export interface Opportunity {
   status: OpportunityStatus;
   isApproved: boolean; // Moderation flag: only true appears publicly
   isVerified?: boolean;
+  verificationStatus?: string;
   isExternal?: boolean;
   dataCollectionTimestamp?: string;
   attributionRequirements?: string;

@@ -52,6 +52,7 @@ export const CoursesPage: React.FC = () => {
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [earnedCertificate, setEarnedCertificate] = useState<any | null>(null);
+  const [isIssuingCert, setIsIssuingCert] = useState(false);
 
   // Phase 09 Live Course Discovery Catalog State
   const [liveCourses, setLiveCourses] = useState<UnifiedCourse[]>([]);
@@ -154,12 +155,19 @@ export const CoursesPage: React.FC = () => {
     return Math.round((correct / selectedCourse.quiz.length) * 100);
   };
 
-  const handleQuizSubmit = () => {
+  const handleQuizSubmit = async () => {
     setQuizSubmitted(true);
     const score = calculateScore();
     if (score >= 60) {
-      const cert = awardCertificate(selectedCourse, score);
-      setEarnedCertificate(cert);
+      setIsIssuingCert(true);
+      try {
+        const cert = await awardCertificate(selectedCourse, score);
+        setEarnedCertificate(cert);
+      } catch {
+        // Error toast is already raised by AppContext
+      } finally {
+        setIsIssuingCert(false);
+      }
     }
   };
 
@@ -787,6 +795,10 @@ export const CoursesPage: React.FC = () => {
                         ? 'Great work! You met the 60% passing benchmark for this BIO-INEXA self-assessment module.'
                         : 'You scored below the 60% benchmark. Review the key concepts and retake the quiz.'}
                     </p>
+
+                    {isIssuingCert && (
+                      <p className="text-xs text-slate-500 pt-2">Issuing verified completion record...</p>
+                    )}
 
                     {earnedCertificate && (
                       <div className="pt-4 border-t border-slate-200 dark:border-slate-700 space-y-3">

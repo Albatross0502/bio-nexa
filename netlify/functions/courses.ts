@@ -19,6 +19,8 @@ import {
   NetlifyResponse,
 } from './_shared/http';
 import { SERVERLESS_COURSES } from './_shared/serverlessCatalog';
+import { getSupabaseRepository } from './_shared/supabaseDb';
+import { paginateArray, parsePaginationParams } from '../../src/utils/apiPagination';
 
 const ALLOWED_METHODS = ['GET'];
 const BASE_PREFIXES = ['/.netlify/functions/courses', '/api/courses'];
@@ -32,6 +34,7 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
   }
 
   const subPath = extractSubPath(event, BASE_PREFIXES);
+  const repo = getSupabaseRepository();
 
   if (!subPath) {
     const params = event.queryStringParameters || {};
@@ -39,34 +42,45 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     const category = params.category ? params.category.trim() : '';
     const status = params.status ? params.status.trim() : '';
     const featuredParam = params.featured;
-    const search = (params.search || '').trim().toLowerCase();
+    const search = (params.search || '').trim();
 
-    const filtered = SERVERLESS_COURSES.filter((c) => {
-      const normalizedStatus = normalizeCourseStatus(c.status, c.availability);
-      if (onlyAvailable && normalizedStatus !== 'available') return false;
-      if (status && status !== 'all' && normalizedStatus !== status.toLowerCase()) return false;
-      if (category && category !== 'all') {
-        if (normalizeCourseCategory(c.category) !== normalizeCourseCategory(category)) {
-          return false;
-        }
-      }
-      if (featuredParam === 'true' && !c.featured) return false;
-      if (featuredParam === 'false' && c.featured) return false;
-      if (search) {
-        const hay = [
-          c.name,
-          c.provider,
-          c.instructor,
-          c.category,
-          c.description,
-          ...c.curriculum,
-        ]
-          .join(' ')
-          .toLowerCase();
-        if (!hay.includes(search)) return false;
-      }
-      return true;
-    });
+    const filtered = repo
+      ? await repo.getCourses({
+          onlyAvailable,
+          category: category || undefined,
+          status: status || undefined,
+          featured: featuredParam === 'true' ? true : featuredParam === 'false' ? false : undefined,
+          search: search || undefined,
+        })
+      : SERVERLESS_COURSES.filter((c) => {
+          const normalizedStatus = normalizeCourseStatus(c.status, c.availability);
+          if (onlyAvailable && normalizedStatus !== 'available') return false;
+          if (status && status !== 'all' && normalizedStatus !== status.toLowerCase()) return false;
+          if (category && category !== 'all') {
+            if (normalizeCourseCategory(c.category) !== normalizeCourseCategory(category)) {
+              return false;
+            }
+          }
+          if (featuredParam === 'true' && !c.featured) return false;
+          if (featuredParam === 'false' && c.featured) return false;
+          if (search) {
+            const hay = [
+              c.name,
+              c.provider,
+              c.instructor,
+              c.category,
+              c.description,
+              ...c.curriculum,
+            ]
+              .join(' ')
+              .toLowerCase();
+            if (!hay.includes(search.toLowerCase())) return false;
+          }
+          return true;
+        });
+
+    const { page, limit } = parsePaginationParams(params, { defaultLimit: 100, maxLimit: 100 });
+    const { items: paginatedCourses, pagination } = paginateArray(filtered, page, limit);
 
     return jsonResponse(
       event,
@@ -74,7 +88,13 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       {
         success: true,
         count: filtered.length,
-        courses: filtered,
+        total: pagination.total,
+        page: pagination.page,
+        limit: pagination.limit,
+        totalPages: pagination.totalPages,
+        pagination,
+        persistentDbConfigured: Boolean(repo),
+        courses: paginatedCourses,
       },
       ALLOWED_METHODS
     );
@@ -82,7 +102,9 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
 
   if (!subPath.includes('/')) {
     const id = decodeURIComponent(subPath);
-    const course = SERVERLESS_COURSES.find((c) => c.id === id);
+    const course = repo
+      ? await repo.getCourseById(id)
+      : SERVERLESS_COURSES.find((c) => c.id === id) || null;
     if (!course) {
       return errorResponse(event, 404, 'Not Found', 'Course not found.', {
         code: 'COURSE_NOT_FOUND',

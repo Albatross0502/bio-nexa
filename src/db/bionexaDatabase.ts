@@ -15,6 +15,11 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import {
+  computeAdminDashboardStats,
+  AdminDashboardStats,
+} from '../services/admin/adminHelpers.js';
+import { findDuplicateJob as matchDuplicateJob } from '../services/jobs/jobVerification.js';
 
 export type JobVerificationStatus = 
   | 'Pending Verification'
@@ -61,6 +66,48 @@ export interface DbJob {
   sector: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DbInternship {
+  id: string;
+  slug: string;
+  title: string;
+  organization: string;
+  location: string;
+  workMode: string;
+  stipend: string;
+  duration: string;
+  deadline: string;
+  category: string;
+  eligibility: string;
+  description: string;
+  learningOutcomes: string[];
+  skillsRequired: string[];
+  sourceName: string;
+  sourceUrl: string;
+  applicationUrl: string;
+  verificationStatus: JobVerificationStatus;
+  verificationNotes: string;
+  lastVerificationDate: string;
+  isVerified: boolean;
+  isApproved: boolean;
+  isActive: boolean;
+  featured: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DbSyncLog {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  status: 'Success' | 'Partial' | 'Error';
+  itemsFetched: number;
+  itemsAdded: number;
+  itemsUpdated: number;
+  itemsExpired: number;
+  details: string;
+  createdAt: string;
 }
 
 export type WorkshopFormat = 'Online' | 'Offline' | 'Hybrid';
@@ -178,6 +225,101 @@ export interface DbComplianceRequest {
   resolutionNotes: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DbSubmittedOpportunity {
+  id: string;
+  title: string;
+  organization: string;
+  type: string;
+  subCategory: string;
+  description: string;
+  location: string;
+  workMode: string;
+  experience: string;
+  qualification: string;
+  branches: string[];
+  skills: string[];
+  salaryOrStipend: string;
+  salaryTier: string;
+  deadline: string;
+  postedDate: string;
+  sourceName: string;
+  sourceUrl: string;
+  applicationUrl: string;
+  contactEmail: string;
+  status: string;
+  isApproved: boolean;
+  workshopDetails?: Record<string, any> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DbContactMessage {
+  id: string;
+  referenceId: string;
+  name: string;
+  email: string;
+  subject: string;
+  message: string;
+  status: 'New' | 'Reviewed' | 'Resolved';
+  createdAt: string;
+}
+
+export interface DbNewsletterSubscriber {
+  id: string;
+  email: string;
+  subscribedAt: string;
+  isActive: boolean;
+}
+
+export interface DbCertificate {
+  id: string;
+  certificateNumber: string;
+  recipientName: string;
+  courseTitle: string;
+  issueDate: string;
+  score: number;
+  verificationCode: string;
+  createdAt: string;
+}
+
+export interface DbJobApplication {
+  id: string;
+  jobId: string;
+  jobTitle: string;
+  company: string;
+  applicantName: string;
+  applicantEmail: string;
+  phone: string;
+  qualification: string;
+  experienceYears: string;
+  coverNote: string;
+  appliedDate: string;
+  status: 'Under Review' | 'Shortlisted' | 'Interview Scheduled' | 'Rejected';
+  createdAt: string;
+}
+
+export interface DbDiscussionReply {
+  id: string;
+  topicId: string;
+  authorName: string;
+  authorRole: string;
+  content: string;
+  createdAt: string;
+  upvotes: number;
+}
+
+export interface DbDiscussionTopic {
+  id: string;
+  title: string;
+  authorName: string;
+  authorRole: string;
+  category: string;
+  content: string;
+  createdAt: string;
+  upvotes: number;
+  replies: DbDiscussionReply[];
 }
 
 export class BionexaDatabase {
@@ -347,20 +489,238 @@ export class BionexaDatabase {
         updated_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS submitted_opportunities (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        organization TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'job',
+        sub_category TEXT DEFAULT '',
+        description TEXT NOT NULL,
+        location TEXT NOT NULL,
+        work_mode TEXT NOT NULL DEFAULT 'On-site',
+        experience TEXT DEFAULT 'Not Specified',
+        qualification TEXT DEFAULT '',
+        branches TEXT NOT NULL DEFAULT '[]',
+        skills TEXT NOT NULL DEFAULT '[]',
+        salary_or_stipend TEXT DEFAULT 'Not Disclosed',
+        salary_tier TEXT DEFAULT 'not_disclosed',
+        deadline TEXT DEFAULT '',
+        posted_date TEXT NOT NULL,
+        source_name TEXT DEFAULT 'Direct Employer / Organizer Submission',
+        source_url TEXT DEFAULT '',
+        application_url TEXT NOT NULL,
+        contact_email TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'Pending Verification',
+        is_approved INTEGER NOT NULL DEFAULT 0,
+        workshop_details TEXT DEFAULT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS contact_messages (
+        id TEXT PRIMARY KEY,
+        reference_id TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        email TEXT NOT NULL,
+        subject TEXT NOT NULL,
+        message TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'New',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS newsletter_subscribers (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        subscribed_at TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1
+      );
+
+      CREATE TABLE IF NOT EXISTS certificates (
+        id TEXT PRIMARY KEY,
+        certificate_number TEXT UNIQUE NOT NULL,
+        recipient_name TEXT NOT NULL,
+        course_title TEXT NOT NULL,
+        issue_date TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        verification_code TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS job_applications (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        job_title TEXT NOT NULL,
+        company TEXT NOT NULL,
+        applicant_name TEXT NOT NULL,
+        applicant_email TEXT NOT NULL,
+        phone TEXT DEFAULT '',
+        qualification TEXT DEFAULT '',
+        experience_years TEXT DEFAULT '',
+        cover_note TEXT DEFAULT '',
+        applied_date TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Under Review',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS discussions (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        author_name TEXT NOT NULL,
+        author_role TEXT DEFAULT 'BIO-INEXA Member',
+        category TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        upvotes INTEGER NOT NULL DEFAULT 1
+      );
+
+      CREATE TABLE IF NOT EXISTS discussion_replies (
+        id TEXT PRIMARY KEY,
+        topic_id TEXT NOT NULL REFERENCES discussions(id) ON DELETE CASCADE,
+        author_name TEXT NOT NULL,
+        author_role TEXT DEFAULT 'BIO-INEXA Member',
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        upvotes INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_users (
+        id TEXT PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'super_admin',
+        password_hash TEXT NOT NULL DEFAULT '',
+        totp_secret TEXT DEFAULT '',
+        totp_enabled INTEGER NOT NULL DEFAULT 0,
+        failed_login_count INTEGER NOT NULL DEFAULT 0,
+        locked_until TEXT DEFAULT '',
+        password_updated_at TEXT DEFAULT '',
+        is_active INTEGER NOT NULL DEFAULT 1,
+        last_login_at TEXT DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_sessions (
+        jti TEXT PRIMARY KEY,
+        token_hash TEXT UNIQUE NOT NULL,
+        admin_user_id TEXT NOT NULL,
+        actor_username TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'super_admin',
+        ip_address TEXT DEFAULT '',
+        user_agent TEXT DEFAULT '',
+        expires_at INTEGER NOT NULL,
+        revoked_at INTEGER DEFAULT NULL,
+        last_active_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_login_attempts (
+        id TEXT PRIMARY KEY,
+        identifier TEXT NOT NULL,
+        ip_address TEXT DEFAULT '',
+        attempted_username TEXT DEFAULT '',
+        success INTEGER NOT NULL DEFAULT 0,
+        failure_reason TEXT DEFAULT '',
+        locked_until TEXT DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_password_resets (
+        id TEXT PRIMARY KEY,
+        admin_user_id TEXT NOT NULL,
+        actor_username TEXT NOT NULL,
+        token_hash TEXT UNIQUE NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT DEFAULT NULL,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS admin_audit_logs (
+        id TEXT PRIMARY KEY,
+        admin_user_id TEXT DEFAULT '',
+        actor_username TEXT NOT NULL,
+        action TEXT NOT NULL,
+        entity_type TEXT NOT NULL,
+        entity_id TEXT DEFAULT '',
+        ip_address TEXT DEFAULT '',
+        details TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS internships (
+        id TEXT PRIMARY KEY,
+        slug TEXT DEFAULT '',
+        title TEXT NOT NULL,
+        organization TEXT NOT NULL,
+        location TEXT NOT NULL,
+        work_mode TEXT DEFAULT 'On-site Lab',
+        stipend TEXT DEFAULT 'Competitive Stipend',
+        duration TEXT DEFAULT '3 Months',
+        deadline TEXT DEFAULT '',
+        category TEXT DEFAULT 'Industrial R&D',
+        eligibility TEXT DEFAULT '',
+        description TEXT NOT NULL,
+        learning_outcomes TEXT NOT NULL DEFAULT '[]',
+        skills_required TEXT NOT NULL DEFAULT '[]',
+        source_name TEXT DEFAULT 'BIO-INEXA Verified',
+        source_url TEXT DEFAULT '',
+        application_url TEXT NOT NULL,
+        verification_status TEXT NOT NULL DEFAULT 'Pending Verification',
+        verification_notes TEXT DEFAULT '',
+        last_verification_date TEXT DEFAULT '',
+        is_approved INTEGER NOT NULL DEFAULT 1,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        featured INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS opportunity_sync_logs (
+        id TEXT PRIMARY KEY,
+        source_id TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Success',
+        items_fetched INTEGER NOT NULL DEFAULT 0,
+        items_added INTEGER NOT NULL DEFAULT 0,
+        items_updated INTEGER NOT NULL DEFAULT 0,
+        items_expired INTEGER NOT NULL DEFAULT 0,
+        details TEXT DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_jobs_is_active ON jobs(is_active);
       CREATE INDEX IF NOT EXISTS idx_jobs_is_approved ON jobs(is_approved);
       CREATE INDEX IF NOT EXISTS idx_jobs_sector ON jobs(sector);
+      CREATE INDEX IF NOT EXISTS idx_internships_active ON internships(is_active, is_approved);
+      CREATE INDEX IF NOT EXISTS idx_internships_category ON internships(category);
+      CREATE INDEX IF NOT EXISTS idx_sync_logs_created ON opportunity_sync_logs(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_workshops_status ON workshops(status);
       CREATE INDEX IF NOT EXISTS idx_courses_status ON courses(status);
       CREATE INDEX IF NOT EXISTS idx_announcements_is_active ON announcements(is_active);
       CREATE INDEX IF NOT EXISTS idx_compliance_type ON compliance_requests(request_type);
       CREATE INDEX IF NOT EXISTS idx_compliance_status ON compliance_requests(status);
+      CREATE INDEX IF NOT EXISTS idx_sub_opps_approved ON submitted_opportunities(is_approved);
+      CREATE INDEX IF NOT EXISTS idx_sub_opps_type ON submitted_opportunities(type);
+      CREATE INDEX IF NOT EXISTS idx_cert_number ON certificates(certificate_number);
+      CREATE INDEX IF NOT EXISTS idx_job_apps_job ON job_applications(job_id);
+      CREATE INDEX IF NOT EXISTS idx_disc_replies_topic ON discussion_replies(topic_id);
+      CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
+      CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_admin_attempts_ident ON admin_login_attempts(identifier, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_admin_resets_hash ON admin_password_resets(token_hash);
     `);
 
     // Ensure verification columns exist on existing databases
     try { this.db.exec("ALTER TABLE jobs ADD COLUMN original_job_url TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE jobs ADD COLUMN last_verification_date TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE jobs ADD COLUMN verification_notes TEXT DEFAULT '';"); } catch (_) {}
+    // Ensure pending jobs never carry artificial verification dates
+    try {
+      this.db.exec(
+        "UPDATE jobs SET last_verification_date = '' WHERE verification_status = 'Pending Verification' AND last_verification_date != '';"
+      );
+    } catch (_) {}
 
     // Ensure workshop columns exist on existing databases
     try { this.db.exec("ALTER TABLE workshops ADD COLUMN format TEXT DEFAULT 'Online';"); } catch (_) {}
@@ -433,11 +793,21 @@ export class BionexaDatabase {
     return this.mapJobRow(row);
   }
 
+  public findDuplicateJob(candidate: {
+    id?: string;
+    title: string;
+    employer: string;
+    applicationUrl?: string;
+  }): DbJob | null {
+    const allJobs = this.getAllJobsAdmin();
+    return matchDuplicateJob(candidate, allJobs);
+  }
+
   public createJob(job: Omit<DbJob, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): DbJob {
     const id = job.id || `job-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const now = new Date().toISOString();
     const verStatus = normalizeVerificationStatus(job.verificationStatus);
-    const lastVerDate = job.lastVerificationDate || (verStatus === 'Verified' ? (job.publicationDate || now.split('T')[0]) : '');
+    const lastVerDate = verStatus === 'Pending Verification' ? '' : (job.lastVerificationDate || '');
 
     const stmt = this.db.prepare(`
       INSERT INTO jobs (
@@ -466,7 +836,7 @@ export class BionexaDatabase {
       job.employmentType || 'Full-time',
       job.salary || 'Competitive',
       job.applicationUrl,
-      job.source || 'BIO-INEXA Verified',
+      job.source || 'BIO-INEXA Portal',
       job.originalJobUrl || job.applicationUrl || '',
       job.publicationDate || now.split('T')[0],
       job.expiryDate || '',
@@ -552,10 +922,10 @@ export class BionexaDatabase {
     if (!job) return null;
 
     const now = new Date().toISOString();
-    const verDate = customDate || now.split('T')[0];
     const recordId = `ver-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 
     const validStatus = normalizeVerificationStatus(status);
+    const verDate = validStatus === 'Pending Verification' ? '' : (customDate || now.split('T')[0]);
 
     this.db.prepare(`
       INSERT INTO job_verification_records (id, job_id, verified_by, verified_at, source_status, notes)
@@ -590,6 +960,327 @@ export class BionexaDatabase {
       sourceStatus: r.source_status,
       notes: r.notes || ''
     }));
+  }
+
+  // ==========================================
+  // INTERNSHIPS CRUD & VERIFICATION
+  // ==========================================
+
+  public getInternships(filter?: {
+    search?: string;
+    category?: string;
+    mode?: string;
+    onlyActive?: boolean;
+    onlyApproved?: boolean;
+  }): DbInternship[] {
+    let sql = 'SELECT * FROM internships WHERE 1=1';
+    const params: any[] = [];
+
+    if (filter?.onlyActive !== false) {
+      sql += ' AND is_active = 1';
+    }
+    if (filter?.onlyApproved !== false) {
+      sql += ' AND is_approved = 1';
+    }
+    if (filter?.category && filter.category !== 'All' && filter.category !== 'all') {
+      sql += ' AND category = ?';
+      params.push(filter.category);
+    }
+    if (filter?.mode && filter.mode !== 'All' && filter.mode !== 'all') {
+      sql += ' AND work_mode LIKE ?';
+      params.push(`%${filter.mode}%`);
+    }
+    if (filter?.search) {
+      sql += ' AND (title LIKE ? OR organization LIKE ? OR description LIKE ? OR location LIKE ?)';
+      const term = `%${filter.search}%`;
+      params.push(term, term, term, term);
+    }
+
+    sql += ' ORDER BY featured DESC, created_at DESC';
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map((r) => this.mapInternshipRow(r));
+  }
+
+  public getAllInternshipsAdmin(): DbInternship[] {
+    const rows = this.db.prepare('SELECT * FROM internships ORDER BY featured DESC, created_at DESC').all() as any[];
+    return rows.map((r) => this.mapInternshipRow(r));
+  }
+
+  public getInternshipById(id: string): DbInternship | null {
+    const row = this.db.prepare('SELECT * FROM internships WHERE id = ? OR slug = ?').get(id, id) as any;
+    return row ? this.mapInternshipRow(row) : null;
+  }
+
+  public createInternship(
+    data: Omit<DbInternship, 'id' | 'slug' | 'isVerified' | 'createdAt' | 'updatedAt'> & {
+      id?: string;
+      slug?: string;
+    }
+  ): DbInternship {
+    const id = data.id || `intern-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const now = new Date().toISOString();
+    const slug =
+      data.slug ||
+      `${data.title}-${data.organization}`
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '')
+        .slice(0, 80);
+    const verStatus = normalizeVerificationStatus(data.verificationStatus);
+    const lastVerDate =
+      data.lastVerificationDate || (verStatus === 'Verified' ? now.split('T')[0] : '');
+
+    this.db.prepare(`
+      INSERT INTO internships (
+        id, slug, title, organization, location, work_mode, stipend, duration,
+        deadline, category, eligibility, description, learning_outcomes, skills_required,
+        source_name, source_url, application_url, verification_status, verification_notes,
+        last_verification_date, is_approved, is_active, featured, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      slug,
+      data.title,
+      data.organization,
+      data.location || 'India',
+      data.workMode || 'On-site Lab',
+      data.stipend || 'Competitive Stipend',
+      data.duration || '3 Months',
+      data.deadline || '',
+      data.category || 'Industrial R&D',
+      data.eligibility || '',
+      data.description || '',
+      JSON.stringify(data.learningOutcomes || []),
+      JSON.stringify(data.skillsRequired || []),
+      data.sourceName || 'BIO-INEXA Admin Portal',
+      data.sourceUrl || data.applicationUrl,
+      data.applicationUrl,
+      verStatus,
+      data.verificationNotes || '',
+      lastVerDate,
+      data.isApproved ? 1 : 0,
+      data.isActive !== false ? 1 : 0,
+      data.featured ? 1 : 0,
+      now,
+      now
+    );
+
+    return this.getInternshipById(id)!;
+  }
+
+  public updateInternship(id: string, updates: Partial<DbInternship>): DbInternship | null {
+    const existing = this.getInternshipById(id);
+    if (!existing) return null;
+
+    const verStatus =
+      updates.verificationStatus !== undefined
+        ? normalizeVerificationStatus(updates.verificationStatus)
+        : normalizeVerificationStatus(existing.verificationStatus);
+
+    const merged: DbInternship = {
+      ...existing,
+      ...updates,
+      verificationStatus: verStatus,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.db.prepare(`
+      UPDATE internships SET
+        slug = ?, title = ?, organization = ?, location = ?, work_mode = ?, stipend = ?,
+        duration = ?, deadline = ?, category = ?, eligibility = ?, description = ?,
+        learning_outcomes = ?, skills_required = ?, source_name = ?, source_url = ?,
+        application_url = ?, verification_status = ?, verification_notes = ?,
+        last_verification_date = ?, is_approved = ?, is_active = ?, featured = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      merged.slug,
+      merged.title,
+      merged.organization,
+      merged.location,
+      merged.workMode,
+      merged.stipend,
+      merged.duration,
+      merged.deadline,
+      merged.category,
+      merged.eligibility,
+      merged.description,
+      JSON.stringify(merged.learningOutcomes || []),
+      JSON.stringify(merged.skillsRequired || []),
+      merged.sourceName,
+      merged.sourceUrl,
+      merged.applicationUrl,
+      merged.verificationStatus,
+      merged.verificationNotes || '',
+      merged.lastVerificationDate || '',
+      merged.isApproved ? 1 : 0,
+      merged.isActive ? 1 : 0,
+      merged.featured ? 1 : 0,
+      merged.updatedAt,
+      existing.id
+    );
+
+    return this.getInternshipById(existing.id);
+  }
+
+  public verifyInternship(
+    internshipId: string,
+    _verifiedBy: string,
+    status: string,
+    notes: string = '',
+    customDate?: string
+  ): DbInternship | null {
+    const existing = this.getInternshipById(internshipId);
+    if (!existing) return null;
+
+    const now = new Date().toISOString();
+    const verDate = customDate || now.split('T')[0];
+    const validStatus = normalizeVerificationStatus(status);
+    const isApproved = validStatus === 'Verified' || validStatus === 'Link Unavailable';
+    const isActive = validStatus !== 'Rejected' && validStatus !== 'Expired';
+
+    return this.updateInternship(existing.id, {
+      verificationStatus: validStatus,
+      verificationNotes: notes,
+      lastVerificationDate: verDate,
+      isApproved,
+      isActive,
+      updatedAt: now,
+    });
+  }
+
+  public deleteInternship(id: string): boolean {
+    const res = this.db.prepare('DELETE FROM internships WHERE id = ?').run(id) as any;
+    return (res.changes ?? 0) > 0;
+  }
+
+  private mapInternshipRow(r: any): DbInternship {
+    let learningOutcomes: string[] = [];
+    let skillsRequired: string[] = [];
+    try { learningOutcomes = JSON.parse(r.learning_outcomes || '[]'); } catch { learningOutcomes = []; }
+    try { skillsRequired = JSON.parse(r.skills_required || '[]'); } catch { skillsRequired = []; }
+    const verStatus = normalizeVerificationStatus(r.verification_status);
+
+    return {
+      id: r.id,
+      slug: r.slug || r.id,
+      title: r.title,
+      organization: r.organization,
+      location: r.location,
+      workMode: r.work_mode || 'On-site Lab',
+      stipend: r.stipend || 'Competitive Stipend',
+      duration: r.duration || '3 Months',
+      deadline: r.deadline || '',
+      category: r.category || 'Industrial R&D',
+      eligibility: r.eligibility || '',
+      description: r.description,
+      learningOutcomes,
+      skillsRequired,
+      sourceName: r.source_name || 'BIO-INEXA Verified',
+      sourceUrl: r.source_url || r.application_url,
+      applicationUrl: r.application_url,
+      verificationStatus: verStatus,
+      verificationNotes: r.verification_notes || '',
+      lastVerificationDate: r.last_verification_date || '',
+      isVerified: verStatus === 'Verified',
+      isApproved: r.is_approved === 1,
+      isActive: r.is_active === 1,
+      featured: r.featured === 1,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  // ==========================================
+  // SYNCHRONIZATION LOGS & DASHBOARD KPI STATS
+  // ==========================================
+
+  public recordSyncLog(input: {
+    sourceId: string;
+    sourceName: string;
+    status: 'Success' | 'Partial' | 'Error';
+    itemsFetched?: number;
+    itemsAdded?: number;
+    itemsUpdated?: number;
+    itemsExpired?: number;
+    details?: string;
+  }): DbSyncLog {
+    const id = `sync-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const createdAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO opportunity_sync_logs (
+        id, source_id, source_name, status, items_fetched, items_added,
+        items_updated, items_expired, details, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      input.sourceId,
+      input.sourceName,
+      input.status,
+      input.itemsFetched ?? 0,
+      input.itemsAdded ?? 0,
+      input.itemsUpdated ?? 0,
+      input.itemsExpired ?? 0,
+      input.details || '',
+      createdAt
+    );
+    return {
+      id,
+      sourceId: input.sourceId,
+      sourceName: input.sourceName,
+      status: input.status,
+      itemsFetched: input.itemsFetched ?? 0,
+      itemsAdded: input.itemsAdded ?? 0,
+      itemsUpdated: input.itemsUpdated ?? 0,
+      itemsExpired: input.itemsExpired ?? 0,
+      details: input.details || '',
+      createdAt,
+    };
+  }
+
+  public getSyncLogs(limit: number = 50): DbSyncLog[] {
+    const rows = this.db
+      .prepare('SELECT * FROM opportunity_sync_logs ORDER BY created_at DESC LIMIT ?')
+      .all(limit) as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      sourceId: r.source_id,
+      sourceName: r.source_name,
+      status: (r.status as DbSyncLog['status']) || 'Success',
+      itemsFetched: r.items_fetched ?? 0,
+      itemsAdded: r.items_added ?? 0,
+      itemsUpdated: r.items_updated ?? 0,
+      itemsExpired: r.items_expired ?? 0,
+      details: r.details || '',
+      createdAt: r.created_at,
+    }));
+  }
+
+  public getDashboardStats(): AdminDashboardStats {
+    const jobs = this.getAllJobsAdmin();
+    const internships = this.getAllInternshipsAdmin();
+    const workshops = this.getWorkshops();
+    const courses = this.getCourses();
+    const submissions = this.getSubmittedOpportunities({ onlyApproved: false });
+    const complianceRequests = this.getComplianceRequests();
+    const contactMessagesCount = (this.db.prepare('SELECT COUNT(*) as c FROM contact_messages').get() as any).c || 0;
+    const syncRunsCount = (this.db.prepare('SELECT COUNT(*) as c FROM opportunity_sync_logs').get() as any).c || 0;
+    const backupsCount = (this.db.prepare('SELECT COUNT(*) as c FROM database_backups').get() as any).c || 0;
+    const auditLogsCount = (this.db.prepare('SELECT COUNT(*) as c FROM admin_audit_logs').get() as any).c || 0;
+    const announcementsCount = (this.db.prepare('SELECT COUNT(*) as c FROM announcements').get() as any).c || 0;
+
+    return computeAdminDashboardStats({
+      jobs,
+      internships,
+      workshops,
+      courses,
+      submissions,
+      complianceRequests,
+      contactMessagesCount,
+      syncRunsCount,
+      backupsCount,
+      auditLogsCount,
+      announcementsCount,
+    });
   }
 
   // ==========================================
@@ -1205,6 +1896,519 @@ export class BionexaDatabase {
   }
 
   // ==========================================
+  // SUBMITTED OPPORTUNITIES (MODERATION QUEUE)
+  // ==========================================
+
+  public createSubmittedOpportunity(
+    data: Omit<DbSubmittedOpportunity, 'id' | 'createdAt' | 'updatedAt' | 'postedDate' | 'isApproved' | 'status'> & {
+      id?: string;
+      postedDate?: string;
+      isApproved?: boolean;
+      status?: string;
+    }
+  ): DbSubmittedOpportunity {
+    const id = data.id || `sub-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const now = new Date().toISOString();
+    const postedDate = data.postedDate || now.split('T')[0];
+
+    this.db.prepare(`
+      INSERT INTO submitted_opportunities (
+        id, title, organization, type, sub_category, description, location, work_mode,
+        experience, qualification, branches, skills, salary_or_stipend, salary_tier,
+        deadline, posted_date, source_name, source_url, application_url, contact_email,
+        status, is_approved, workshop_details, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.title,
+      data.organization,
+      data.type || 'job',
+      data.subCategory || '',
+      data.description || '',
+      data.location || 'All India',
+      data.workMode || 'On-site',
+      data.experience || 'Not Specified',
+      data.qualification || '',
+      JSON.stringify(data.branches || []),
+      JSON.stringify(data.skills || []),
+      data.salaryOrStipend || 'Not Disclosed',
+      data.salaryTier || 'not_disclosed',
+      data.deadline || '',
+      postedDate,
+      data.sourceName || 'Direct Employer / Organizer Submission',
+      data.sourceUrl || data.applicationUrl,
+      data.applicationUrl,
+      data.contactEmail || '',
+      data.status || 'Pending Verification',
+      data.isApproved ? 1 : 0,
+      data.workshopDetails ? JSON.stringify(data.workshopDetails) : null,
+      now,
+      now
+    );
+
+    return this.getSubmittedOpportunityById(id)!;
+  }
+
+  public getSubmittedOpportunities(filter?: {
+    onlyApproved?: boolean;
+    type?: string;
+    search?: string;
+  }): DbSubmittedOpportunity[] {
+    let sql = 'SELECT * FROM submitted_opportunities WHERE 1=1';
+    const params: any[] = [];
+
+    if (filter?.onlyApproved) {
+      sql += ' AND is_approved = 1';
+    }
+    if (filter?.type && filter.type !== 'all') {
+      sql += ' AND LOWER(type) = LOWER(?)';
+      params.push(filter.type);
+    }
+    if (filter?.search) {
+      sql += ' AND (title LIKE ? OR organization LIKE ? OR description LIKE ? OR location LIKE ?)';
+      const term = `%${filter.search}%`;
+      params.push(term, term, term, term);
+    }
+
+    sql += ' ORDER BY created_at DESC';
+    const rows = this.db.prepare(sql).all(...params) as any[];
+    return rows.map((r) => this.mapSubmittedOpportunityRow(r));
+  }
+
+  public getSubmittedOpportunityById(id: string): DbSubmittedOpportunity | null {
+    const row = this.db.prepare('SELECT * FROM submitted_opportunities WHERE id = ?').get(id) as any;
+    return row ? this.mapSubmittedOpportunityRow(row) : null;
+  }
+
+  public updateSubmittedOpportunity(
+    id: string,
+    updates: Partial<DbSubmittedOpportunity>
+  ): DbSubmittedOpportunity | null {
+    const existing = this.getSubmittedOpportunityById(id);
+    if (!existing) return null;
+
+    const merged: DbSubmittedOpportunity = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString()
+    };
+
+    this.db.prepare(`
+      UPDATE submitted_opportunities SET
+        title = ?, organization = ?, type = ?, sub_category = ?, description = ?,
+        location = ?, work_mode = ?, experience = ?, qualification = ?,
+        branches = ?, skills = ?, salary_or_stipend = ?, salary_tier = ?,
+        deadline = ?, source_name = ?, source_url = ?, application_url = ?,
+        contact_email = ?, status = ?, is_approved = ?, workshop_details = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      merged.title,
+      merged.organization,
+      merged.type,
+      merged.subCategory,
+      merged.description,
+      merged.location,
+      merged.workMode,
+      merged.experience,
+      merged.qualification,
+      JSON.stringify(merged.branches || []),
+      JSON.stringify(merged.skills || []),
+      merged.salaryOrStipend,
+      merged.salaryTier,
+      merged.deadline,
+      merged.sourceName,
+      merged.sourceUrl,
+      merged.applicationUrl,
+      merged.contactEmail,
+      merged.status,
+      merged.isApproved ? 1 : 0,
+      merged.workshopDetails ? JSON.stringify(merged.workshopDetails) : null,
+      merged.updatedAt,
+      id
+    );
+
+    return this.getSubmittedOpportunityById(id);
+  }
+
+  public deleteSubmittedOpportunity(id: string): boolean {
+    const res = this.db.prepare('DELETE FROM submitted_opportunities WHERE id = ?').run(id) as any;
+    return (res.changes ?? 0) > 0;
+  }
+
+  private mapSubmittedOpportunityRow(r: any): DbSubmittedOpportunity {
+    let branches: string[] = [];
+    let skills: string[] = [];
+    let workshopDetails: Record<string, any> | null = null;
+    try { branches = JSON.parse(r.branches || '[]'); } catch { branches = []; }
+    try { skills = JSON.parse(r.skills || '[]'); } catch { skills = []; }
+    try { workshopDetails = r.workshop_details ? JSON.parse(r.workshop_details) : null; } catch { workshopDetails = null; }
+
+    return {
+      id: r.id,
+      title: r.title,
+      organization: r.organization,
+      type: r.type,
+      subCategory: r.sub_category || '',
+      description: r.description,
+      location: r.location,
+      workMode: r.work_mode || 'On-site',
+      experience: r.experience || 'Not Specified',
+      qualification: r.qualification || '',
+      branches,
+      skills,
+      salaryOrStipend: r.salary_or_stipend || 'Not Disclosed',
+      salaryTier: r.salary_tier || 'not_disclosed',
+      deadline: r.deadline || '',
+      postedDate: r.posted_date,
+      sourceName: r.source_name || 'Direct Employer / Organizer Submission',
+      sourceUrl: r.source_url || r.application_url,
+      applicationUrl: r.application_url,
+      contactEmail: r.contact_email || '',
+      status: r.status || 'Pending Verification',
+      isApproved: r.is_approved === 1,
+      workshopDetails,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at
+    };
+  }
+
+  // ==========================================
+  // CONTACT MESSAGES & NEWSLETTER SUBSCRIBERS
+  // ==========================================
+
+  public createContactMessage(data: {
+    name: string;
+    email: string;
+    subject: string;
+    message: string;
+  }): DbContactMessage {
+    const now = new Date().toISOString();
+    const id = `msg-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const referenceId = `BN-MSG-${now.slice(0, 10).replace(/-/g, '')}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+
+    this.db.prepare(`
+      INSERT INTO contact_messages (id, reference_id, name, email, subject, message, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, referenceId, data.name, data.email, data.subject, data.message, 'New', now);
+
+    const row = this.db.prepare('SELECT * FROM contact_messages WHERE id = ?').get(id) as any;
+    return {
+      id: row.id,
+      referenceId: row.reference_id,
+      name: row.name,
+      email: row.email,
+      subject: row.subject,
+      message: row.message,
+      status: row.status,
+      createdAt: row.created_at
+    };
+  }
+
+  public getContactMessages(): DbContactMessage[] {
+    const rows = this.db.prepare('SELECT * FROM contact_messages ORDER BY created_at DESC').all() as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      referenceId: r.reference_id,
+      name: r.name,
+      email: r.email,
+      subject: r.subject,
+      message: r.message,
+      status: r.status,
+      createdAt: r.created_at
+    }));
+  }
+
+  public subscribeNewsletter(email: string): { subscriber: DbNewsletterSubscriber; alreadySubscribed: boolean } {
+    const normalized = email.trim().toLowerCase();
+    const existing = this.db.prepare('SELECT * FROM newsletter_subscribers WHERE LOWER(email) = LOWER(?)').get(normalized) as any;
+    if (existing) {
+      if (existing.is_active !== 1) {
+        this.db.prepare('UPDATE newsletter_subscribers SET is_active = 1 WHERE id = ?').run(existing.id);
+      }
+      return {
+        alreadySubscribed: existing.is_active === 1,
+        subscriber: {
+          id: existing.id,
+          email: existing.email,
+          subscribedAt: existing.subscribed_at,
+          isActive: true
+        }
+      };
+    }
+
+    const id = `sub-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO newsletter_subscribers (id, email, subscribed_at, is_active)
+      VALUES (?, ?, ?, 1)
+    `).run(id, normalized, now);
+
+    return {
+      alreadySubscribed: false,
+      subscriber: {
+        id,
+        email: normalized,
+        subscribedAt: now,
+        isActive: true
+      }
+    };
+  }
+
+  public getNewsletterSubscribers(): DbNewsletterSubscriber[] {
+    const rows = this.db.prepare('SELECT * FROM newsletter_subscribers ORDER BY subscribed_at DESC').all() as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      email: r.email,
+      subscribedAt: r.subscribed_at,
+      isActive: r.is_active === 1
+    }));
+  }
+
+  // ==========================================
+  // ACADEMY CERTIFICATES REGISTRY
+  // ==========================================
+
+  public verifyCertificate(certificateNumber: string): DbCertificate | null {
+    const clean = certificateNumber.trim().toUpperCase();
+    if (!clean) return null;
+    const row = this.db.prepare('SELECT * FROM certificates WHERE UPPER(certificate_number) = ?').get(clean) as any;
+    if (!row) return null;
+    return {
+      id: row.id,
+      certificateNumber: row.certificate_number,
+      recipientName: row.recipient_name,
+      courseTitle: row.course_title,
+      issueDate: row.issue_date,
+      score: row.score,
+      verificationCode: row.verification_code,
+      createdAt: row.created_at
+    };
+  }
+
+  public createCertificate(data: {
+    id?: string;
+    certificateNumber?: string;
+    recipientName: string;
+    courseTitle: string;
+    issueDate?: string;
+    score: number;
+    verificationCode?: string;
+  }): DbCertificate {
+    const now = new Date().toISOString();
+    const id = data.id || `cert-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const prefix = data.courseTitle.replace(/[^a-zA-Z0-9]/g, '').substring(0, 4).toUpperCase() || 'ACAD';
+    const certificateNumber =
+      (data.certificateNumber || `BN-${new Date().getFullYear()}-${prefix}-${Math.floor(1000 + Math.random() * 9000)}`).toUpperCase();
+    const verificationCode =
+      data.verificationCode || `VERIFIED-BIO-INEXA-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+    const issueDate = data.issueDate || now.split('T')[0];
+
+    this.db.prepare(`
+      INSERT INTO certificates (id, certificate_number, recipient_name, course_title, issue_date, score, verification_code, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(certificate_number) DO UPDATE SET
+        recipient_name = excluded.recipient_name,
+        course_title = excluded.course_title,
+        score = excluded.score
+    `).run(id, certificateNumber, data.recipientName, data.courseTitle, issueDate, Math.round(data.score), verificationCode, now);
+
+    return this.verifyCertificate(certificateNumber)!;
+  }
+
+  public getCertificates(): DbCertificate[] {
+    const rows = this.db.prepare('SELECT * FROM certificates ORDER BY created_at DESC').all() as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      certificateNumber: r.certificate_number,
+      recipientName: r.recipient_name,
+      courseTitle: r.course_title,
+      issueDate: r.issue_date,
+      score: r.score,
+      verificationCode: r.verification_code,
+      createdAt: r.created_at
+    }));
+  }
+
+  // ==========================================
+  // JOB APPLICATIONS
+  // ==========================================
+
+  public createJobApplication(
+    data: Omit<DbJobApplication, 'id' | 'appliedDate' | 'status' | 'createdAt'> & {
+      id?: string;
+      appliedDate?: string;
+      status?: DbJobApplication['status'];
+    }
+  ): DbJobApplication {
+    const now = new Date().toISOString();
+    const id = data.id || `app-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const appliedDate = data.appliedDate || now.split('T')[0];
+    const status = data.status || 'Under Review';
+
+    this.db.prepare(`
+      INSERT INTO job_applications (
+        id, job_id, job_title, company, applicant_name, applicant_email,
+        phone, qualification, experience_years, cover_note, applied_date, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.jobId,
+      data.jobTitle,
+      data.company,
+      data.applicantName,
+      data.applicantEmail,
+      data.phone || '',
+      data.qualification || '',
+      data.experienceYears || '',
+      data.coverNote || '',
+      appliedDate,
+      status,
+      now
+    );
+
+    const row = this.db.prepare('SELECT * FROM job_applications WHERE id = ?').get(id) as any;
+    return this.mapApplicationRow(row);
+  }
+
+  public getJobApplications(): DbJobApplication[] {
+    const rows = this.db.prepare('SELECT * FROM job_applications ORDER BY created_at DESC').all() as any[];
+    return rows.map((r) => this.mapApplicationRow(r));
+  }
+
+  public updateJobApplicationStatus(id: string, status: DbJobApplication['status']): DbJobApplication | null {
+    const res = this.db.prepare('UPDATE job_applications SET status = ? WHERE id = ?').run(status, id) as any;
+    if ((res.changes ?? 0) === 0) return null;
+    const row = this.db.prepare('SELECT * FROM job_applications WHERE id = ?').get(id) as any;
+    return row ? this.mapApplicationRow(row) : null;
+  }
+
+  private mapApplicationRow(r: any): DbJobApplication {
+    return {
+      id: r.id,
+      jobId: r.job_id,
+      jobTitle: r.job_title,
+      company: r.company,
+      applicantName: r.applicant_name,
+      applicantEmail: r.applicant_email,
+      phone: r.phone || '',
+      qualification: r.qualification || '',
+      experienceYears: r.experience_years || '',
+      coverNote: r.cover_note || '',
+      appliedDate: r.applied_date,
+      status: r.status,
+      createdAt: r.created_at
+    };
+  }
+
+  // ==========================================
+  // COMMUNITY DISCUSSIONS
+  // ==========================================
+
+  public getDiscussions(category?: string): DbDiscussionTopic[] {
+    let sql = 'SELECT * FROM discussions';
+    const params: any[] = [];
+    if (category && category !== 'all') {
+      sql += ' WHERE category = ?';
+      params.push(category);
+    }
+    sql += ' ORDER BY created_at DESC';
+    const topics = this.db.prepare(sql).all(...params) as any[];
+    const replyStmt = this.db.prepare('SELECT * FROM discussion_replies WHERE topic_id = ? ORDER BY created_at ASC');
+
+    return topics.map((t) => {
+      const replies = replyStmt.all(t.id) as any[];
+      return {
+        id: t.id,
+        title: t.title,
+        authorName: t.author_name,
+        authorRole: t.author_role || 'BIO-INEXA Member',
+        category: t.category,
+        content: t.content,
+        createdAt: t.created_at,
+        upvotes: t.upvotes,
+        replies: replies.map((r) => ({
+          id: r.id,
+          topicId: r.topic_id,
+          authorName: r.author_name,
+          authorRole: r.author_role || 'BIO-INEXA Member',
+          content: r.content,
+          createdAt: r.created_at,
+          upvotes: r.upvotes
+        }))
+      };
+    });
+  }
+
+  public createDiscussion(data: {
+    id?: string;
+    title: string;
+    authorName: string;
+    authorRole?: string;
+    category: string;
+    content: string;
+    createdAt?: string;
+    upvotes?: number;
+    replies?: Array<{ id?: string; authorName: string; authorRole?: string; content: string; createdAt?: string; upvotes?: number }>;
+  }): DbDiscussionTopic {
+    const id = data.id || `disc-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const createdAt = data.createdAt || new Date().toISOString().split('T')[0];
+
+    this.db.prepare(`
+      INSERT INTO discussions (id, title, author_name, author_role, category, content, created_at, upvotes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.title,
+      data.authorName,
+      data.authorRole || 'BIO-INEXA Member',
+      data.category,
+      data.content,
+      createdAt,
+      data.upvotes ?? 1
+    );
+
+    if (Array.isArray(data.replies)) {
+      for (const r of data.replies) {
+        this.addDiscussionReply(id, r);
+      }
+    }
+
+    return this.getDiscussions().find((t) => t.id === id)!;
+  }
+
+  public addDiscussionReply(
+    topicId: string,
+    data: { id?: string; authorName: string; authorRole?: string; content: string; createdAt?: string; upvotes?: number }
+  ): DbDiscussionReply | null {
+    const topic = this.db.prepare('SELECT id FROM discussions WHERE id = ?').get(topicId) as any;
+    if (!topic) return null;
+
+    const id = data.id || `rep-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const createdAt = data.createdAt || new Date().toISOString().split('T')[0];
+
+    this.db.prepare(`
+      INSERT INTO discussion_replies (id, topic_id, author_name, author_role, content, created_at, upvotes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, topicId, data.authorName, data.authorRole || 'BIO-INEXA Member', data.content, createdAt, data.upvotes ?? 0);
+
+    return {
+      id,
+      topicId,
+      authorName: data.authorName,
+      authorRole: data.authorRole || 'BIO-INEXA Member',
+      content: data.content,
+      createdAt,
+      upvotes: data.upvotes ?? 0
+    };
+  }
+
+  public upvoteDiscussion(topicId: string): DbDiscussionTopic | null {
+    const res = this.db.prepare('UPDATE discussions SET upvotes = upvotes + 1 WHERE id = ?').run(topicId) as any;
+    if ((res.changes ?? 0) === 0) return null;
+    return this.getDiscussions().find((t) => t.id === topicId) || null;
+  }
+
+  // ==========================================
   // HELPER MAPPERS
   // ==========================================
 
@@ -1330,7 +2534,437 @@ export class BionexaDatabase {
     };
   }
 
-  public seedInitialDataIfEmpty(seedJobs: any[], seedWorkshops: any[], seedCourses: any[]): void {
+  // ==========================================
+  // ADMIN USERS, SESSIONS, AUDIT LOGS & AUTH SECURITY (PHASE 05)
+  // ==========================================
+
+  private hashTokenSha256(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  public upsertAdminUser(input: {
+    id: string;
+    username: string;
+    email: string;
+    displayName: string;
+    role: string;
+    passwordHash?: string;
+    totpSecret?: string;
+    totpEnabled?: boolean;
+  }) {
+    const now = new Date().toISOString();
+    const existing = this.db
+      .prepare('SELECT * FROM admin_users WHERE lower(username) = lower(?) OR id = ?')
+      .get(input.username, input.id) as any;
+
+    if (existing) {
+      this.db
+        .prepare(
+          `UPDATE admin_users SET
+            email = ?,
+            display_name = ?,
+            role = ?,
+            password_hash = COALESCE(NULLIF(?, ''), password_hash),
+            totp_secret = COALESCE(NULLIF(?, ''), totp_secret),
+            totp_enabled = CASE WHEN ? THEN 1 ELSE totp_enabled END,
+            updated_at = ?
+          WHERE id = ?`
+        )
+        .run(
+          input.email,
+          input.displayName,
+          input.role,
+          input.passwordHash || '',
+          input.totpSecret || '',
+          input.totpEnabled ? 1 : 0,
+          now,
+          existing.id
+        );
+      return this.getAdminUserByUsername(existing.username)!;
+    }
+
+    this.db
+      .prepare(
+        `INSERT INTO admin_users (
+          id, username, email, display_name, role, password_hash, totp_secret, totp_enabled, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+      )
+      .run(
+        input.id,
+        input.username,
+        input.email,
+        input.displayName,
+        input.role,
+        input.passwordHash || '',
+        input.totpSecret || '',
+        input.totpEnabled ? 1 : 0,
+        now,
+        now
+      );
+    return this.getAdminUserByUsername(input.username)!;
+  }
+
+  public getAdminUserByUsername(usernameOrEmail: string): {
+    id: string;
+    username: string;
+    email: string;
+    displayName: string;
+    role: string;
+    passwordHash: string;
+    totpSecret: string;
+    totpEnabled: boolean;
+    isActive: boolean;
+    lastLoginAt: string;
+    passwordUpdatedAt: string;
+  } | null {
+    const row = this.db
+      .prepare('SELECT * FROM admin_users WHERE (lower(username) = lower(?) OR lower(email) = lower(?)) AND is_active = 1 LIMIT 1')
+      .get(usernameOrEmail, usernameOrEmail) as any;
+    if (!row) return null;
+    return {
+      id: row.id,
+      username: row.username,
+      email: row.email,
+      displayName: row.display_name,
+      role: row.role,
+      passwordHash: row.password_hash || '',
+      totpSecret: row.totp_secret || '',
+      totpEnabled: row.totp_enabled === 1,
+      isActive: row.is_active === 1,
+      lastLoginAt: row.last_login_at || '',
+      passwordUpdatedAt: row.password_updated_at || '',
+    };
+  }
+
+  public listAdminUsers(): Array<{
+    id: string;
+    username: string;
+    email: string;
+    displayName: string;
+    role: string;
+    totpEnabled: boolean;
+    isActive: boolean;
+    lastLoginAt: string;
+    passwordUpdatedAt: string;
+    createdAt: string;
+  }> {
+    const rows = this.db.prepare('SELECT * FROM admin_users ORDER BY created_at ASC').all() as any[];
+    return rows.map((row) => ({
+      id: row.id,
+      username: row.username,
+      email: row.email,
+      displayName: row.display_name,
+      role: row.role,
+      totpEnabled: row.totp_enabled === 1,
+      isActive: row.is_active === 1,
+      lastLoginAt: row.last_login_at || '',
+      passwordUpdatedAt: row.password_updated_at || '',
+      createdAt: row.created_at,
+    }));
+  }
+
+  public updateAdminPasswordHash(adminUserId: string, newPasswordHash: string): boolean {
+    const now = new Date().toISOString();
+    const res = this.db
+      .prepare('UPDATE admin_users SET password_hash = ?, password_updated_at = ?, updated_at = ? WHERE id = ?')
+      .run(newPasswordHash, now, now, adminUserId);
+    return Number(res.changes) > 0;
+  }
+
+  public updateAdminLastLogin(adminUserId: string): void {
+    const now = new Date().toISOString();
+    this.db.prepare('UPDATE admin_users SET last_login_at = ?, failed_login_count = 0, locked_until = \'\', updated_at = ? WHERE id = ?').run(now, now, adminUserId);
+  }
+
+  public createAdminSessionRecord(input: {
+    jti: string;
+    token: string;
+    adminUserId: string;
+    actorUsername: string;
+    role: string;
+    ipAddress?: string;
+    userAgent?: string;
+    expiresAt: number;
+    createdAt?: number;
+  }): void {
+    const now = input.createdAt || Date.now();
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO admin_sessions (
+          jti, token_hash, admin_user_id, actor_username, role, ip_address, user_agent, expires_at, revoked_at, last_active_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`
+      )
+      .run(
+        input.jti,
+        this.hashTokenSha256(input.token),
+        input.adminUserId,
+        input.actorUsername,
+        input.role,
+        input.ipAddress || '',
+        input.userAgent || '',
+        input.expiresAt,
+        now,
+        now
+      );
+  }
+
+  public validateAdminSessionRecord(
+    token: string,
+    now: number = Date.now()
+  ): {
+    jti: string;
+    adminUserId: string;
+    actorUsername: string;
+    role: string;
+    expiresAt: number;
+    createdAt: number;
+  } | null {
+    if (!token) return null;
+    const tokenHash = this.hashTokenSha256(token);
+    const row = this.db
+      .prepare('SELECT * FROM admin_sessions WHERE token_hash = ? LIMIT 1')
+      .get(tokenHash) as any;
+    if (!row) return null;
+    if (row.revoked_at !== null && row.revoked_at !== undefined) return null;
+    if (now > Number(row.expires_at)) {
+      this.db.prepare('DELETE FROM admin_sessions WHERE jti = ?').run(row.jti);
+      return null;
+    }
+    this.db.prepare('UPDATE admin_sessions SET last_active_at = ? WHERE jti = ?').run(now, row.jti);
+    return {
+      jti: row.jti,
+      adminUserId: row.admin_user_id,
+      actorUsername: row.actor_username,
+      role: row.role,
+      expiresAt: Number(row.expires_at),
+      createdAt: Number(row.created_at),
+    };
+  }
+
+  public revokeAdminSessionRecord(token: string, now: number = Date.now()): boolean {
+    if (!token) return false;
+    const tokenHash = this.hashTokenSha256(token);
+    const res = this.db
+      .prepare('UPDATE admin_sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL')
+      .run(now, tokenHash);
+    return Number(res.changes) > 0;
+  }
+
+  public revokeAllAdminSessions(adminUserId: string, exceptJti?: string, now: number = Date.now()): number {
+    const res = exceptJti
+      ? this.db
+          .prepare('UPDATE admin_sessions SET revoked_at = ? WHERE admin_user_id = ? AND jti != ? AND revoked_at IS NULL')
+          .run(now, adminUserId, exceptJti)
+      : this.db
+          .prepare('UPDATE admin_sessions SET revoked_at = ? WHERE admin_user_id = ? AND revoked_at IS NULL')
+          .run(now, adminUserId);
+    return Number(res.changes);
+  }
+
+  public listActiveAdminSessions(now: number = Date.now()): Array<{
+    jti: string;
+    adminUserId: string;
+    actorUsername: string;
+    role: string;
+    ipAddress: string;
+    userAgent: string;
+    expiresAt: string;
+    lastActiveAt: string;
+    createdAt: string;
+  }> {
+    this.db.prepare('DELETE FROM admin_sessions WHERE expires_at < ?').run(now);
+    const rows = this.db
+      .prepare('SELECT jti, admin_user_id, actor_username, role, ip_address, user_agent, expires_at, last_active_at, created_at FROM admin_sessions WHERE revoked_at IS NULL ORDER BY last_active_at DESC')
+      .all() as any[];
+    return rows.map((r) => ({
+      jti: r.jti,
+      adminUserId: r.admin_user_id,
+      actorUsername: r.actor_username,
+      role: r.role,
+      ipAddress: r.ip_address || '',
+      userAgent: r.user_agent || '',
+      expiresAt: new Date(Number(r.expires_at)).toISOString(),
+      lastActiveAt: new Date(Number(r.last_active_at)).toISOString(),
+      createdAt: new Date(Number(r.created_at)).toISOString(),
+    }));
+  }
+
+  public recordLoginAttempt(input: {
+    identifier: string;
+    ipAddress?: string;
+    attemptedUsername: string;
+    success: boolean;
+    failureReason?: string;
+    lockedUntil?: string;
+  }): void {
+    const id = `lgn-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO admin_login_attempts (
+          id, identifier, ip_address, attempted_username, success, failure_reason, locked_until, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        input.identifier,
+        input.ipAddress || '',
+        input.attemptedUsername,
+        input.success ? 1 : 0,
+        input.failureReason || '',
+        input.lockedUntil || '',
+        now
+      );
+  }
+
+  public getRecentLoginAttempts(limit: number = 50): Array<{
+    id: string;
+    identifier: string;
+    ipAddress: string;
+    attemptedUsername: string;
+    success: boolean;
+    failureReason: string;
+    lockedUntil: string;
+    createdAt: string;
+  }> {
+    const rows = this.db
+      .prepare('SELECT * FROM admin_login_attempts ORDER BY created_at DESC LIMIT ?')
+      .all(limit) as any[];
+    return rows.map((r) => ({
+      id: r.id,
+      identifier: r.identifier,
+      ipAddress: r.ip_address || '',
+      attemptedUsername: r.attempted_username || '',
+      success: r.success === 1,
+      failureReason: r.failure_reason || '',
+      lockedUntil: r.locked_until || '',
+      createdAt: r.created_at,
+    }));
+  }
+
+  public recordAdminAuditLog(input: {
+    adminUserId?: string;
+    actorUsername: string;
+    action: string;
+    entityType: string;
+    entityId?: string;
+    ipAddress?: string;
+    details?: Record<string, unknown>;
+  }): void {
+    const id = `audit-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO admin_audit_logs (
+          id, admin_user_id, actor_username, action, entity_type, entity_id, ip_address, details, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        input.adminUserId || '',
+        input.actorUsername,
+        input.action,
+        input.entityType,
+        input.entityId || '',
+        input.ipAddress || '',
+        JSON.stringify(input.details || {}),
+        now
+      );
+  }
+
+  public getAdminAuditLogs(limit: number = 100): Array<{
+    id: string;
+    adminUserId: string;
+    actorUsername: string;
+    action: string;
+    entityType: string;
+    entityId: string;
+    ipAddress: string;
+    details: Record<string, unknown>;
+    createdAt: string;
+  }> {
+    const rows = this.db
+      .prepare('SELECT * FROM admin_audit_logs ORDER BY created_at DESC LIMIT ?')
+      .all(limit) as any[];
+    return rows.map((r) => {
+      let details: Record<string, unknown> = {};
+      try {
+        details = JSON.parse(r.details || '{}');
+      } catch {
+        details = {};
+      }
+      return {
+        id: r.id,
+        adminUserId: r.admin_user_id || '',
+        actorUsername: r.actor_username,
+        action: r.action,
+        entityType: r.entity_type,
+        entityId: r.entity_id || '',
+        ipAddress: r.ip_address || '',
+        details,
+        createdAt: r.created_at,
+      };
+    });
+  }
+
+  public createPasswordResetRecord(input: {
+    adminUserId: string;
+    actorUsername: string;
+    tokenHash: string;
+    expiresAtIso: string;
+  }): { id: string; expiresAt: string } {
+    const id = `rst-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO admin_password_resets (
+          id, admin_user_id, actor_username, token_hash, expires_at, used_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, NULL, ?)`
+      )
+      .run(id, input.adminUserId, input.actorUsername, input.tokenHash, input.expiresAtIso, now);
+    return { id, expiresAt: input.expiresAtIso };
+  }
+
+  public consumePasswordResetToken(
+    rawToken: string,
+    newPasswordHash: string,
+    nowMs: number = Date.now()
+  ): { ok: boolean; adminUserId?: string; actorUsername?: string; error?: string } {
+    const tokenHash = this.hashTokenSha256(rawToken);
+    const row = this.db
+      .prepare('SELECT * FROM admin_password_resets WHERE token_hash = ? LIMIT 1')
+      .get(tokenHash) as any;
+
+    if (!row) {
+      return { ok: false, error: 'Invalid password reset token.' };
+    }
+    if (row.used_at) {
+      return { ok: false, error: 'Password reset token has already been used.' };
+    }
+    if (nowMs > Date.parse(row.expires_at)) {
+      return { ok: false, error: 'Password reset token has expired.' };
+    }
+
+    const nowIso = new Date(nowMs).toISOString();
+    this.db.prepare('UPDATE admin_password_resets SET used_at = ? WHERE id = ?').run(nowIso, row.id);
+    this.updateAdminPasswordHash(row.admin_user_id, newPasswordHash);
+    this.revokeAllAdminSessions(row.admin_user_id, undefined, nowMs);
+
+    return {
+      ok: true,
+      adminUserId: row.admin_user_id,
+      actorUsername: row.actor_username,
+    };
+  }
+
+  public seedInitialDataIfEmpty(
+    seedJobs: any[],
+    seedWorkshops: any[],
+    seedCourses: any[],
+    seedDiscussions: any[] = [],
+    seedCertificate?: any,
+    seedInternships: any[] = []
+  ): void {
     const jobCount = (this.db.prepare('SELECT COUNT(*) as count FROM jobs').get() as any).count;
     if (jobCount === 0 && seedJobs.length > 0) {
       for (const j of seedJobs) {
@@ -1349,15 +2983,46 @@ export class BionexaDatabase {
           originalJobUrl: j.originalJobUrl || j.source?.url || j.applicationUrl || '',
           publicationDate: j.postedDate || j.publicationDate || '2026-11-01',
           expiryDate: j.deadline || '',
-          lastVerificationDate: j.lastVerificationDate || (j.verificationStatus === 'Verified' ? '2026-11-07' : ''),
-          verificationStatus: j.verificationStatus || 'Verified',
-          verificationNotes: j.verificationNotes || 'Verified against official institutional portal.',
+          lastVerificationDate: j.lastVerificationDate || '',
+          verificationStatus: j.verificationStatus || 'Pending Verification',
+          verificationNotes: j.verificationNotes || '',
           isActive: j.isActive !== undefined ? j.isActive : true,
-          isApproved: j.isApproved !== undefined ? j.isApproved : (j.verificationStatus === 'Verified' || !j.verificationStatus),
+          isApproved: j.isApproved !== undefined ? j.isApproved : (j.verificationStatus === 'Verified' || j.verificationStatus === 'Link Unavailable'),
           featured: !!j.featured,
           responsibilities: j.responsibilities || [],
           requirements: j.requirements || [],
           sector: j.sector || 'Private Biopharma'
+        });
+      }
+    }
+
+    const internshipCount = (this.db.prepare('SELECT COUNT(*) as count FROM internships').get() as any).count;
+    if (internshipCount === 0 && seedInternships.length > 0) {
+      for (const intern of seedInternships) {
+        this.createInternship({
+          id: intern.id,
+          slug: intern.slug,
+          title: intern.title,
+          organization: intern.organization,
+          location: intern.location,
+          workMode: intern.mode || intern.workMode || 'On-site Lab',
+          stipend: intern.stipend || 'Competitive Stipend',
+          duration: intern.duration || '3 Months',
+          deadline: intern.deadline || '',
+          category: intern.category || 'Industrial R&D',
+          eligibility: intern.eligibility || '',
+          description: intern.description || '',
+          learningOutcomes: intern.learningOutcomes || [],
+          skillsRequired: intern.skillsRequired || [],
+          sourceName: intern.source?.name || intern.sourceName || 'Verified Partner Program',
+          sourceUrl: intern.source?.url || intern.sourceUrl || intern.applicationUrl,
+          applicationUrl: intern.applicationUrl,
+          verificationStatus: intern.verificationStatus || 'Verified',
+          verificationNotes: intern.verificationNotes || 'Verified against official host institute portal.',
+          lastVerificationDate: intern.lastVerificationDate || '2026-11-07',
+          isApproved: intern.isApproved !== undefined ? intern.isApproved : true,
+          isActive: intern.isActive !== undefined ? intern.isActive : true,
+          featured: !!intern.featured,
         });
       }
     }
@@ -1874,9 +3539,52 @@ export class BionexaDatabase {
     // Default homepage highlights
     if (!this.getContent('homepage_highlights')) {
       this.setContent('homepage_highlights', {
-        announcementBadge: 'National Life Sciences Career & Research Gateway',
+        heroBadge: 'National Life Sciences Career & Research Gateway',
         bannerNotice: 'Connecting students, scholars, and biotech enterprises across India.',
-        activeVacanciesText: '23+ Active Biotech Openings'
+        activeVacanciesCount: '23+ Active Biotech Openings',
+        participatingInstitutesCount: '45+ CSIR, DBT & Biopharma Centers'
+      });
+    }
+
+    // Seed official verification registry sample certificate if empty
+    const certCount = (this.db.prepare('SELECT COUNT(*) as count FROM certificates').get() as any).count;
+    if (certCount === 0) {
+      const sampleCert = seedCertificate || {
+        id: 'cert-demo-1',
+        certificateNumber: 'BN-2026-CRISPR-9842',
+        recipientName: 'Aarav Gautam',
+        courseTitle: 'CRISPR-Cas9 Gene Editing & Computational Design',
+        issueDate: '2026-10-15',
+        score: 92,
+        verificationCode: 'VERIFIED-BIO-INEXA-2026-9842'
+      };
+      this.createCertificate(sampleCert);
+    }
+
+    // Seed initial community discussions if empty
+    const discCount = (this.db.prepare('SELECT COUNT(*) as count FROM discussions').get() as any).count;
+    if (discCount === 0 && seedDiscussions.length > 0) {
+      for (const topic of seedDiscussions) {
+        this.createDiscussion(topic);
+      }
+    }
+
+    // Seed initial newsletter & sample application if empty
+    const appCount = (this.db.prepare('SELECT COUNT(*) as count FROM job_applications').get() as any).count;
+    if (appCount === 0) {
+      this.createJobApplication({
+        id: 'app-initial-1',
+        jobId: 'job-1',
+        jobTitle: 'Senior Bioprocess Scientist - Upstream Fermentation',
+        company: 'Biocon Biologics',
+        applicantName: 'Aarav Gautam',
+        applicantEmail: 'aarav.biotech@university.edu',
+        phone: '+91 98765 43210',
+        qualification: 'M.Sc / M.Tech',
+        experienceYears: '1 Year Research Project',
+        coverNote: 'Extensive hands-on training with 10L fermenters and DO cascade control.',
+        appliedDate: '2026-11-02',
+        status: 'Under Review'
       });
     }
   }

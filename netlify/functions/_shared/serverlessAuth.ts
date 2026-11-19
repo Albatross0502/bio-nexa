@@ -1,14 +1,23 @@
 /**
- * Stateless HMAC-SHA256 Signed Admin Authentication Helpers
- * for Netlify Serverless Functions (no in-memory session loss across cold starts).
+ * Cryptographically Signed Admin Authentication Helpers
+ * for Netlify Serverless Functions with jti tracking, session revocation,
+ * RBAC permission checks, and Origin-based CSRF protection.
  */
 
 import crypto from 'node:crypto';
 import {
   getRuntimeEnvironmentConfig,
   getServerlessAdminCredentials,
+  resolveCorsOrigin,
 } from '../../../src/config/environment';
-import { AdminUser, SESSION_DURATION_MS } from '../../../src/services/admin/adminAuthService';
+import {
+  AdminPermission,
+  AdminUser,
+  getPermissionsForRole,
+  hasAdminPermission,
+  normalizeAdminRole,
+  SESSION_DURATION_MS,
+} from '../../../src/services/admin/adminAuthService';
 import {
   errorResponse,
   getHeader,
@@ -16,13 +25,32 @@ import {
   NetlifyResponse,
   serviceUnavailableResponse,
 } from './http';
+import { getSupabaseRepository } from './supabaseDb';
 
 export const ADMIN_SESSION_COOKIE = 'bionexa_admin_session';
 
 interface SignedTokenPayload {
+  jti: string;
   user: AdminUser;
   iat: number;
   exp: number;
+}
+
+const revokedSessionJtis = new Set<string>();
+
+export function revokeServerlessSessionJti(jti?: string): void {
+  if (jti) {
+    revokedSessionJtis.add(jti);
+  }
+}
+
+export function isServerlessSessionJtiRevoked(jti?: string): boolean {
+  if (!jti) return false;
+  return revokedSessionJtis.has(jti);
+}
+
+export function clearRevokedServerlessJtisForTest(): void {
+  revokedSessionJtis.clear();
 }
 
 function toBase64Url(input: Buffer | string): string {
@@ -47,10 +75,22 @@ export function createSignedAdminToken(
   secret: string,
   now: number = Date.now(),
   ttlMs: number = SESSION_DURATION_MS
-): { token: string; expiresAt: number } {
+): { token: string; jti: string; expiresAt: number } {
   const expiresAt = now + ttlMs;
+  const jti = crypto.randomBytes(16).toString('hex');
+  const normalizedRole = normalizeAdminRole(user.role);
+  const normalizedUser: AdminUser = {
+    ...user,
+    role: normalizedRole,
+    permissions:
+      Array.isArray(user.permissions) && user.permissions.length > 0
+        ? user.permissions
+        : getPermissionsForRole(normalizedRole),
+  };
+
   const payload: SignedTokenPayload = {
-    user,
+    jti,
+    user: normalizedUser,
     iat: now,
     exp: expiresAt,
   };
@@ -58,6 +98,7 @@ export function createSignedAdminToken(
   const signature = signSegment(encodedPayload, secret);
   return {
     token: `${encodedPayload}.${signature}`,
+    jti,
     expiresAt,
   };
 }
@@ -66,7 +107,7 @@ export function verifySignedAdminToken(
   token: string,
   secret: string,
   now: number = Date.now()
-): { user: AdminUser; expiresAt: number } | null {
+): { user: AdminUser; jti: string; expiresAt: number } | null {
   if (!token || !secret || !token.includes('.')) {
     return null;
   }
@@ -96,8 +137,23 @@ export function verifySignedAdminToken(
     if (now > payload.exp) {
       return null;
     }
+    if (payload.jti && isServerlessSessionJtiRevoked(payload.jti)) {
+      return null;
+    }
+
+    const normalizedRole = normalizeAdminRole(payload.user.role);
+    const normalizedUser: AdminUser = {
+      ...payload.user,
+      role: normalizedRole,
+      permissions:
+        Array.isArray(payload.user.permissions) && payload.user.permissions.length > 0
+          ? payload.user.permissions
+          : getPermissionsForRole(normalizedRole),
+    };
+
     return {
-      user: payload.user,
+      user: normalizedUser,
+      jti: payload.jti || '',
       expiresAt: payload.exp,
     };
   } catch {
@@ -146,6 +202,43 @@ export function extractAdminToken(event: NetlifyEvent): string | null {
   return null;
 }
 
+export function isRequestOriginAllowed(
+  event: NetlifyEvent,
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  const method = (event.httpMethod || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    return true;
+  }
+
+  const cookieHeader = getHeader(event.headers, 'cookie');
+  const cookies = parseCookies(cookieHeader);
+  // Only enforce strict browser Origin check when cookie auth is present
+  if (!cookies[ADMIN_SESSION_COOKIE]) {
+    return true;
+  }
+
+  const originHeader = getHeader(event.headers, 'origin');
+  const refererHeader = getHeader(event.headers, 'referer');
+  const rawOrigin = originHeader || refererHeader;
+  if (!rawOrigin) {
+    return true;
+  }
+
+  try {
+    const parsedOrigin = new URL(rawOrigin).origin;
+    const config = getRuntimeEnvironmentConfig(env);
+    const hostHeader = getHeader(event.headers, 'host');
+    if (hostHeader && (parsedOrigin.endsWith(`://${hostHeader}`))) {
+      return true;
+    }
+    const resolved = resolveCorsOrigin(parsedOrigin, config);
+    return resolved === parsedOrigin;
+  } catch {
+    return false;
+  }
+}
+
 export function buildAdminSessionCookieHeader(
   token: string,
   env: Record<string, string | undefined> = process.env
@@ -183,14 +276,33 @@ export function buildClearAdminSessionCookieHeader(
 }
 
 export type ServerlessAuthResult =
-  | { authorized: true; user: AdminUser; expiresAt: number }
+  | { authorized: true; user: AdminUser; jti: string; expiresAt: number }
   | { authorized: false; response: NetlifyResponse };
+
+export interface RequireAdminAuthOptions {
+  requiredPermission?: AdminPermission;
+}
 
 export function requireServerlessAdminAuth(
   event: NetlifyEvent,
   allowedMethods: string[],
-  env: Record<string, string | undefined> = process.env
+  env: Record<string, string | undefined> = process.env,
+  options?: RequireAdminAuthOptions
 ): ServerlessAuthResult {
+  if (!isRequestOriginAllowed(event, env)) {
+    return {
+      authorized: false,
+      response: errorResponse(
+        event,
+        403,
+        'Forbidden',
+        'Cross-origin state-changing request rejected by CSRF protection.',
+        { code: 'CSRF_ORIGIN_DENIED', allowedMethods },
+        env
+      ),
+    };
+  }
+
   const token = extractAdminToken(event);
   if (!token) {
     return {
@@ -207,12 +319,13 @@ export function requireServerlessAdminAuth(
   }
 
   const creds = getServerlessAdminCredentials(env);
-  if (!creds) {
+  const sessionSecret = creds?.sessionSecret || (env.ADMIN_SESSION_SECRET || '').trim();
+  if (!sessionSecret || sessionSecret.length < 16) {
     return {
       authorized: false,
       response: serviceUnavailableResponse(
         event,
-        'Administrator authentication environment variables (ADMIN_PASSWORD, ADMIN_USERNAME) are not configured on Netlify.',
+        'Administrator authentication environment variables (ADMIN_USERNAME, ADMIN_PASSWORD or ADMIN_PASSWORD_HASH, and ADMIN_SESSION_SECRET) are not configured on Netlify.',
         'ADMIN_AUTH_NOT_CONFIGURED',
         allowedMethods,
         env
@@ -220,7 +333,7 @@ export function requireServerlessAdminAuth(
     };
   }
 
-  const verified = verifySignedAdminToken(token, creds.sessionSecret);
+  const verified = verifySignedAdminToken(token, sessionSecret);
   if (!verified) {
     return {
       authorized: false,
@@ -228,8 +341,22 @@ export function requireServerlessAdminAuth(
         event,
         403,
         'Forbidden',
-        'Invalid or expired administrative session.',
+        'Invalid, revoked, or expired administrative session.',
         { code: 'INVALID_SESSION', allowedMethods },
+        env
+      ),
+    };
+  }
+
+  if (options?.requiredPermission && !hasAdminPermission(verified.user, options.requiredPermission)) {
+    return {
+      authorized: false,
+      response: errorResponse(
+        event,
+        403,
+        'Forbidden',
+        `Insufficient permissions: '${options.requiredPermission}' is required for this action.`,
+        { code: 'INSUFFICIENT_PERMISSIONS', allowedMethods },
         env
       ),
     };
@@ -238,6 +365,44 @@ export function requireServerlessAdminAuth(
   return {
     authorized: true,
     user: verified.user,
+    jti: verified.jti,
     expiresAt: verified.expiresAt,
   };
+}
+
+export async function requireServerlessAdminAuthAsync(
+  event: NetlifyEvent,
+  allowedMethods: string[],
+  options?: RequireAdminAuthOptions,
+  env: Record<string, string | undefined> = process.env
+): Promise<ServerlessAuthResult> {
+  const baseResult = requireServerlessAdminAuth(event, allowedMethods, env, options);
+  if (baseResult.authorized === false) {
+    return baseResult;
+  }
+
+  const repo = getSupabaseRepository(env);
+  if (repo && baseResult.jti) {
+    try {
+      const revoked = await repo.isAdminSessionRevoked(baseResult.jti);
+      if (revoked) {
+        revokeServerlessSessionJti(baseResult.jti);
+        return {
+          authorized: false,
+          response: errorResponse(
+            event,
+            403,
+            'Forbidden',
+            'Administrative session has been revoked or expired.',
+            { code: 'SESSION_REVOKED', allowedMethods },
+            env
+          ),
+        };
+      }
+    } catch {
+      // Fail open on transient lookup only if local JTI revocation didn't flag it
+    }
+  }
+
+  return baseResult;
 }

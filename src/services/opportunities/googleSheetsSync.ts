@@ -1,33 +1,45 @@
 /**
- * BIO-NEXA Google Sheets & Google Apps Script Opportunities Synchronization Service
- * 
- * Provides automated data retrieval from Google Sheets / Google Apps Script Web App,
- * parsing all 19 standardized fields, categorizing them into:
- * 1. All Opportunities
- * 2. Biotech Jobs
- * 3. Internships
- * 4. Workshops
- * 5. Courses
- * 
- * Automatically calculates status (Open, Closing Soon, Expired, Closed),
- * strips duplicates, and falls back gracefully to verified cached data.
+ * BIO-INEXA Google Sheets Standardized Schema, Column Mapping Validator & Safe Client Adapter
+ *
+ * Security & Resilience Architecture (Phase 09):
+ * - Zero Google API keys, spreadsheet IDs, or service-account credentials live in frontend code.
+ * - Direct spreadsheet synchronization executes strictly on the server (Express or Netlify Functions)
+ *   and saves newly imported opportunities into PostgreSQL / SQLite with 'Pending Verification'.
+ * - On the client, `fetchOpportunities()` retrieves approved, eligible database records from
+ *   the BIO-INEXA backend API so website availability never depends on Google Sheets uptime.
  */
 
 import { Opportunity, OpportunityType, OpportunityStatus, WorkMode } from '../../types/opportunity';
 import { matchBranchesForOpportunity } from '../../config/branches';
 import { getDaysUntilDeadline } from './expiryManager';
-import { findDuplicateOpportunity } from './duplicateDetector';
-
-export const DEFAULT_APPS_SCRIPT_URL =
-  "https://script.google.com/macros/s/AKfycbwCSGpoOJHEtqnVEKqf07kORQ3jfb0EqfMQn8NOo5QiAqYLGg4C33Oy2G7JXQ7iPwi8/exec";
 
 export const SHEETS_CONFIG_STORAGE_KEY = 'bionexa_sheets_config_v2';
 export const SHEETS_CACHED_OPPS_KEY = 'bionexa_sheets_cached_opps_v2';
 
+export const STANDARD_SHEET_COLUMNS = [
+  'ID',
+  'Title',
+  'Category',
+  'Organization',
+  'Description',
+  'Eligibility',
+  'Qualification',
+  'Location',
+  'Mode',
+  'Salary/Stipend',
+  'Fees',
+  'Duration',
+  'Published Date',
+  'Application Deadline',
+  'Application URL',
+  'Registration URL',
+  'Status',
+  'Featured',
+  'Last Updated',
+] as const;
+
 export interface GoogleSheetsConfig {
   scriptUrl: string;
-  sheetId?: string;
-  publishedCsvUrl?: string;
   autoSyncIntervalMinutes: number;
   lastSyncTime: string | null;
   lastSyncStatus: 'idle' | 'syncing' | 'success' | 'fallback' | 'error';
@@ -36,39 +48,181 @@ export interface GoogleSheetsConfig {
 }
 
 export const DEFAULT_SHEETS_CONFIG: GoogleSheetsConfig = {
-  scriptUrl: DEFAULT_APPS_SCRIPT_URL,
-  sheetId: '',
-  publishedCsvUrl: '',
-  autoSyncIntervalMinutes: 15,
+  scriptUrl: '',
+  autoSyncIntervalMinutes: 360,
   lastSyncTime: null,
   lastSyncStatus: 'idle',
-  totalSyncedCount: 0
+  totalSyncedCount: 0,
+};
+
+export interface RawSheetRow {
+  [key: string]: any;
+}
+
+export interface SheetColumnValidationResult {
+  valid: boolean;
+  detectedHeaders: string[];
+  matchedColumns: Record<string, string>;
+  missingRequired: string[];
+  warnings: string[];
+}
+
+function normalizeHeaderKey(header: string): string {
+  return String(header || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+const COLUMN_ALIAS_MAP: Record<string, string[]> = {
+  id: ['id', 'opportunityid'],
+  title: ['title', 'jobtitle', 'opportunitytitle', 'workshoptitle', 'coursetitle', 'position'],
+  category: ['category', 'type', 'sector'],
+  organization: ['organization', 'company', 'employer', 'institution', 'provider'],
+  description: ['description', 'details', 'overview', 'summary'],
+  eligibility: ['eligibility', 'eligiblecandidates', 'targetaudience'],
+  qualification: ['qualification', 'degrees', 'education'],
+  location: ['location', 'city', 'venue'],
+  mode: ['mode', 'workmode', 'deliverymode', 'employmenttype'],
+  salaryOrStipend: ['salarystipend', 'salary', 'stipend', 'compensation'],
+  fees: ['fees', 'registrationfee', 'coursefee'],
+  duration: ['duration', 'timeline', 'period'],
+  publishedDate: ['publisheddate', 'posteddate', 'publicationdate', 'date'],
+  deadline: ['applicationdeadline', 'deadline', 'expirydate', 'lastdate', 'registrationdeadline'],
+  applicationUrl: ['applicationurl', 'applylink', 'applyurl', 'url', 'link'],
+  registrationUrl: ['registrationurl', 'registerlink', 'registerurl', 'enrollmenturl', 'enrollurl'],
+  status: ['status'],
+  featured: ['featured', 'isfeatured'],
+  lastUpdated: ['lastupdated', 'updated'],
 };
 
 /**
- * Standard 19 Google Sheets Columns:
- * 1. ID
- * 2. Title
- * 3. Category
- * 4. Organization
- * 5. Description
- * 6. Eligibility
- * 7. Qualification
- * 8. Location
- * 9. Mode
- * 10. Salary/Stipend
- * 11. Fees
- * 12. Duration
- * 13. Published Date
- * 14. Application Deadline
- * 15. Application URL
- * 16. Registration URL
- * 17. Status
- * 18. Featured
- * 19. Last Updated
+ * Validates spreadsheet header names against the expected 19-column BIO-INEXA schema.
+ * Accepts canonical column names as well as documented institutional aliases.
  */
-export interface RawSheetRow {
-  [key: string]: any;
+export function validateSpreadsheetHeaders(headers: string[]): SheetColumnValidationResult {
+  const cleanHeaders = (headers || []).map((h) => String(h || '').trim()).filter(Boolean);
+  const normalizedToOriginal = new Map<string, string>();
+  for (const h of cleanHeaders) {
+    normalizedToOriginal.set(normalizeHeaderKey(h), h);
+  }
+
+  const matchedColumns: Record<string, string> = {};
+  for (const [canonicalField, aliases] of Object.entries(COLUMN_ALIAS_MAP)) {
+    for (const alias of aliases) {
+      const original = normalizedToOriginal.get(alias);
+      if (original) {
+        matchedColumns[canonicalField] = original;
+        break;
+      }
+    }
+  }
+
+  const missingRequired: string[] = [];
+  if (!matchedColumns.title) {
+    missingRequired.push('Title');
+  }
+  if (!matchedColumns.organization) {
+    missingRequired.push('Organization (or Company/Employer)');
+  }
+  if (!matchedColumns.applicationUrl && !matchedColumns.registrationUrl) {
+    missingRequired.push('Application URL (or Registration URL)');
+  }
+
+  const warnings: string[] = [];
+  if (!matchedColumns.category) warnings.push('Category column absent; will infer from title and description.');
+  if (!matchedColumns.deadline) warnings.push('Application Deadline column absent; listings will default to open.');
+  if (!matchedColumns.location) warnings.push('Location column absent; will default to All India.');
+
+  return {
+    valid: missingRequired.length === 0,
+    detectedHeaders: cleanHeaders,
+    matchedColumns,
+    missingRequired,
+    warnings,
+  };
+}
+
+/**
+ * Converts a 2D Google Sheets API v4 `values` matrix (header row + data rows)
+ * into keyed row objects while skipping completely blank rows.
+ */
+export function parseSheetValuesToRows(values: unknown[][]): {
+  headers: string[];
+  rows: RawSheetRow[];
+} {
+  if (!Array.isArray(values) || values.length === 0) {
+    return { headers: [], rows: [] };
+  }
+
+  const rawHeaderRow = Array.isArray(values[0]) ? values[0] : [];
+  const headers = rawHeaderRow.map((cell) => String(cell ?? '').trim());
+  const rows: RawSheetRow[] = [];
+
+  for (let i = 1; i < values.length; i++) {
+    const rowCells = Array.isArray(values[i]) ? values[i] : [];
+    const rowObj: RawSheetRow = {};
+    let hasAnyValue = false;
+
+    for (let c = 0; c < headers.length; c++) {
+      const key = headers[c];
+      if (!key) continue;
+      const cellVal = rowCells[c] !== undefined && rowCells[c] !== null ? String(rowCells[c]).trim() : '';
+      if (cellVal) hasAnyValue = true;
+      rowObj[key] = cellVal;
+    }
+
+    if (hasAnyValue) {
+      rows.push(rowObj);
+    }
+  }
+
+  return { headers, rows };
+}
+
+/**
+ * Parses a standard RFC-4180 CSV payload into headers + keyed row objects.
+ */
+export function parseCsvToSheetMatrix(csvText: string): unknown[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = '';
+  let inQuotes = false;
+
+  const text = (csvText || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') {
+        currentField += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        currentField += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      currentRow.push(currentField);
+      currentField = '';
+    } else if (ch === '\n') {
+      currentRow.push(currentField);
+      if (currentRow.some((cell) => cell.trim() !== '')) {
+        rows.push(currentRow);
+      }
+      currentRow = [];
+      currentField = '';
+    } else {
+      currentField += ch;
+    }
+  }
+
+  currentRow.push(currentField);
+  if (currentRow.some((cell) => cell.trim() !== '')) {
+    rows.push(currentRow);
+  }
+
+  return rows;
 }
 
 export class GoogleSheetsSyncService {
@@ -84,7 +238,13 @@ export class GoogleSheetsSyncService {
     try {
       const saved = localStorage.getItem(SHEETS_CONFIG_STORAGE_KEY);
       if (saved) {
-        this.config = { ...DEFAULT_SHEETS_CONFIG, ...JSON.parse(saved) };
+        const parsed = JSON.parse(saved);
+        this.config = {
+          ...DEFAULT_SHEETS_CONFIG,
+          ...parsed,
+          // Never retain legacy external script URLs or secrets from older storage keys
+          scriptUrl: '',
+        };
       }
     } catch {
       this.config = { ...DEFAULT_SHEETS_CONFIG };
@@ -97,7 +257,7 @@ export class GoogleSheetsSyncService {
       try {
         localStorage.setItem(SHEETS_CONFIG_STORAGE_KEY, JSON.stringify(this.config));
       } catch (err) {
-        console.error('Failed to save Google Sheets config:', err);
+        console.error('Failed to save Google Sheets status:', err);
       }
     }
     this.notify();
@@ -116,7 +276,7 @@ export class GoogleSheetsSyncService {
     this.listeners.push(listener);
     listener(this.getConfig());
     return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
+      this.listeners = this.listeners.filter((l) => l !== listener);
     };
   }
 
@@ -134,10 +294,13 @@ export class GoogleSheetsSyncService {
   /**
    * Automatically categorize opportunity from Category, Title & Description
    */
-  public determineOpportunityType(categoryRaw: string = '', title: string = '', desc: string = ''): OpportunityType {
+  public determineOpportunityType(
+    categoryRaw: string = '',
+    title: string = '',
+    desc: string = ''
+  ): OpportunityType {
     const text = `${categoryRaw} ${title} ${desc}`.toLowerCase();
 
-    // 1. Courses
     if (
       text.includes('course') ||
       text.includes('masterclass') ||
@@ -150,7 +313,6 @@ export class GoogleSheetsSyncService {
       return 'course';
     }
 
-    // 2. Workshops
     if (
       text.includes('workshop') ||
       text.includes('webinar') ||
@@ -163,7 +325,6 @@ export class GoogleSheetsSyncService {
       return 'workshop';
     }
 
-    // 3. Internships
     if (
       text.includes('intern') ||
       text.includes('trainee') ||
@@ -175,7 +336,6 @@ export class GoogleSheetsSyncService {
       return 'internship';
     }
 
-    // 4. Biotech Jobs
     if (
       text.includes('biotech') ||
       text.includes('fermentation') ||
@@ -193,7 +353,6 @@ export class GoogleSheetsSyncService {
       return 'biotech_job';
     }
 
-    // 5. Default: Job
     return 'job';
   }
 
@@ -207,7 +366,6 @@ export class GoogleSheetsSyncService {
 
     const daysLeft = getDaysUntilDeadline(deadlineRaw);
     if (daysLeft === null) {
-      // No deadline specified -> keep Open / Active
       return 'Open';
     }
 
@@ -223,20 +381,18 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * Parse Raw Row from Google Sheet into a full Opportunity
+   * Parse Raw Row from Google Sheet into a full Opportunity (always unapproved / Pending Verification)
    */
   public parseRowToOpportunity(row: RawSheetRow, index: number): Opportunity | null {
-    // Column header normalization: handle case-insensitivity, spaces, and aliases
     const getVal = (...keys: string[]): string => {
       for (const k of keys) {
         if (row[k] !== undefined && row[k] !== null) {
           const val = String(row[k]).trim();
           if (val) return val;
         }
-        // Try normalized key
-        const lowerK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+        const lowerK = normalizeHeaderKey(k);
         for (const actualKey of Object.keys(row)) {
-          const actualLower = actualKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const actualLower = normalizeHeaderKey(actualKey);
           if (actualLower === lowerK && row[actualKey] !== undefined && row[actualKey] !== null) {
             const val = String(row[actualKey]).trim();
             if (val) return val;
@@ -247,36 +403,67 @@ export class GoogleSheetsSyncService {
     };
 
     const id = getVal('ID', 'id', 'Opportunity ID') || `gsheet-${Date.now()}-${index}`;
-    const title = getVal('Title', 'title', 'Job Title', 'Opportunity Title', 'Workshop Title', 'Course Title');
-    if (!title) return null; // Title is required
+    const title = getVal(
+      'Title',
+      'title',
+      'Job Title',
+      'Opportunity Title',
+      'Workshop Title',
+      'Course Title',
+      'Position'
+    );
+    if (!title) return null;
 
-    const categoryRaw = getVal('Category', 'category', 'Type');
-    const organization = getVal('Organization', 'organization', 'Company', 'Institution', 'Provider') || 'Bio-Inexa Partner';
-    const description = getVal('Description', 'description', 'Details', 'Overview') || 'No detailed description provided.';
-    const eligibility = getVal('Eligibility', 'eligibility', 'Eligible Candidates', 'Target Audience') || 'Relevant Life Science Degree';
-    const qualification = getVal('Qualification', 'qualification', 'Degrees') || eligibility;
+    const categoryRaw = getVal('Category', 'category', 'Type', 'Sector');
+    const organization = getVal('Organization', 'organization', 'Company', 'Employer', 'Institution', 'Provider');
+    if (!organization) return null;
+
+    const description =
+      getVal('Description', 'description', 'Details', 'Overview', 'Summary') ||
+      `${title} at ${organization}. Review full criteria on official institutional portal.`;
+    const eligibility =
+      getVal('Eligibility', 'eligibility', 'Eligible Candidates', 'Target Audience') ||
+      'Relevant Life Science Degree';
+    const qualification = getVal('Qualification', 'qualification', 'Degrees', 'Education') || eligibility;
     const location = getVal('Location', 'location', 'City', 'Venue') || 'All India';
-    const modeRaw = getVal('Mode', 'mode', 'Work Mode', 'Delivery Mode') || 'On-site';
-    const salaryOrStipend = getVal('Salary/Stipend', 'salaryOrStipend', 'Salary', 'Stipend', 'Compensation') || 'Not Disclosed';
+    const modeRaw = getVal('Mode', 'mode', 'Work Mode', 'Delivery Mode', 'Employment Type') || 'On-site';
+    const salaryOrStipend =
+      getVal('Salary/Stipend', 'salaryOrStipend', 'Salary', 'Stipend', 'Compensation') || 'Not Disclosed';
     const fees = getVal('Fees', 'fees', 'Registration Fee', 'Course Fee') || 'Free';
     const duration = getVal('Duration', 'duration', 'Timeline', 'Period') || 'Full-time';
-    const publishedDate = getVal('Published Date', 'publishedDate', 'Posted Date', 'Date') || new Date().toISOString().split('T')[0];
-    const deadlineRaw = getVal('Application Deadline', 'applicationDeadline', 'Deadline', 'Last Date', 'Registration Deadline') || 'Not Specified';
-    
-    // Application & Registration links
-    const applicationUrlRaw = getVal('Application URL', 'applicationUrl', 'Apply Link', 'Apply URL', 'Link');
-    const registrationUrlRaw = getVal('Registration URL', 'registrationUrl', 'Register Link', 'Register URL', 'Enrollment URL', 'Enroll URL');
+    const publishedDate =
+      getVal('Published Date', 'publishedDate', 'Posted Date', 'Publication Date', 'Date') ||
+      new Date().toISOString().split('T')[0];
+    const deadlineRaw =
+      getVal(
+        'Application Deadline',
+        'applicationDeadline',
+        'Deadline',
+        'Expiry Date',
+        'Last Date',
+        'Registration Deadline'
+      ) || 'Not Specified';
+
+    const applicationUrlRaw = getVal('Application URL', 'applicationUrl', 'Apply Link', 'Apply URL', 'URL', 'Link');
+    const registrationUrlRaw = getVal(
+      'Registration URL',
+      'registrationUrl',
+      'Register Link',
+      'Register URL',
+      'Enrollment URL',
+      'Enroll URL'
+    );
     const directUrl = applicationUrlRaw || registrationUrlRaw || '';
 
     const statusRaw = getVal('Status', 'status') || 'Open';
     const featuredRaw = getVal('Featured', 'featured', 'Is Featured');
-    const isFeatured = featuredRaw.toLowerCase() === 'true' || featuredRaw.toLowerCase() === 'yes' || featuredRaw === '1';
+    const isFeatured =
+      featuredRaw.toLowerCase() === 'true' || featuredRaw.toLowerCase() === 'yes' || featuredRaw === '1';
     const lastUpdated = getVal('Last Updated', 'lastUpdated', 'Updated') || new Date().toISOString();
 
     const type = this.determineOpportunityType(categoryRaw, title, description);
     const status = this.calculateStatus(deadlineRaw, statusRaw);
 
-    // Normalize WorkMode
     let workMode: WorkMode = 'On-site';
     const modeLower = modeRaw.toLowerCase();
     if (modeLower.includes('remote') || modeLower.includes('online') || modeLower.includes('wfh')) {
@@ -285,15 +472,14 @@ export class GoogleSheetsSyncService {
       workMode = 'Hybrid';
     }
 
-    // Branch matching
     const branches = matchBranchesForOpportunity(title, description, [qualification, eligibility]);
 
-    // Sector detection
     let sector = 'Private';
     const orgLower = organization.toLowerCase();
     if (
       orgLower.includes('csir') ||
       orgLower.includes('dbt') ||
+      orgLower.includes('icmr') ||
       orgLower.includes('iisc') ||
       orgLower.includes('aiims') ||
       orgLower.includes('icar') ||
@@ -309,7 +495,17 @@ export class GoogleSheetsSyncService {
     const opp: Opportunity = {
       id,
       title,
-      category: categoryRaw || (type === 'biotech_job' ? 'Biotechnology' : type === 'internship' ? 'Internship' : type === 'workshop' ? 'Workshop' : type === 'course' ? 'Course' : 'Jobs'),
+      category:
+        categoryRaw ||
+        (type === 'biotech_job'
+          ? 'Biotechnology'
+          : type === 'internship'
+          ? 'Internship'
+          : type === 'workshop'
+          ? 'Workshop'
+          : type === 'course'
+          ? 'Course'
+          : 'Jobs'),
       organization,
       description,
       type,
@@ -332,16 +528,16 @@ export class GoogleSheetsSyncService {
       status,
       featured: isFeatured,
       lastUpdated,
-      isApproved: true,
-      isVerified: true,
+      isApproved: false,
+      isVerified: false,
+      verificationStatus: 'Pending Verification',
       isExternal: true,
       sector,
-      sourceName: 'Google Sheets Live Sync',
-      sourceUrl: this.config.scriptUrl,
-      lastVerifiedDate: new Date().toISOString().split('T')[0]
+      sourceName: 'Google Sheets Institutional Feed',
+      sourceUrl: '',
+      attributionRequirements: 'Imported via server-side Google Sheets sync — Pending administrator verification',
     };
 
-    // For workshops, populate workshopDetails
     if (type === 'workshop') {
       opp.workshopDetails = {
         dates: duration || 'Upcoming',
@@ -351,18 +547,17 @@ export class GoogleSheetsSyncService {
         registrationFee: fees || 'Free',
         certificateAvailable: true,
         certificateProvided: true,
-        registrationUrl: directUrl
+        registrationUrl: directUrl,
       };
     }
 
-    // For courses, populate courseDetails
     if (type === 'course') {
       opp.courseDetails = {
         provider: organization,
         duration: duration || 'Self-paced',
         fees: fees || 'Free',
         certificateAvailable: true,
-        enrollmentUrl: directUrl
+        enrollmentUrl: directUrl,
       };
     }
 
@@ -370,7 +565,9 @@ export class GoogleSheetsSyncService {
   }
 
   /**
-   * Fetch opportunities from Google Apps Script Web App or Sheet endpoint
+   * Public frontend read path: fetches approved, eligible records strictly from the
+   * BIO-INEXA backend database API (/api/opportunities). Never calls Google Sheets APIs
+   * or reads Google credentials from the browser.
    */
   public async fetchOpportunities(): Promise<{
     success: boolean;
@@ -380,118 +577,59 @@ export class GoogleSheetsSyncService {
   }> {
     this.saveConfig({ lastSyncStatus: 'syncing' });
 
-    const scriptUrl = this.config.scriptUrl || DEFAULT_APPS_SCRIPT_URL;
-
     try {
-      // 1. Try Google Apps Script with action=getOpportunities
-      const fetchUrl = scriptUrl.includes('?')
-        ? `${scriptUrl}&action=getOpportunities&t=${Date.now()}`
-        : `${scriptUrl}?action=getOpportunities&t=${Date.now()}`;
-
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
-
-      const response = await fetch(fetchUrl, {
+      const response = await fetch('/api/opportunities?limit=100', {
         method: 'GET',
-        headers: { 'Accept': 'application/json' },
-        signal: controller.signal
+        headers: { Accept: 'application/json' },
       });
 
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const text = await response.text();
-        let json: any = null;
-        try {
-          json = JSON.parse(text);
-        } catch {
-          // If response is not valid JSON (e.g. plain text or HTML redirect from Google)
-          json = null;
-        }
-
-        if (json && (Array.isArray(json.data) || Array.isArray(json))) {
-          const rawItems = Array.isArray(json.data) ? json.data : json;
-          const parsedOpps: Opportunity[] = [];
-
-          rawItems.forEach((row: RawSheetRow, idx: number) => {
-            const opp = this.parseRowToOpportunity(row, idx);
-            if (opp) {
-              // Deduplicate
-              const isDupe = findDuplicateOpportunity(opp, parsedOpps);
-              if (!isDupe) {
-                parsedOpps.push(opp);
-              }
-            }
-          });
-
-          if (parsedOpps.length > 0) {
-            this.saveConfig({
-              lastSyncTime: new Date().toISOString(),
-              lastSyncStatus: 'success',
-              totalSyncedCount: parsedOpps.length,
-              lastErrorMessage: undefined
-            });
-
-            // Cache locally
-            if (typeof window !== 'undefined') {
-              try {
-                localStorage.setItem(SHEETS_CACHED_OPPS_KEY, JSON.stringify(parsedOpps));
-              } catch {}
-            }
-
-            return {
-              success: true,
-              opportunities: parsedOpps,
-              isFallback: false,
-              message: `Successfully retrieved ${parsedOpps.length} opportunities from Google Sheets.`
-            };
-          }
-        }
+      if (!response.ok) {
+        throw new Error(`Backend catalog returned HTTP ${response.status}`);
       }
 
-      // If response was not returning opportunities JSON or Apps Script only has visitor tracker
-      throw new Error(`Google Apps Script returned non-JSON response or empty dataset.`);
-    } catch (err: any) {
-      console.warn('Google Sheets live fetch notice:', err?.message || err);
-
-      // Check if we have cached sheets opportunities
-      let cached: Opportunity[] = [];
-      if (typeof window !== 'undefined') {
-        try {
-          const raw = localStorage.getItem(SHEETS_CACHED_OPPS_KEY);
-          if (raw) cached = JSON.parse(raw);
-        } catch {}
-      }
+      const data = await response.json();
+      const opportunities = Array.isArray(data?.opportunities) ? (data.opportunities as Opportunity[]) : [];
 
       this.saveConfig({
-        lastSyncTime: this.config.lastSyncTime || new Date().toISOString(),
-        lastSyncStatus: cached.length > 0 ? 'success' : 'fallback',
-        lastErrorMessage: err?.message || 'Using verified local opportunities dataset'
+        lastSyncTime: new Date().toISOString(),
+        lastSyncStatus: 'success',
+        totalSyncedCount: opportunities.length,
+        lastErrorMessage: undefined,
       });
 
       return {
-        success: cached.length > 0,
-        opportunities: cached,
+        success: true,
+        opportunities,
+        isFallback: false,
+        message: `Retrieved ${opportunities.length} approved opportunities from database.`,
+      };
+    } catch (err: any) {
+      this.saveConfig({
+        lastSyncStatus: 'fallback',
+        lastErrorMessage: err?.message || 'Database backend temporarily unreachable',
+      });
+
+      return {
+        success: false,
+        opportunities: [],
         isFallback: true,
-        message: cached.length > 0
-          ? `Serving ${cached.length} cached opportunities from Google Sheets.`
-          : `Connected to Google Apps Script. Ready for opportunities sheet sync.`
+        message: err?.message || 'Using locally retained database snapshot.',
       };
     }
   }
 
   /**
-   * Ready-to-copy Google Apps Script code for the user
+   * Ready-to-copy Google Apps Script Web App v2 code for optional server-side Sheet integration.
    */
   public getAppsScriptCode(): string {
     return `// ==============================================================
-// BIO-NEXA GOOGLE APPS SCRIPT WEB APP (v2)
-// Handles BOTH Visitor Counter & Automated Opportunities Portal
+// BIO-INEXA GOOGLE APPS SCRIPT WEB APP (v2)
+// Handles Visitor Counter & Standardized Server-Side Opportunities JSON Feed
 // ==============================================================
 
 function doGet(e) {
   var action = (e && e.parameter && e.parameter.action) || "";
-  
+
   // -------------------------------------------------------------
   // 1. GET OPPORTUNITIES (Jobs, Internships, Workshops, Courses)
   // -------------------------------------------------------------
@@ -500,28 +638,28 @@ function doGet(e) {
       var ss = SpreadsheetApp.getActiveSpreadsheet();
       var sheet = ss.getSheetByName("Opportunities") || ss.getSheets()[0];
       var data = sheet.getDataRange().getValues();
-      
+
       if (!data || data.length <= 1) {
-        return createJsonResponse({ status: "success", count: 0, data: [] });
+        return createJsonResponse({ status: "success", count: 0, headers: [], data: [] });
       }
-      
+
       var headers = data[0];
       var rows = [];
-      
+
       for (var i = 1; i < data.length; i++) {
         var row = {};
         for (var j = 0; j < headers.length; j++) {
           row[headers[j]] = data[i][j];
         }
-        // Only include non-empty rows
         if (row["Title"] || row["title"]) {
           rows.push(row);
         }
       }
-      
+
       return createJsonResponse({
         status: "success",
         count: rows.length,
+        headers: headers,
         timestamp: new Date().toISOString(),
         data: rows
       });
@@ -529,24 +667,23 @@ function doGet(e) {
       return createJsonResponse({ status: "error", message: err.toString() });
     }
   }
-  
+
   // -------------------------------------------------------------
   // 2. VISITOR TRACKING (Default for ENTER Button)
   // -------------------------------------------------------------
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var trackerSheet = ss.getSheetByName("Visitor_Log");
-    
-    // Create Visitor_Log tab if absent
+
     if (!trackerSheet) {
       trackerSheet = ss.insertSheet("Visitor_Log");
       trackerSheet.appendRow(["Entry No.", "Date", "Time", "Timestamp"]);
     }
-    
+
     var now = new Date();
     var rowCount = Math.max(1, trackerSheet.getLastRow());
     trackerSheet.appendRow([rowCount, now.toLocaleDateString(), now.toLocaleTimeString(), now.toISOString()]);
-    
+
     return ContentService.createTextOutput("OK - Visitor Logged")
       .setMimeType(ContentService.MimeType.TEXT);
   } catch (err) {

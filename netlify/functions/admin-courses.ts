@@ -13,6 +13,7 @@ import {
   extractSubPath,
   handleCorsPreflight,
   isValidHttpUrl,
+  jsonResponse,
   methodNotAllowedResponse,
   NetlifyEvent,
   NetlifyResponse,
@@ -20,8 +21,9 @@ import {
   sanitizeString,
   serviceUnavailableResponse,
 } from './_shared/http';
-import { requireServerlessAdminAuth } from './_shared/serverlessAuth';
+import { requireServerlessAdminAuthAsync } from './_shared/serverlessAuth';
 import { SERVERLESS_COURSES } from './_shared/serverlessCatalog';
+import { getSupabaseRepository } from './_shared/supabaseDb';
 
 const ALLOWED_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 const BASE_PREFIXES = ['/.netlify/functions/admin-courses', '/api/admin/courses'];
@@ -35,10 +37,13 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     return methodNotAllowedResponse(event, ALLOWED_METHODS);
   }
 
-  const auth = requireServerlessAdminAuth(event, ALLOWED_METHODS);
+  const auth = await requireServerlessAdminAuthAsync(event, ALLOWED_METHODS, {
+    requiredPermission: method === 'DELETE' ? 'courses:delete' : 'courses:write',
+  });
   if (auth.authorized === false) return auth.response;
 
   const subPath = extractSubPath(event, BASE_PREFIXES);
+  const repo = getSupabaseRepository();
 
   if (subPath === 'upload-image') {
     if (method !== 'POST') {
@@ -82,7 +87,7 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
 
     return serviceUnavailableResponse(
       event,
-      'Local disk uploads are unavailable in Netlify serverless functions. Configure cloud object storage or provide a verified HTTPS image URL.',
+      'Local disk uploads are unavailable in Netlify serverless functions. Provide a verified HTTPS image URL.',
       'PERSISTENT_STORAGE_NOT_CONFIGURED',
       ['POST']
     );
@@ -126,12 +131,25 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       );
     }
 
-    return serviceUnavailableResponse(
-      event,
-      'Persistent course creation requires cloud database configuration (Phase 04).',
-      'PERSISTENT_DB_NOT_CONFIGURED',
-      ['POST']
-    );
+    if (!repo) {
+      return serviceUnavailableResponse(
+        event,
+        'Persistent course creation requires Supabase PostgreSQL configuration.',
+        'PERSISTENT_DB_NOT_CONFIGURED',
+        ['POST']
+      );
+    }
+
+    const course = await repo.createCourse(body);
+    await repo.recordAdminAuditLog({
+      adminUserId: auth.user.id,
+      actorUsername: auth.user.username,
+      action: 'ADMIN_COURSE_CREATED',
+      entityType: 'course',
+      entityId: course.id,
+      details: { name: course.name },
+    }).catch(() => {});
+    return jsonResponse(event, 201, { success: true, course }, ['POST']);
   }
 
   const segments = subPath.split('/').filter(Boolean);
@@ -149,7 +167,9 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     if (method !== 'PATCH') {
       return methodNotAllowedResponse(event, ['PATCH']);
     }
-    const existing = SERVERLESS_COURSES.find((c) => c.id === courseId);
+    const existing = repo
+      ? await repo.getCourseById(courseId)
+      : SERVERLESS_COURSES.find((c) => c.id === courseId) || null;
     if (!existing) {
       return errorResponse(event, 404, 'Not Found', 'Course not found.', {
         code: 'COURSE_NOT_FOUND',
@@ -173,12 +193,16 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
         { code: 'INVALID_URL', allowedMethods: ['PATCH'] }
       );
     }
-    return serviceUnavailableResponse(
-      event,
-      'Persistent course quick updates require cloud database configuration (Phase 04).',
-      'PERSISTENT_DB_NOT_CONFIGURED',
-      ['PATCH']
-    );
+    if (!repo) {
+      return serviceUnavailableResponse(
+        event,
+        'Persistent course quick updates require Supabase PostgreSQL configuration.',
+        'PERSISTENT_DB_NOT_CONFIGURED',
+        ['PATCH']
+      );
+    }
+    const course = await repo.updateCourse(courseId, parsed.data);
+    return jsonResponse(event, 200, { success: true, course }, ['PATCH']);
   }
 
   if (action) {
@@ -192,7 +216,9 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     return methodNotAllowedResponse(event, ['PUT', 'DELETE']);
   }
 
-  const existing = SERVERLESS_COURSES.find((c) => c.id === courseId);
+  const existing = repo
+    ? await repo.getCourseById(courseId)
+    : SERVERLESS_COURSES.find((c) => c.id === courseId) || null;
   if (!existing) {
     return errorResponse(event, 404, 'Not Found', 'Course not found.', {
       code: 'COURSE_NOT_FOUND',
@@ -218,12 +244,40 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
         { code: 'INVALID_URL', allowedMethods: ['PUT', 'DELETE'] }
       );
     }
+    if (!repo) {
+      return serviceUnavailableResponse(
+        event,
+        'Persistent course modifications require Supabase PostgreSQL configuration.',
+        'PERSISTENT_DB_NOT_CONFIGURED',
+        ['PUT', 'DELETE']
+      );
+    }
+    const course = await repo.updateCourse(courseId, parsed.data);
+    await repo.recordAdminAuditLog({
+      adminUserId: auth.user.id,
+      actorUsername: auth.user.username,
+      action: 'ADMIN_COURSE_UPDATED',
+      entityType: 'course',
+      entityId: courseId,
+    }).catch(() => {});
+    return jsonResponse(event, 200, { success: true, course }, ['PUT', 'DELETE']);
   }
 
-  return serviceUnavailableResponse(
-    event,
-    'Persistent course modifications require cloud database configuration (Phase 04).',
-    'PERSISTENT_DB_NOT_CONFIGURED',
-    ['PUT', 'DELETE']
-  );
+  if (!repo) {
+    return serviceUnavailableResponse(
+      event,
+      'Persistent course deletions require Supabase PostgreSQL configuration.',
+      'PERSISTENT_DB_NOT_CONFIGURED',
+      ['PUT', 'DELETE']
+    );
+  }
+  await repo.deleteCourse(courseId);
+  await repo.recordAdminAuditLog({
+    adminUserId: auth.user.id,
+    actorUsername: auth.user.username,
+    action: 'ADMIN_COURSE_DELETED',
+    entityType: 'course',
+    entityId: courseId,
+  }).catch(() => {});
+  return jsonResponse(event, 200, { success: true, message: 'Course deleted.' }, ['PUT', 'DELETE']);
 };

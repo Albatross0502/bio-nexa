@@ -60,24 +60,28 @@ export const InternshipsPage: React.FC = () => {
     addToast('Internship link copied to clipboard!', 'info');
   };
 
-  const handleApplySubmit = (e: React.FormEvent) => {
+  const handleApplySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedIntern) return;
 
-    applyToJob({
-      jobId: selectedIntern.id,
-      jobTitle: `Internship: ${selectedIntern.title}`,
-      company: selectedIntern.organization,
-      applicantName,
-      applicantEmail,
-      phone,
-      qualification: 'M.Sc / M.Tech',
-      experienceYears: 'Student Trainee',
-      coverNote: coverNote || 'I am applying for this research fellowship training position.',
-    });
+    try {
+      await applyToJob({
+        jobId: selectedIntern.id,
+        jobTitle: `Internship: ${selectedIntern.title}`,
+        company: selectedIntern.organization,
+        applicantName,
+        applicantEmail,
+        phone,
+        qualification: 'M.Sc / M.Tech',
+        experienceYears: 'Student Trainee',
+        coverNote: coverNote || 'I am applying for this research fellowship training position.',
+      });
 
-    setIsApplying(false);
-    setCoverNote('');
+      setIsApplying(false);
+      setCoverNote('');
+    } catch {
+      // Toast shown by AppContext; keep modal open on validation/network failure
+    }
   };
 
   return (

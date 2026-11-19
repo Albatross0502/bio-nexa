@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { googleSheetsSync } from './googleSheetsSync';
+import {
+  googleSheetsSync,
+  parseCsvToSheetMatrix,
+  parseSheetValuesToRows,
+  validateSpreadsheetHeaders,
+} from './googleSheetsSync';
 
 test('Google Sheets Sync: determineOpportunityType categorizes correctly', () => {
   // Courses
@@ -91,6 +96,10 @@ test('Google Sheets Sync: parseRowToOpportunity parses 19 standardized columns a
   assert.equal(opp?.featured, true);
   assert.equal(opp?.salaryOrStipend, '₹5.5 - 7.5 LPA');
   assert.ok(opp?.branches.includes('microbiology'));
+  assert.equal(opp?.isApproved, false);
+  assert.equal(opp?.isVerified, false);
+  assert.equal(opp?.verificationStatus, 'Pending Verification');
+  assert.equal(opp?.lastVerifiedDate, undefined);
 });
 
 test('Google Sheets Sync: getAppsScriptCode generates valid runnable Apps Script', () => {
@@ -99,4 +108,72 @@ test('Google Sheets Sync: getAppsScriptCode generates valid runnable Apps Script
   assert.ok(code.includes('action === "getOpportunities"'));
   assert.ok(code.includes('Visitor_Log'));
   assert.ok(code.includes('SpreadsheetApp.getActiveSpreadsheet()'));
+});
+
+test('Phase 09: validateSpreadsheetHeaders validates required columns and flexible aliases', () => {
+  const validStandard = validateSpreadsheetHeaders([
+    'ID',
+    'Title',
+    'Organization',
+    'Location',
+    'Application URL',
+    'Custom Extra Header',
+  ]);
+  assert.equal(validStandard.valid, true);
+  assert.equal(validStandard.missingRequired.length, 0);
+  assert.equal(validStandard.matchedColumns.title, 'Title');
+  assert.equal(validStandard.matchedColumns.organization, 'Organization');
+  assert.equal(validStandard.matchedColumns.applicationUrl, 'Application URL');
+  assert.ok(validStandard.detectedHeaders.includes('Custom Extra Header'));
+
+  const validAliases = validateSpreadsheetHeaders(['Job Title', 'Company', 'Registration URL']);
+  assert.equal(validAliases.valid, true);
+
+  const missingUrl = validateSpreadsheetHeaders(['Title', 'Organization', 'Location']);
+  assert.equal(missingUrl.valid, false);
+  assert.equal(missingUrl.missingRequired.includes('Application URL (or Registration URL)'), true);
+});
+
+test('Phase 09: parseSheetValuesToRows & parseCsvToSheetMatrix convert matrix/CSV cleanly', () => {
+  const csv = [
+    'Title,Organization,"Location",Application URL,Salary/Stipend',
+    '"Research Associate, CRISPR","CSIR-IGIB","New Delhi, India",https://www.igib.res.in/careers/ra-1,"₹42,000 ""consolidated"""',
+    '',
+  ].join('\n');
+
+  const matrix = parseCsvToSheetMatrix(csv);
+  assert.equal(matrix.length, 2);
+  const { headers, rows } = parseSheetValuesToRows(matrix);
+  assert.deepEqual(headers, ['Title', 'Organization', 'Location', 'Application URL', 'Salary/Stipend']);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].Title, 'Research Associate, CRISPR');
+  assert.equal(rows[0].Organization, 'CSIR-IGIB');
+  assert.equal(rows[0]['Salary/Stipend'], '₹42,000 "consolidated"');
+});
+
+test('Phase 09: client googleSheetsSync never holds server credentials and reads from backend API', async () => {
+  assert.equal(googleSheetsSync.getConfig().scriptUrl, '');
+
+  const prevFetch = globalThis.fetch;
+  let requestedUrl = '';
+  globalThis.fetch = (async (input: any) => {
+    requestedUrl = String(input);
+    return new Response(
+      JSON.stringify({
+        success: true,
+        opportunities: [{ id: 'db-job-1', title: 'Verified DB Role', isApproved: true }],
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  }) as unknown as typeof fetch;
+
+  try {
+    const result = await googleSheetsSync.fetchOpportunities();
+    assert.equal(requestedUrl, '/api/opportunities?limit=100');
+    assert.equal(result.success, true);
+    assert.equal(result.opportunities.length, 1);
+    assert.equal(result.opportunities[0].id, 'db-job-1');
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
 });

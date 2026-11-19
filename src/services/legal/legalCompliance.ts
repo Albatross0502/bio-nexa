@@ -182,14 +182,6 @@ export const COOKIE_AND_STORAGE_INVENTORY: CookieAndStorageItem[] = [
     canOptOut: false
   },
   {
-    name: 'bionexa_admin_token',
-    mechanism: 'sessionStorage',
-    category: 'Strictly Necessary',
-    purpose: 'Bearer fallback header used strictly within an authenticated administrator browser tab.',
-    retention: 'Cleared when browser tab closes or on logout',
-    canOptOut: false
-  },
-  {
     name: 'bionexa_privacy_consent_v1',
     mechanism: 'localStorage',
     category: 'Strictly Necessary',

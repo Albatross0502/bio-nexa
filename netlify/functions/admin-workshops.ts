@@ -13,6 +13,7 @@ import {
   extractSubPath,
   handleCorsPreflight,
   isValidHttpUrl,
+  jsonResponse,
   methodNotAllowedResponse,
   NetlifyEvent,
   NetlifyResponse,
@@ -20,8 +21,9 @@ import {
   sanitizeString,
   serviceUnavailableResponse,
 } from './_shared/http';
-import { requireServerlessAdminAuth } from './_shared/serverlessAuth';
+import { requireServerlessAdminAuthAsync } from './_shared/serverlessAuth';
 import { SERVERLESS_WORKSHOPS } from './_shared/serverlessCatalog';
+import { getSupabaseRepository } from './_shared/supabaseDb';
 
 const ALLOWED_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 const BASE_PREFIXES = ['/.netlify/functions/admin-workshops', '/api/admin/workshops'];
@@ -35,10 +37,13 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     return methodNotAllowedResponse(event, ALLOWED_METHODS);
   }
 
-  const auth = requireServerlessAdminAuth(event, ALLOWED_METHODS);
+  const auth = await requireServerlessAdminAuthAsync(event, ALLOWED_METHODS, {
+    requiredPermission: method === 'DELETE' ? 'workshops:delete' : 'workshops:write',
+  });
   if (auth.authorized === false) return auth.response;
 
   const subPath = extractSubPath(event, BASE_PREFIXES);
+  const repo = getSupabaseRepository();
 
   if (subPath === 'upload-image') {
     if (method !== 'POST') {
@@ -82,7 +87,7 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
 
     return serviceUnavailableResponse(
       event,
-      'Local disk uploads are unavailable in Netlify serverless functions. Configure cloud object storage or provide a verified HTTPS image URL.',
+      'Local disk uploads are unavailable in Netlify serverless functions. Provide a verified HTTPS image URL.',
       'PERSISTENT_STORAGE_NOT_CONFIGURED',
       ['POST']
     );
@@ -125,12 +130,25 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       );
     }
 
-    return serviceUnavailableResponse(
-      event,
-      'Persistent workshop creation requires cloud database configuration (Phase 04).',
-      'PERSISTENT_DB_NOT_CONFIGURED',
-      ['POST']
-    );
+    if (!repo) {
+      return serviceUnavailableResponse(
+        event,
+        'Persistent workshop creation requires Supabase PostgreSQL configuration.',
+        'PERSISTENT_DB_NOT_CONFIGURED',
+        ['POST']
+      );
+    }
+
+    const workshop = await repo.createWorkshop(body);
+    await repo.recordAdminAuditLog({
+      adminUserId: auth.user.id,
+      actorUsername: auth.user.username,
+      action: 'ADMIN_WORKSHOP_CREATED',
+      entityType: 'workshop',
+      entityId: workshop.id,
+      details: { name: workshop.name },
+    }).catch(() => {});
+    return jsonResponse(event, 201, { success: true, workshop }, ['POST']);
   }
 
   const segments = subPath.split('/').filter(Boolean);
@@ -148,19 +166,29 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     if (method !== 'PATCH') {
       return methodNotAllowedResponse(event, ['PATCH']);
     }
-    const existing = SERVERLESS_WORKSHOPS.find((w) => w.id === workshopId);
+    const existing = repo
+      ? await repo.getWorkshopById(workshopId)
+      : SERVERLESS_WORKSHOPS.find((w) => w.id === workshopId) || null;
     if (!existing) {
       return errorResponse(event, 404, 'Not Found', 'Workshop not found.', {
         code: 'WORKSHOP_NOT_FOUND',
         allowedMethods: ['PATCH'],
       });
     }
-    return serviceUnavailableResponse(
-      event,
-      'Persistent workshop quick updates require cloud database configuration (Phase 04).',
-      'PERSISTENT_DB_NOT_CONFIGURED',
-      ['PATCH']
-    );
+    if (!repo) {
+      return serviceUnavailableResponse(
+        event,
+        'Persistent workshop quick updates require Supabase PostgreSQL configuration.',
+        'PERSISTENT_DB_NOT_CONFIGURED',
+        ['PATCH']
+      );
+    }
+    const parsed = parseJsonBody(event);
+    if (!parsed.ok) {
+      return errorResponse(event, 400, 'Validation Error', parsed.message, { code: 'INVALID_JSON' });
+    }
+    const workshop = await repo.updateWorkshop(workshopId, parsed.data);
+    return jsonResponse(event, 200, { success: true, workshop }, ['PATCH']);
   }
 
   if (action) {
@@ -174,7 +202,9 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     return methodNotAllowedResponse(event, ['PUT', 'DELETE']);
   }
 
-  const existing = SERVERLESS_WORKSHOPS.find((w) => w.id === workshopId);
+  const existing = repo
+    ? await repo.getWorkshopById(workshopId)
+    : SERVERLESS_WORKSHOPS.find((w) => w.id === workshopId) || null;
   if (!existing) {
     return errorResponse(event, 404, 'Not Found', 'Workshop not found.', {
       code: 'WORKSHOP_NOT_FOUND',
@@ -200,12 +230,40 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
         { code: 'INVALID_URL', allowedMethods: ['PUT', 'DELETE'] }
       );
     }
+    if (!repo) {
+      return serviceUnavailableResponse(
+        event,
+        'Persistent workshop modifications require Supabase PostgreSQL configuration.',
+        'PERSISTENT_DB_NOT_CONFIGURED',
+        ['PUT', 'DELETE']
+      );
+    }
+    const workshop = await repo.updateWorkshop(workshopId, parsed.data);
+    await repo.recordAdminAuditLog({
+      adminUserId: auth.user.id,
+      actorUsername: auth.user.username,
+      action: 'ADMIN_WORKSHOP_UPDATED',
+      entityType: 'workshop',
+      entityId: workshopId,
+    }).catch(() => {});
+    return jsonResponse(event, 200, { success: true, workshop }, ['PUT', 'DELETE']);
   }
 
-  return serviceUnavailableResponse(
-    event,
-    'Persistent workshop modifications require cloud database configuration (Phase 04).',
-    'PERSISTENT_DB_NOT_CONFIGURED',
-    ['PUT', 'DELETE']
-  );
+  if (!repo) {
+    return serviceUnavailableResponse(
+      event,
+      'Persistent workshop deletions require Supabase PostgreSQL configuration.',
+      'PERSISTENT_DB_NOT_CONFIGURED',
+      ['PUT', 'DELETE']
+    );
+  }
+  await repo.deleteWorkshop(workshopId);
+  await repo.recordAdminAuditLog({
+    adminUserId: auth.user.id,
+    actorUsername: auth.user.username,
+    action: 'ADMIN_WORKSHOP_DELETED',
+    entityType: 'workshop',
+    entityId: workshopId,
+  }).catch(() => {});
+  return jsonResponse(event, 200, { success: true, message: 'Workshop deleted.' }, ['PUT', 'DELETE']);
 };

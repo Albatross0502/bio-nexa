@@ -68,10 +68,8 @@ class OpportunityStore {
         }
       }
 
-      // Initial silent background sync with Google Sheets
-      setTimeout(() => {
-        this.syncWithGoogleSheets(false).catch(() => {});
-      }, 1000);
+      // Hydrate live verified opportunities from SQLite backend API
+      this.refreshFromBackend().catch(() => {});
     } else {
       this.opportunities = refreshOpportunityStatuses([...SEED_OPPORTUNITIES]);
     }
@@ -79,14 +77,45 @@ class OpportunityStore {
 
   private setupPeriodicSync() {
     if (typeof window !== 'undefined') {
-      // Periodic refresh every 10 minutes
+      // Periodic refresh from backend every 10 minutes
       this.autoSyncIntervalId = setInterval(() => {
-        this.syncWithGoogleSheets(false).catch(() => {});
+        this.refreshFromBackend().catch(() => {});
       }, 10 * 60 * 1000);
     }
   }
 
-  public async syncWithGoogleSheets(force: boolean = false): Promise<{
+  /**
+   * Fetch live approved opportunities from the /api/opportunities backend
+   */
+  public async refreshFromBackend(params?: {
+    branch?: string;
+    type?: string;
+    workMode?: string;
+    status?: string;
+    search?: string;
+  }): Promise<Opportunity[]> {
+    const { bionexaApi } = await import('../api/bionexaApiClient');
+    const res = await bionexaApi.getOpportunities({
+      ...(params || {}),
+      limit: 100
+    });
+
+    if (Array.isArray(res.opportunities) && res.opportunities.length > 0) {
+      // Preserve any locally created unapproved drafts so pending items stay inspectable in store if created via sync helper
+      const unapprovedDrafts = this.opportunities.filter((o) => !o.isApproved && o.isDirectSubmission);
+      const serverIds = new Set(res.opportunities.map((o) => o.id));
+      const merged = [
+        ...res.opportunities,
+        ...unapprovedDrafts.filter((d) => !serverIds.has(d.id))
+      ];
+      this.opportunities = refreshOpportunityStatuses(merged);
+      this.save();
+    }
+
+    return this.opportunities;
+  }
+
+  public async syncWithGoogleSheets(_force: boolean = false): Promise<{
     success: boolean;
     count: number;
     message: string;
@@ -96,7 +125,7 @@ class OpportunityStore {
       return {
         success: true,
         count: this.opportunities.length,
-        message: 'Sync already in progress...',
+        message: 'Refresh already in progress...',
         isFallback: false
       };
     }
@@ -106,36 +135,26 @@ class OpportunityStore {
 
     try {
       const res = await googleSheetsSync.fetchOpportunities();
-      if (res.opportunities && res.opportunities.length > 0) {
-        let addedCount = 0;
-        const currentList = [...this.opportunities];
+      if (res.success && Array.isArray(res.opportunities) && res.opportunities.length > 0) {
+        const beforeIds = new Set(this.opportunities.map((o) => o.id));
+        const unapprovedDrafts = this.opportunities.filter((o) => !o.isApproved && o.isDirectSubmission);
+        const serverIds = new Set(res.opportunities.map((o) => o.id));
+        const merged = [
+          ...res.opportunities,
+          ...unapprovedDrafts.filter((d) => !serverIds.has(d.id))
+        ];
 
-        for (const sheetOpp of res.opportunities) {
-          const existingIndex = currentList.findIndex(o => o.id === sheetOpp.id || o.applicationUrl === sheetOpp.applicationUrl);
-          if (existingIndex >= 0) {
-            // Update existing
-            currentList[existingIndex] = { ...currentList[existingIndex], ...sheetOpp };
-          } else {
-            // Check for fuzzy duplicate
-            const isDupe = findDuplicateOpportunity(sheetOpp, currentList);
-            if (!isDupe) {
-              currentList.unshift(sheetOpp);
-              addedCount++;
-            }
-          }
-        }
-
-        this.opportunities = refreshOpportunityStatuses(currentList);
-        this.save();
+        this.opportunities = refreshOpportunityStatuses(merged);
+        const addedCount = this.opportunities.filter((o) => !beforeIds.has(o.id)).length;
 
         const log: SyncExecutionResult = {
-          sourceId: 'google-sheets-live',
-          sourceName: 'Google Sheets / Apps Script',
+          sourceId: 'database-catalog-refresh',
+          sourceName: 'BIO-INEXA Database Catalog',
           status: 'Success',
           timestamp: new Date().toISOString(),
           itemsFetched: res.opportunities.length,
           newItemsAdded: addedCount,
-          duplicatesSkipped: res.opportunities.length - addedCount,
+          duplicatesSkipped: Math.max(0, res.opportunities.length - addedCount),
           expiredUpdated: 0,
           details: res.message
         };
@@ -158,7 +177,7 @@ class OpportunityStore {
       return {
         success: false,
         count: this.opportunities.length,
-        message: err?.message || 'Failed to fetch from Google Sheets',
+        message: err?.message || 'Retaining verified database snapshot.',
         isFallback: true
       };
     }
@@ -338,9 +357,10 @@ class OpportunityStore {
       sourceUrl: candidate.sourceUrl || applicationUrl,
       applicationUrl,
       sourceId: `sub-${Date.now()}`,
-      lastVerifiedDate: new Date().toISOString().split('T')[0],
       status: 'Active',
       isApproved: false, // Strictly Pending Admin Moderation
+      isVerified: false,
+      verificationStatus: 'Pending Verification',
       dataCollectionTimestamp: new Date().toISOString(),
       attributionRequirements: 'Direct submission to BIO-INEXA portal pending administrator verification',
       isDirectSubmission: true,
@@ -400,8 +420,7 @@ class OpportunityStore {
     if (index === -1) return false;
     this.opportunities[index] = {
       ...this.opportunities[index],
-      ...patch,
-      lastVerifiedDate: new Date().toISOString().split('T')[0]
+      ...patch
     };
     this.save();
     return true;
@@ -411,12 +430,55 @@ class OpportunityStore {
     return this.updateOpportunity(id, { status });
   }
 
+  /**
+   * Async Direct Employer or Organiser Submission persisted to /api/opportunities
+   */
+  public async submitOpportunityToBackend(candidate: {
+    title: string;
+    organization: string;
+    type: Opportunity['type'];
+    subCategory?: string;
+    description: string;
+    location: string;
+    workMode: Opportunity['workMode'];
+    experience?: string;
+    qualification?: string;
+    branches: string[];
+    skills?: string[];
+    salaryOrStipend?: string;
+    salaryTier?: string;
+    deadline?: string;
+    sourceName?: string;
+    sourceUrl?: string;
+    applicationUrl: string;
+    contactEmail?: string;
+    workshopDetails?: Record<string, unknown>;
+  }): Promise<{ success: boolean; id: string; opportunity: Opportunity; message: string }> {
+    const { bionexaApi } = await import('../api/bionexaApiClient');
+    const result = await bionexaApi.submitOpportunity(candidate);
+    if (result.opportunity) {
+      // Keep locally only as unapproved pending item (never exposed in public filtered list)
+      const exists = this.opportunities.some((o) => o.id === result.opportunity.id);
+      if (!exists) {
+        this.opportunities.unshift({
+          ...result.opportunity,
+          isApproved: false,
+          isVerified: false,
+          verificationStatus: 'Pending Verification',
+          isDirectSubmission: true
+        });
+        this.save();
+      }
+    }
+    return result;
+  }
+
   public submitOpportunity(candidate: any) {
     return this.submitDirectOpportunity(candidate);
   }
 
   /**
-   * Synchronize opportunities from authorized external sources
+   * Synchronize opportunities from backend API & authorized Google Sheets pipeline
    */
   public async syncAllSources(): Promise<SyncExecutionResult[]> {
     const results: SyncExecutionResult[] = [];
@@ -425,28 +487,33 @@ class OpportunityStore {
     // 1. Refresh existing deadlines
     this.opportunities = refreshOpportunityStatuses(this.opportunities);
 
-    // 2. Simulate / Run authorized feed checks
-    for (const source of this.sources) {
-      if (source.permissionStatus === 'search_fallback_only') {
-        // No scraping for LinkedIn/Naukri/WorkIndia; fallback is active
-        continue;
-      }
-
-      // Record sync event
-      const result: SyncExecutionResult = {
-        sourceId: source.id,
-        sourceName: source.name,
+    // 2. Refresh unified backend listings & external Google Sheets feed
+    try {
+      const beforeCount = this.opportunities.length;
+      const backendList = await this.refreshFromBackend();
+      results.push({
+        sourceId: 'bionexa-api-unified',
+        sourceName: 'BIO-INEXA Database API',
         status: 'Success',
         timestamp: now.toISOString(),
-        itemsFetched: source.recordsSyncedCount,
+        itemsFetched: backendList.length,
+        newItemsAdded: Math.max(0, backendList.length - beforeCount),
+        duplicatesSkipped: 0,
+        expiredUpdated: 0,
+        details: `Loaded ${backendList.length} verified records from BIO-INEXA backend API.`
+      });
+    } catch (err: any) {
+      results.push({
+        sourceId: 'bionexa-api-unified',
+        sourceName: 'BIO-INEXA Database API',
+        status: 'Error',
+        timestamp: now.toISOString(),
+        itemsFetched: 0,
         newItemsAdded: 0,
         duplicatesSkipped: 0,
         expiredUpdated: 0,
-        details: `Source check verified. Rate limit healthy (${source.rateLimitInfo}). No unpermitted scraping.`
-      };
-
-      source.lastSuccessfulSync = now.toISOString();
-      results.push(result);
+        details: err?.message || 'Backend API refresh failed.'
+      });
     }
 
     this.syncLogs = [...results, ...this.syncLogs].slice(0, 50);

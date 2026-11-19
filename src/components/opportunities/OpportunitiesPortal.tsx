@@ -85,9 +85,11 @@ export const OpportunitiesPortal: React.FC<OpportunitiesPortalProps> = ({
     return () => unsub();
   }, []);
 
-  // Fetch live workshops & courses from SQLite API
+  // Fetch live unified opportunities, workshops & courses from SQLite API
   useEffect(() => {
     let isMounted = true;
+    opportunityStore.refreshFromBackend().catch(() => {});
+
     fetch('/api/workshops')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
