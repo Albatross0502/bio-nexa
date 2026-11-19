@@ -598,3 +598,171 @@ DROP POLICY IF EXISTS "Public Can Submit Queued Opportunity" ON submitted_opport
 CREATE POLICY "Public Can Submit Queued Opportunity"
     ON submitted_opportunities FOR INSERT
     WITH CHECK (is_approved = false);
+
+-- -------------------------------------------------------------------------
+-- 13. PHASE 14: STUDENT AUTHENTICATION, SESSIONS & DPDP DELETION REQUESTS
+-- Strictly server-side accessible via SUPABASE_SERVICE_ROLE_KEY (RLS enabled
+-- with zero anon/public SELECT policies so private student data is never leaked).
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS student_accounts (
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    email VARCHAR(320) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    full_name VARCHAR(255) NOT NULL,
+    role VARCHAR(32) NOT NULL DEFAULT 'student' CHECK (role IN ('student')),
+    degree_title VARCHAR(255) DEFAULT '',
+    institution VARCHAR(255) DEFAULT '',
+    specialization VARCHAR(255) DEFAULT '',
+    graduation_year VARCHAR(16) DEFAULT '',
+    location VARCHAR(255) DEFAULT '',
+    skills JSONB NOT NULL DEFAULT '[]'::jsonb,
+    bio TEXT DEFAULT '',
+    linkedin_url TEXT DEFAULT '',
+    orcid_id VARCHAR(64) DEFAULT '',
+    profile_visibility VARCHAR(32) NOT NULL DEFAULT 'private' CHECK (profile_visibility IN ('private')),
+    email_verified BOOLEAN NOT NULL DEFAULT false,
+    email_verified_at TIMESTAMPTZ,
+    verification_token_hash VARCHAR(128),
+    verification_expires_at TIMESTAMPTZ,
+    reset_token_hash VARCHAR(128),
+    reset_expires_at TIMESTAMPTZ,
+    privacy_consent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    account_status VARCHAR(32) NOT NULL DEFAULT 'active'
+        CHECK (account_status IN ('active', 'deletion_pending', 'suspended')),
+    deletion_requested_at TIMESTAMPTZ,
+    deletion_reason TEXT,
+    last_login_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS student_sessions (
+    jti TEXT PRIMARY KEY,
+    student_id TEXT NOT NULL REFERENCES student_accounts(id) ON DELETE CASCADE,
+    token_hash VARCHAR(128) UNIQUE NOT NULL,
+    user_agent TEXT DEFAULT '',
+    ip_address_masked VARCHAR(64) DEFAULT 'unknown',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS student_deletion_requests (
+    id TEXT PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+    student_id TEXT NOT NULL,
+    email_hash VARCHAR(128) NOT NULL,
+    reason TEXT DEFAULT '',
+    status VARCHAR(32) NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'completed', 'cancelled')),
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_student_accounts_email ON student_accounts(email);
+CREATE INDEX IF NOT EXISTS idx_student_accounts_verify_hash ON student_accounts(verification_token_hash);
+CREATE INDEX IF NOT EXISTS idx_student_accounts_reset_hash ON student_accounts(reset_token_hash);
+CREATE INDEX IF NOT EXISTS idx_student_sessions_student_id ON student_sessions(student_id);
+CREATE INDEX IF NOT EXISTS idx_student_sessions_token_hash ON student_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_student_deletion_student ON student_deletion_requests(student_id);
+
+ALTER TABLE student_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE student_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE student_deletion_requests ENABLE ROW LEVEL SECURITY;
+
+-- =====================================================================
+-- 14. Company & Employer Authentication (Phase 15)
+-- Strictly server-side access (service_role only). Zero public SELECT policies.
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS company_accounts (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  contact_name TEXT NOT NULL,
+  contact_title TEXT NOT NULL DEFAULT '',
+  contact_phone TEXT NOT NULL DEFAULT '',
+  organization_name TEXT NOT NULL,
+  organization_type TEXT NOT NULL DEFAULT 'Private Biopharma',
+  official_website TEXT NOT NULL DEFAULT '',
+  headquarters_location TEXT NOT NULL DEFAULT '',
+  organization_size TEXT NOT NULL DEFAULT '',
+  founded_year TEXT NOT NULL DEFAULT '',
+  industry_focus TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  registration_identifier TEXT NOT NULL DEFAULT '',
+  linkedin_url TEXT NOT NULL DEFAULT '',
+  default_application_destination_type TEXT NOT NULL DEFAULT 'external_url',
+  default_application_url TEXT NOT NULL DEFAULT '',
+  default_application_email TEXT NOT NULL DEFAULT '',
+  email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+  email_verified_at TIMESTAMPTZ,
+  verification_token_hash TEXT,
+  verification_token_expires_at TIMESTAMPTZ,
+  reset_token_hash TEXT,
+  reset_token_expires_at TIMESTAMPTZ,
+  verification_status TEXT NOT NULL DEFAULT 'unverified',
+  verification_submitted_at TIMESTAMPTZ,
+  verification_evidence_url TEXT NOT NULL DEFAULT '',
+  verification_notes TEXT NOT NULL DEFAULT '',
+  verified_by TEXT,
+  verified_at TIMESTAMPTZ,
+  rejection_reason TEXT NOT NULL DEFAULT '',
+  account_status TEXT NOT NULL DEFAULT 'active',
+  suspended_at TIMESTAMPTZ,
+  suspended_by TEXT,
+  suspension_reason TEXT NOT NULL DEFAULT '',
+  privacy_consent_accepted BOOLEAN NOT NULL DEFAULT FALSE,
+  privacy_consent_at TIMESTAMPTZ,
+  last_login_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS company_sessions (
+  jti TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL REFERENCES company_accounts(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  user_agent TEXT NOT NULL DEFAULT '',
+  ip_masked TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS company_audit_logs (
+  id TEXT PRIMARY KEY,
+  company_id TEXT NOT NULL,
+  actor_type TEXT NOT NULL DEFAULT 'company',
+  actor_id TEXT NOT NULL DEFAULT '',
+  actor_email TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL DEFAULT 'company',
+  target_id TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'success',
+  ip_masked TEXT NOT NULL DEFAULT '',
+  details TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS company_account_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_destination_type TEXT NOT NULL DEFAULT 'external_url';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_email TEXT NOT NULL DEFAULT '';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS application_instructions TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX IF NOT EXISTS idx_company_accounts_email ON company_accounts(email);
+CREATE INDEX IF NOT EXISTS idx_company_accounts_verify_status ON company_accounts(verification_status);
+CREATE INDEX IF NOT EXISTS idx_company_accounts_status ON company_accounts(account_status);
+CREATE INDEX IF NOT EXISTS idx_company_accounts_verify_hash ON company_accounts(verification_token_hash);
+CREATE INDEX IF NOT EXISTS idx_company_accounts_reset_hash ON company_accounts(reset_token_hash);
+CREATE INDEX IF NOT EXISTS idx_company_sessions_company_id ON company_sessions(company_id);
+CREATE INDEX IF NOT EXISTS idx_company_sessions_token_hash ON company_sessions(token_hash);
+CREATE INDEX IF NOT EXISTS idx_company_audit_logs_company_id ON company_audit_logs(company_id);
+CREATE INDEX IF NOT EXISTS idx_company_audit_logs_created_at ON company_audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_company_account_id ON jobs(company_account_id);
+
+ALTER TABLE company_accounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE company_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE company_audit_logs ENABLE ROW LEVEL SECURITY;
+
+

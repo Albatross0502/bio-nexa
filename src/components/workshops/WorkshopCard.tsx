@@ -8,19 +8,21 @@ import {
   User,
   ExternalLink,
   Bookmark,
-  CheckCircle2,
   AlertCircle,
   Sparkles,
   Info,
   ShieldCheck,
+  Users,
+  Tag,
   X
 } from 'lucide-react';
 import {
   getDefaultWorkshopImageForTitle,
-  isValidWorkshopRegistrationUrl,
   isWorkshopRegistrationClosed,
   normalizeWorkshopFormat,
-  normalizeWorkshopStatus
+  normalizeWorkshopStatus,
+  validateWorkshopRegistrationUrl,
+  type WorkshopApprovalStatus
 } from '../../services/workshops/workshopHelpers';
 
 export interface UnifiedWorkshop {
@@ -30,6 +32,7 @@ export interface UnifiedWorkshop {
   description: string;
   instructor: string;
   organizer?: string;
+  category?: string;
   date: string;
   time?: string;
   duration?: string;
@@ -43,10 +46,13 @@ export interface UnifiedWorkshop {
   availability?: string;
   status?: 'upcoming' | 'ongoing' | 'completed' | string;
   fees?: string;
-  capacity?: number;
+  capacity?: number | null;
   imageUrl?: string;
   featured?: boolean;
   skillsCovered?: string[];
+  approvalStatus?: WorkshopApprovalStatus;
+  isApproved?: boolean;
+  isExpired?: boolean;
 }
 
 interface WorkshopCardProps {
@@ -65,20 +71,22 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
   const [showDirectWarning, setShowDirectWarning] = useState(false);
   const [imgError, setImgError] = useState(false);
 
-  const title = workshop.title || workshop.name || 'Biotechnology Workshop';
-  const organizer = workshop.organizer || workshop.instructor || 'BIO-INEXA Academy';
-  const instructor = workshop.instructor || organizer;
+  const title = workshop.title || workshop.name || '';
+  const organizer = (workshop.organizer || '').trim();
+  const instructor = (workshop.instructor || '').trim();
+  const displayHost = organizer || instructor;
   const destinationUrl = workshop.registrationUrl || workshop.registrationLink || '';
-  const hasValidUrl = isValidWorkshopRegistrationUrl(destinationUrl);
-  const venue = workshop.venue || workshop.location || 'Online / Remote';
-  const time = workshop.time || '09:30 AM - 04:30 PM IST';
-  const duration = workshop.duration || '2 Days Intensive';
-  const deadline = workshop.registrationDeadline || '';
-  const availability = workshop.availability || 'Open';
-  const status = normalizeWorkshopStatus(workshop.status);
-  const fees = workshop.fees || 'Free / Subsidized';
+  const urlCheck = validateWorkshopRegistrationUrl(destinationUrl);
+  const venue = (workshop.venue || workshop.location || '').trim();
+  const time = (workshop.time || '').trim();
+  const duration = (workshop.duration || '').trim();
+  const deadline = (workshop.registrationDeadline || '').trim();
+  const availability = (workshop.availability || 'Open').trim();
+  const fees = (workshop.fees || '').trim();
   const format = normalizeWorkshopFormat(workshop.format || workshop.workMode);
   const isExpired = isWorkshopRegistrationClosed(workshop);
+  const status = isExpired ? 'completed' : normalizeWorkshopStatus(workshop.status);
+  const capacity = typeof workshop.capacity === 'number' && workshop.capacity > 0 ? workshop.capacity : null;
 
   const displayImage =
     imgError || !workshop.imageUrl ? getDefaultWorkshopImageForTitle(title) : workshop.imageUrl;
@@ -88,7 +96,7 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
       e.preventDefault();
       return;
     }
-    if (!hasValidUrl) {
+    if (!urlCheck.valid) {
       e.preventDefault();
       setShowDirectWarning(true);
     }
@@ -140,10 +148,10 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
                 }`}
               >
                 {status === 'ongoing' && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />}
-                <span>{status}</span>
+                <span>{isExpired ? 'Expired' : status}</span>
               </span>
 
-              {workshop.featured && (
+              {workshop.featured && !isExpired && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/90 text-white backdrop-blur-md shadow-xs">
                   <Sparkles className="w-3 h-3" />
                   <span>Featured</span>
@@ -172,25 +180,43 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
             )}
           </div>
 
-          {/* Bottom Overlay Info (Duration & Fees) */}
-          <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between text-xs text-white">
-            <span className="flex items-center gap-1 font-semibold text-teal-200 drop-shadow-sm">
-              <Clock className="w-3.5 h-3.5" />
-              <span>{duration}</span>
-            </span>
-            <span className="font-mono font-bold bg-slate-900/80 px-2 py-0.5 rounded-lg text-emerald-300 drop-shadow-sm border border-emerald-400/30">
-              {fees}
-            </span>
-          </div>
+          {/* Bottom Overlay Info (Duration & Fees — shown only when saved) */}
+          {(duration || fees) && (
+            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2 text-xs text-white">
+              {duration ? (
+                <span className="flex items-center gap-1 font-semibold text-teal-200 drop-shadow-sm">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>{duration}</span>
+                </span>
+              ) : (
+                <span />
+              )}
+              {fees && (
+                <span className="font-mono font-bold bg-slate-900/80 px-2 py-0.5 rounded-lg text-emerald-300 drop-shadow-sm border border-emerald-400/30 truncate max-w-[65%]">
+                  {fees}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Content Body */}
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-3.5">
           <div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 font-medium mb-1">
-              <User className="w-3.5 h-3.5 text-[#14A3A0] shrink-0" />
-              <span className="truncate">{instructor}</span>
-            </div>
+            {workshop.category && (
+              <div className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#0B2A5B] dark:text-sky-300 bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 px-2 py-0.5 rounded-md mb-1.5">
+                <Tag className="w-2.5 h-2.5" />
+                <span>{workshop.category}</span>
+              </div>
+            )}
+
+            {displayHost && (
+              <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 font-medium mb-1">
+                <User className="w-3.5 h-3.5 text-[#14A3A0] shrink-0" />
+                <span className="truncate">{displayHost}</span>
+              </div>
+            )}
+
             {onSelectDetails ? (
               <button
                 type="button"
@@ -206,28 +232,46 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
             )}
           </div>
 
-          <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2 leading-relaxed">
-            {workshop.description}
-          </p>
+          {workshop.description && (
+            <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2 leading-relaxed">
+              {workshop.description}
+            </p>
+          )}
 
           {/* Key Facts Grid */}
           <div className="grid grid-cols-1 gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px]">
             {/* Date & Time */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
-                <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                <span className="font-semibold">{workshop.date}</span>
+            {(workshop.date || time) && (
+              <div className="flex items-center justify-between gap-2">
+                {workshop.date && (
+                  <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                    <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <span className="font-semibold">{workshop.date}</span>
+                  </div>
+                )}
+                {time && <div className="text-slate-500 font-mono text-[10px] truncate">{time}</div>}
               </div>
-              <div className="text-slate-500 font-mono text-[10px]">{time}</div>
-            </div>
+            )}
 
             {/* Venue or Meeting Information */}
-            <div className="flex items-start gap-1.5 text-slate-600 dark:text-slate-400">
-              <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
-              <span className="line-clamp-1" title={venue}>
-                {venue}
-              </span>
-            </div>
+            {venue && (
+              <div className="flex items-start gap-1.5 text-slate-600 dark:text-slate-400">
+                <MapPin className="w-3.5 h-3.5 text-rose-500 shrink-0 mt-0.5" />
+                <span className="line-clamp-1" title={venue}>
+                  {venue}
+                </span>
+              </div>
+            )}
+
+            {/* Capacity (shown ONLY when saved) */}
+            {capacity !== null && (
+              <div className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400">
+                <Users className="w-3.5 h-3.5 text-[#14A3A0] shrink-0" />
+                <span>
+                  Capacity: <strong className="text-slate-800 dark:text-slate-200 font-mono">{capacity} seats</strong>
+                </span>
+              </div>
+            )}
 
             {/* Registration Deadline & Availability */}
             <div className="flex items-center justify-between gap-2 pt-1">
@@ -235,12 +279,12 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
                 <AlertCircle className={`w-3.5 h-3.5 ${isExpired ? 'text-rose-500' : 'text-amber-500'}`} />
                 <span className="text-slate-500">Deadline:</span>
                 <span className={`font-semibold ${isExpired ? 'text-rose-600 dark:text-rose-400 line-through' : 'text-slate-800 dark:text-slate-200'}`}>
-                  {deadline || 'Open until batch filled'}
+                  {deadline || 'See organizer portal'}
                 </span>
               </div>
 
               <span
-                className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 ${
                   isExpired || availability.toLowerCase() === 'closed'
                     ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
                     : availability.toLowerCase().includes('fast') || availability.toLowerCase().includes('waitlist')
@@ -276,7 +320,7 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
             <button
               type="button"
               onClick={() => onSelectDetails(workshop)}
-              className="flex-1 py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+              className="flex-1 py-2.5 px-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Info className="w-3.5 h-3.5 text-slate-400" />
               <span>Curriculum &amp; Info</span>
@@ -291,17 +335,17 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
             >
               Registration Closed
             </button>
-          ) : !hasValidUrl ? (
+          ) : !urlCheck.valid ? (
             <button
               type="button"
               onClick={() => setShowDirectWarning(true)}
               className="flex-1 py-2.5 px-3 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-200 text-xs font-bold text-center cursor-pointer hover:bg-amber-200 transition-colors"
             >
-              Link Pending
+              Link Unavailable
             </button>
           ) : (
             <a
-              href={destinationUrl}
+              href={urlCheck.normalizedUrl}
               target="_blank"
               rel="noopener noreferrer"
               onClick={handleRegisterClick}
@@ -313,21 +357,25 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
           )}
         </div>
 
-        {/* Legal Disclaimer Micro-copy */}
+        {/* Official destination note */}
         <div className="flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 justify-center">
-          <ShieldCheck className="w-3 h-3 text-teal-500" />
-          <span>Direct institutional link · No middleman fees</span>
+          <ShieldCheck className="w-3 h-3 text-teal-500 shrink-0" />
+          <span className="truncate">
+            {urlCheck.valid && urlCheck.domain
+              ? `Official portal: ${urlCheck.domain}`
+              : 'Direct registration on organizer portal'}
+          </span>
         </div>
       </div>
 
-      {/* Warning Modal for invalid or internal mock registration */}
+      {/* Notice Modal if registration URL is invalid/missing */}
       {showDirectWarning && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
           <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl p-5 border border-amber-200 shadow-2xl space-y-3 text-xs">
             <div className="flex items-center justify-between text-amber-600 font-bold">
               <span className="flex items-center gap-1.5">
                 <AlertCircle className="w-4 h-4" />
-                <span>Notice on Registration Link</span>
+                <span>Registration URL Unavailable</span>
               </span>
               <button
                 type="button"
@@ -339,7 +387,8 @@ export const WorkshopCard: React.FC<WorkshopCardProps> = ({
               </button>
             </div>
             <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
-              The direct online form for &quot;{title}&quot; is currently being synchronized with the institutional organizer ({organizer}).
+              A verified external registration URL is not currently available for &quot;{title}&quot;
+              {displayHost ? ` (${displayHost})` : ''}. BIO-INEXA does not simulate workshop registrations.
             </p>
             <div className="pt-2 flex justify-end">
               <button

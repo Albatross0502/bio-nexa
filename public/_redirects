@@ -51,6 +51,10 @@
 /api/applications/*                  /.netlify/functions/community/applications/:splat       200
 /api/discussions                     /.netlify/functions/community/discussions               200
 /api/discussions/*                   /.netlify/functions/community/discussions/:splat        200
+/api/student/*                       /.netlify/functions/student-auth/:splat                 200
+/api/admin/companies                 /.netlify/functions/admin-companies                     200
+/api/admin/companies/*               /.netlify/functions/admin-companies/:splat              200
+/api/company/*                       /.netlify/functions/company-auth/:splat                 200
 /api/*                               /.netlify/functions/api-not-found/:splat              200
 
 # Single-Page Application fallback

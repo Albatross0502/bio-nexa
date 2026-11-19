@@ -101,6 +101,7 @@ export interface AdminWorkshop {
   name?: string;
   organizer: string;
   instructor?: string;
+  category?: string;
   location: string;
   venue?: string;
   workMode: string;
@@ -111,7 +112,7 @@ export interface AdminWorkshop {
   time?: string;
   duration: string;
   fees: string;
-  capacity: number;
+  capacity?: number | null;
   registrationUrl: string;
   registrationLink?: string;
   registrationDeadline?: string;
@@ -121,7 +122,9 @@ export interface AdminWorkshop {
   featured?: boolean;
   skillsCovered: string[];
   status: string;
+  approvalStatus?: 'approved' | 'pending' | 'rejected';
   isApproved: boolean;
+  isExpired?: boolean;
 }
 
 export interface AdminCourse {
@@ -129,6 +132,7 @@ export interface AdminCourse {
   title: string;
   name?: string;
   provider: string;
+  providerType?: 'third_party' | 'bionexa';
   instructor: string;
   category: string;
   duration: string;
@@ -136,6 +140,7 @@ export interface AdminCourse {
   deliveryMode: string;
   fees: string;
   price: string;
+  pricingType?: 'free' | 'paid';
   eligibility: string;
   description: string;
   curriculum: string[];
@@ -149,6 +154,9 @@ export interface AdminCourse {
   imageUrl?: string;
   status: 'available' | 'closed';
   availability?: string;
+  approvalStatus?: 'approved' | 'pending' | 'rejected';
+  isApproved?: boolean;
+  isExpired?: boolean;
   featured: boolean;
 }
 
@@ -224,6 +232,62 @@ export interface AdminContactMessage {
   subject: string;
   message: string;
   status: string;
+  createdAt: string;
+}
+
+export interface AdminCompanyAccount {
+  id: string;
+  role: 'company';
+  email: string;
+  contactName: string;
+  contactTitle: string;
+  contactPhone: string;
+  organizationName: string;
+  organizationType: string;
+  officialWebsite: string;
+  headquartersLocation: string;
+  organizationSize: string;
+  foundedYear: string;
+  industryFocus: string;
+  description: string;
+  registrationIdentifier: string;
+  linkedinUrl: string;
+  defaultApplicationDestinationType: 'external_url' | 'email' | 'bionexa_portal';
+  defaultApplicationUrl: string;
+  defaultApplicationEmail: string;
+  emailVerified: boolean;
+  emailVerifiedAt: string | null;
+  verificationStatus: 'unverified' | 'pending_review' | 'verified' | 'rejected';
+  verificationSubmittedAt: string | null;
+  verificationEvidenceUrl: string;
+  verificationNotes: string;
+  verifiedBy: string | null;
+  verifiedAt: string | null;
+  rejectionReason: string;
+  accountStatus: 'active' | 'suspended';
+  suspendedAt: string | null;
+  suspensionReason: string;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  canPublishAsVerified: boolean;
+  permissions: string[];
+  jobCount: number;
+}
+
+export interface AdminCompanyAuditLogEntry {
+  id: string;
+  companyId: string;
+  organizationName?: string;
+  actorType: 'company' | 'admin' | 'system';
+  actorId: string;
+  actorEmail: string;
+  action: string;
+  targetType: string;
+  targetId: string;
+  status: 'success' | 'denied' | 'failure';
+  ipMasked: string;
+  details: string;
   createdAt: string;
 }
 
@@ -308,6 +372,7 @@ class AdminApiClient {
     internships?: AdminInternship[];
     workshops: AdminWorkshop[];
     courses: AdminCourse[];
+    courseCategories?: string[];
     content: WebsiteContent;
     submittedOpportunities?: AdminSubmittedOpportunity[];
     contactMessages?: AdminContactMessage[];
@@ -454,6 +519,20 @@ class AdminApiClient {
     await parseJsonResponse(res, 'Failed to delete internship');
   }
 
+  public async scanExpiredInternships(): Promise<{
+    success: boolean;
+    expiredCount: number;
+    expiredIds: string[];
+    message: string;
+  }> {
+    const res = await fetch('/api/admin/internships/expire-scan', {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Failed to scan expired internships');
+  }
+
   // --- Workshops CRUD ---
 
   public async uploadWorkshopImage(filename: string, dataUrl: string): Promise<string> {
@@ -501,6 +580,37 @@ class AdminApiClient {
     });
     const data = await parseJsonResponse<{ workshop: AdminWorkshop }>(res, 'Failed to quickly update workshop');
     return data.workshop;
+  }
+
+  public async updateWorkshopApproval(
+    id: string,
+    approvalStatus: 'approved' | 'rejected' | 'pending'
+  ): Promise<AdminWorkshop> {
+    const res = await fetch(`/api/admin/workshops/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ approvalStatus })
+    });
+    const data = await parseJsonResponse<{ workshop: AdminWorkshop }>(res, 'Failed to update workshop approval status');
+    return data.workshop;
+  }
+
+  public async scanExpiredWorkshops(): Promise<{ expiredCount: number; expiredIds: string[]; message: string }> {
+    const res = await fetch('/api/admin/workshops/expire-scan', {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders(),
+    });
+    const data = await parseJsonResponse<{ expiredCount: number; expiredIds: string[]; message: string }>(
+      res,
+      'Failed to scan expired workshops'
+    );
+    return {
+      expiredCount: Number(data.expiredCount || 0),
+      expiredIds: Array.isArray(data.expiredIds) ? data.expiredIds : [],
+      message: data.message || 'Expired workshop scan complete.',
+    };
   }
 
   public async deleteWorkshop(id: string): Promise<void> {
@@ -571,6 +681,80 @@ class AdminApiClient {
       headers: this.getHeaders()
     });
     await parseJsonResponse(res, 'Failed to delete course');
+  }
+
+  public async updateCourseApproval(
+    id: string,
+    approvalStatus: 'approved' | 'rejected' | 'pending'
+  ): Promise<AdminCourse> {
+    const res = await fetch(`/api/admin/courses/${encodeURIComponent(id)}/status`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ approvalStatus })
+    });
+    const data = await parseJsonResponse<{ course: AdminCourse }>(
+      res,
+      'Failed to update course approval status'
+    );
+    return data.course;
+  }
+
+  public async scanExpiredCourses(): Promise<{
+    expiredCount: number;
+    expiredIds: string[];
+    message: string;
+  }> {
+    const res = await fetch('/api/admin/courses/expire-scan', {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    const data = await parseJsonResponse<{
+      expiredCount: number;
+      expiredIds: string[];
+      message: string;
+    }>(res, 'Failed to scan expired courses');
+    return {
+      expiredCount: Number(data.expiredCount || 0),
+      expiredIds: Array.isArray(data.expiredIds) ? data.expiredIds : [],
+      message: data.message || 'Expired course scan complete.'
+    };
+  }
+
+  public async getCourseCategories(): Promise<{
+    categories: string[];
+    coreCategories: string[];
+    customCategories: string[];
+  }> {
+    const res = await fetch('/api/admin/courses/categories', {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Failed to load course categories');
+  }
+
+  public async addCourseCategory(
+    name: string
+  ): Promise<{ categories: string[]; customCategories: string[]; message: string }> {
+    const res = await fetch('/api/admin/courses/categories', {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ name })
+    });
+    return parseJsonResponse(res, 'Failed to add course category');
+  }
+
+  public async deleteCourseCategory(
+    name: string
+  ): Promise<{ categories: string[]; customCategories: string[]; message: string }> {
+    const res = await fetch(`/api/admin/courses/categories/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Failed to remove course category');
   }
 
   // --- Website Content ---
@@ -977,6 +1161,79 @@ class AdminApiClient {
       body: JSON.stringify({ currentPassword, newPassword })
     });
     return parseJsonResponse(res, 'Failed to update administrator password');
+  }
+
+  // --- Phase 15: Company / Employer Verification, Suspension & Audit Logs ---
+
+  public async getCompanies(): Promise<{
+    success: boolean;
+    companies: AdminCompanyAccount[];
+    summary: {
+      total: number;
+      verified: number;
+      pendingReview: number;
+      unverified: number;
+      rejected: number;
+      suspended: number;
+    };
+  }> {
+    const res = await fetch('/api/admin/companies', {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Failed to load registered employers');
+  }
+
+  public async getCompanyAuditLogs(companyId?: string): Promise<{
+    success: boolean;
+    logs: AdminCompanyAuditLogEntry[];
+  }> {
+    const qs = companyId ? `?companyId=${encodeURIComponent(companyId)}` : '';
+    const res = await fetch(`/api/admin/companies/audit-logs${qs}`, {
+      credentials: 'include',
+      headers: this.getHeaders()
+    });
+    return parseJsonResponse(res, 'Failed to load employer audit logs');
+  }
+
+  public async verifyCompany(
+    id: string,
+    decision: 'verified' | 'rejected' | 'unverified',
+    notes: string = ''
+  ): Promise<{ success: boolean; company: AdminCompanyAccount; message: string }> {
+    const res = await fetch(`/api/admin/companies/${encodeURIComponent(id)}/verify`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ decision, notes, reason: notes })
+    });
+    return parseJsonResponse(res, 'Failed to update employer verification');
+  }
+
+  public async suspendCompany(
+    id: string,
+    reason: string
+  ): Promise<{ success: boolean; company: AdminCompanyAccount; revokedSessions: number; message: string }> {
+    const res = await fetch(`/api/admin/companies/${encodeURIComponent(id)}/suspend`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ reason })
+    });
+    return parseJsonResponse(res, 'Failed to suspend employer account');
+  }
+
+  public async reinstateCompany(
+    id: string,
+    notes: string = ''
+  ): Promise<{ success: boolean; company: AdminCompanyAccount; message: string }> {
+    const res = await fetch(`/api/admin/companies/${encodeURIComponent(id)}/reinstate`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: this.getHeaders(),
+      body: JSON.stringify({ notes })
+    });
+    return parseJsonResponse(res, 'Failed to reinstate employer account');
   }
 }
 

@@ -20,6 +20,48 @@ import {
   AdminDashboardStats,
 } from '../services/admin/adminHelpers.js';
 import { findDuplicateJob as matchDuplicateJob } from '../services/jobs/jobVerification.js';
+import {
+  classifyInternshipCompensation,
+  isInternshipDeadlineExpired,
+  matchesInternshipModeFilter,
+} from '../services/internships/internshipHelpers.js';
+import {
+  isWorkshopExpired,
+  normalizeWorkshopApprovalStatus,
+} from '../services/workshops/workshopHelpers.js';
+import {
+  COURSE_CATEGORIES,
+  classifyCoursePricing,
+  isCourseExpired,
+  normalizeCourseApprovalStatus,
+  normalizeCourseProviderType,
+  type CourseApprovalStatus,
+  type CoursePricingType,
+  type CourseProviderType,
+} from '../services/courses/courseHelpers.js';
+import {
+  type DbStudentAccount,
+  type DbStudentSession,
+  type SafeStudentSession,
+  type StudentAccountStatus,
+  type StudentDeletionRequestRecord,
+  hashEmailForAudit,
+  hashOpaqueToken,
+  normalizeStudentEmail,
+} from '../services/student/studentAuthService.js';
+import {
+  type ApplicationDestinationType,
+  type CompanyAccountRecord,
+  type CompanyAccountStatus,
+  type CompanyAuditLogRecord,
+  type CompanySessionRecord,
+  type CompanyVerificationStatus,
+  generateCompanyAuditId,
+  normalizeAccountStatus as normalizeCompanyAccountStatus,
+  normalizeApplicationDestinationType,
+  normalizeCompanyEmail,
+  normalizeVerificationStatus as normalizeCompanyVerificationStatus,
+} from '../services/company/companyAuthService.js';
 
 export type JobVerificationStatus = 
   | 'Pending Verification'
@@ -64,6 +106,10 @@ export interface DbJob {
   responsibilities: string[];
   requirements: string[];
   sector: string;
+  companyAccountId?: string;
+  applicationDestinationType?: ApplicationDestinationType;
+  applicationEmail?: string;
+  applicationInstructions?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -113,12 +159,15 @@ export interface DbSyncLog {
 export type WorkshopFormat = 'Online' | 'Offline' | 'Hybrid';
 export type WorkshopStatus = 'upcoming' | 'ongoing' | 'completed';
 export type WorkshopAvailability = 'Open' | 'Filling Fast' | 'Waitlist' | 'Closed';
+export type WorkshopApprovalState = 'approved' | 'pending' | 'rejected';
 
 export interface DbWorkshop {
   id: string;
   name: string;
   description: string;
+  organizer?: string;
   instructor: string;
+  category?: string;
   date: string;
   time: string;
   duration: string;
@@ -133,6 +182,8 @@ export interface DbWorkshop {
   imageUrl?: string;
   featured: boolean;
   skillsCovered: string[];
+  approvalStatus?: WorkshopApprovalState;
+  isApproved?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -151,9 +202,11 @@ export interface DbCourse {
   id: string;
   name: string;
   provider: string;
+  providerType: CourseProviderType;
   description: string;
   duration: string;
   fees: string;
+  pricingType: CoursePricingType;
   eligibility: string;
   curriculum: string[];
   deliveryMode: string;
@@ -162,6 +215,8 @@ export interface DbCourse {
   registrationLink: string;
   availability: string;
   status: CourseStatus;
+  approvalStatus: CourseApprovalStatus;
+  isApproved: boolean;
   instructor: string;
   level: string;
   category: string;
@@ -390,21 +445,25 @@ export class BionexaDatabase {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         description TEXT NOT NULL,
+        organizer TEXT DEFAULT '',
         instructor TEXT DEFAULT '',
+        category TEXT DEFAULT '',
         date TEXT NOT NULL,
-        time TEXT DEFAULT '09:00 AM - 05:00 PM IST',
-        duration TEXT DEFAULT '1 Day',
+        time TEXT DEFAULT '',
+        duration TEXT DEFAULT '',
         format TEXT NOT NULL DEFAULT 'Online',
         venue TEXT NOT NULL,
         registration_deadline TEXT DEFAULT '',
         registration_link TEXT NOT NULL,
         availability TEXT DEFAULT 'Open',
         status TEXT NOT NULL DEFAULT 'upcoming',
-        fees TEXT DEFAULT 'Free',
-        capacity INTEGER DEFAULT 50,
+        fees TEXT DEFAULT '',
+        capacity INTEGER DEFAULT 0,
         image_url TEXT DEFAULT '',
         featured INTEGER NOT NULL DEFAULT 0,
         skills_covered TEXT NOT NULL DEFAULT '[]',
+        approval_status TEXT NOT NULL DEFAULT 'approved',
+        is_approved INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -413,10 +472,12 @@ export class BionexaDatabase {
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
         provider TEXT DEFAULT '',
+        provider_type TEXT NOT NULL DEFAULT 'third_party',
         description TEXT NOT NULL,
         duration TEXT NOT NULL,
-        fees TEXT DEFAULT 'Free',
-        eligibility TEXT DEFAULT 'Open to all Science Students',
+        fees TEXT DEFAULT '',
+        pricing_type TEXT NOT NULL DEFAULT 'free',
+        eligibility TEXT DEFAULT '',
         curriculum TEXT NOT NULL DEFAULT '[]',
         delivery_mode TEXT DEFAULT 'Online (Self-Paced)',
         certificate_info TEXT DEFAULT '',
@@ -424,6 +485,8 @@ export class BionexaDatabase {
         registration_link TEXT NOT NULL,
         availability TEXT DEFAULT 'Available',
         status TEXT NOT NULL DEFAULT 'available',
+        approval_status TEXT NOT NULL DEFAULT 'approved',
+        is_approved INTEGER NOT NULL DEFAULT 1,
         instructor TEXT DEFAULT '',
         level TEXT DEFAULT 'Intermediate',
         category TEXT DEFAULT 'Biotechnology',
@@ -689,6 +752,130 @@ export class BionexaDatabase {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS student_accounts (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        full_name TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'student',
+        degree_title TEXT DEFAULT '',
+        institution TEXT DEFAULT '',
+        specialization TEXT DEFAULT '',
+        graduation_year TEXT DEFAULT '',
+        location TEXT DEFAULT '',
+        skills TEXT NOT NULL DEFAULT '[]',
+        bio TEXT DEFAULT '',
+        linkedin_url TEXT DEFAULT '',
+        orcid_id TEXT DEFAULT '',
+        profile_visibility TEXT NOT NULL DEFAULT 'private',
+        email_verified INTEGER NOT NULL DEFAULT 0,
+        email_verified_at TEXT DEFAULT NULL,
+        verification_token_hash TEXT DEFAULT NULL,
+        verification_expires_at TEXT DEFAULT NULL,
+        reset_token_hash TEXT DEFAULT NULL,
+        reset_expires_at TEXT DEFAULT NULL,
+        privacy_consent_at TEXT NOT NULL,
+        account_status TEXT NOT NULL DEFAULT 'active',
+        deletion_requested_at TEXT DEFAULT NULL,
+        deletion_reason TEXT DEFAULT NULL,
+        last_login_at TEXT DEFAULT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS student_sessions (
+        jti TEXT PRIMARY KEY,
+        student_id TEXT NOT NULL REFERENCES student_accounts(id) ON DELETE CASCADE,
+        token_hash TEXT UNIQUE NOT NULL,
+        user_agent TEXT DEFAULT '',
+        ip_address_masked TEXT DEFAULT 'unknown',
+        created_at TEXT NOT NULL,
+        last_active_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT DEFAULT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS student_deletion_requests (
+        id TEXT PRIMARY KEY,
+        student_id TEXT NOT NULL,
+        email_hash TEXT NOT NULL,
+        reason TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'pending',
+        requested_at TEXT NOT NULL,
+        processed_at TEXT DEFAULT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS company_accounts (
+        id TEXT PRIMARY KEY,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        contact_name TEXT NOT NULL,
+        contact_title TEXT DEFAULT '',
+        contact_phone TEXT DEFAULT '',
+        organization_name TEXT NOT NULL,
+        organization_type TEXT NOT NULL DEFAULT 'Private Biopharma',
+        official_website TEXT DEFAULT '',
+        headquarters_location TEXT DEFAULT '',
+        organization_size TEXT DEFAULT '',
+        founded_year TEXT DEFAULT '',
+        industry_focus TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        registration_identifier TEXT DEFAULT '',
+        linkedin_url TEXT DEFAULT '',
+        default_application_destination_type TEXT NOT NULL DEFAULT 'external_url',
+        default_application_url TEXT DEFAULT '',
+        default_application_email TEXT DEFAULT '',
+        email_verified INTEGER NOT NULL DEFAULT 0,
+        email_verified_at TEXT DEFAULT NULL,
+        verification_token_hash TEXT DEFAULT NULL,
+        verification_token_expires_at TEXT DEFAULT NULL,
+        reset_token_hash TEXT DEFAULT NULL,
+        reset_token_expires_at TEXT DEFAULT NULL,
+        verification_status TEXT NOT NULL DEFAULT 'unverified',
+        verification_submitted_at TEXT DEFAULT NULL,
+        verification_evidence_url TEXT DEFAULT '',
+        verification_notes TEXT DEFAULT '',
+        verified_by TEXT DEFAULT NULL,
+        verified_at TEXT DEFAULT NULL,
+        rejection_reason TEXT DEFAULT '',
+        account_status TEXT NOT NULL DEFAULT 'active',
+        suspended_at TEXT DEFAULT NULL,
+        suspended_by TEXT DEFAULT NULL,
+        suspension_reason TEXT DEFAULT '',
+        privacy_consent_accepted INTEGER NOT NULL DEFAULT 0,
+        privacy_consent_at TEXT DEFAULT NULL,
+        last_login_at TEXT DEFAULT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS company_sessions (
+        jti TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL REFERENCES company_accounts(id) ON DELETE CASCADE,
+        token_hash TEXT UNIQUE NOT NULL,
+        user_agent TEXT DEFAULT '',
+        ip_masked TEXT DEFAULT 'unknown',
+        created_at TEXT NOT NULL,
+        last_active_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT DEFAULT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS company_audit_logs (
+        id TEXT PRIMARY KEY,
+        company_id TEXT NOT NULL,
+        actor_type TEXT NOT NULL DEFAULT 'company',
+        actor_id TEXT DEFAULT '',
+        actor_email TEXT DEFAULT '',
+        action TEXT NOT NULL,
+        target_type TEXT NOT NULL DEFAULT 'company',
+        target_id TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'success',
+        ip_masked TEXT DEFAULT 'unknown',
+        details TEXT DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_jobs_is_active ON jobs(is_active);
       CREATE INDEX IF NOT EXISTS idx_jobs_is_approved ON jobs(is_approved);
       CREATE INDEX IF NOT EXISTS idx_jobs_sector ON jobs(sector);
@@ -707,14 +894,29 @@ export class BionexaDatabase {
       CREATE INDEX IF NOT EXISTS idx_disc_replies_topic ON discussion_replies(topic_id);
       CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
       CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_student_accounts_email ON student_accounts(email);
+      CREATE INDEX IF NOT EXISTS idx_student_sessions_student ON student_sessions(student_id);
+      CREATE INDEX IF NOT EXISTS idx_student_sessions_token ON student_sessions(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_student_deletion_student ON student_deletion_requests(student_id);
+      CREATE INDEX IF NOT EXISTS idx_company_accounts_email ON company_accounts(email);
+      CREATE INDEX IF NOT EXISTS idx_company_accounts_verify_status ON company_accounts(verification_status);
+      CREATE INDEX IF NOT EXISTS idx_company_accounts_status ON company_accounts(account_status);
+      CREATE INDEX IF NOT EXISTS idx_company_sessions_company ON company_sessions(company_id);
+      CREATE INDEX IF NOT EXISTS idx_company_sessions_token ON company_sessions(token_hash);
+      CREATE INDEX IF NOT EXISTS idx_company_audit_company ON company_audit_logs(company_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_admin_attempts_ident ON admin_login_attempts(identifier, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_admin_resets_hash ON admin_password_resets(token_hash);
     `);
 
-    // Ensure verification columns exist on existing databases
+    // Ensure verification & Phase 15 employer columns exist on existing databases
     try { this.db.exec("ALTER TABLE jobs ADD COLUMN original_job_url TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE jobs ADD COLUMN last_verification_date TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE jobs ADD COLUMN verification_notes TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE jobs ADD COLUMN company_account_id TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE jobs ADD COLUMN application_destination_type TEXT DEFAULT 'external_url';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE jobs ADD COLUMN application_email TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE jobs ADD COLUMN application_instructions TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_jobs_company_account_id ON jobs(company_account_id);"); } catch (_) {}
     // Ensure pending jobs never carry artificial verification dates
     try {
       this.db.exec(
@@ -727,15 +929,25 @@ export class BionexaDatabase {
     try { this.db.exec("ALTER TABLE workshops ADD COLUMN image_url TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE workshops ADD COLUMN registration_deadline TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE workshops ADD COLUMN featured INTEGER DEFAULT 0;"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE workshops ADD COLUMN organizer TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE workshops ADD COLUMN category TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE workshops ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE workshops ADD COLUMN is_approved INTEGER NOT NULL DEFAULT 1;"); } catch (_) {}
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_workshops_featured ON workshops(featured);"); } catch (_) {}
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_workshops_approval ON workshops(approval_status, is_approved);"); } catch (_) {}
 
-    // Ensure Phase 09 course columns exist on existing databases
+    // Ensure Phase 09 & Phase 13 course columns exist on existing databases
     try { this.db.exec("ALTER TABLE courses ADD COLUMN provider TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE courses ADD COLUMN provider_type TEXT NOT NULL DEFAULT 'third_party';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE courses ADD COLUMN pricing_type TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE courses ADD COLUMN delivery_mode TEXT DEFAULT 'Online (Self-Paced)';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE courses ADD COLUMN certificate_info TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE courses ADD COLUMN registration_deadline TEXT DEFAULT '';"); } catch (_) {}
     try { this.db.exec("ALTER TABLE courses ADD COLUMN image_url TEXT DEFAULT '';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE courses ADD COLUMN approval_status TEXT NOT NULL DEFAULT 'approved';"); } catch (_) {}
+    try { this.db.exec("ALTER TABLE courses ADD COLUMN is_approved INTEGER NOT NULL DEFAULT 1;"); } catch (_) {}
     try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_courses_featured ON courses(featured);"); } catch (_) {}
+    try { this.db.exec("CREATE INDEX IF NOT EXISTS idx_courses_approval ON courses(approval_status, is_approved);"); } catch (_) {}
   }
 
   // ==========================================
@@ -815,13 +1027,15 @@ export class BionexaDatabase {
         skills, employment_type, salary, application_url, source, original_job_url,
         publication_date, expiry_date, last_verification_date, verification_status, verification_notes,
         is_active, is_approved, featured, responsibilities, requirements,
-        sector, created_at, updated_at
+        sector, company_account_id, application_destination_type, application_email, application_instructions,
+        created_at, updated_at
       ) VALUES (
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
-        ?, ?, ?
+        ?, ?, ?, ?, ?,
+        ?, ?
       )
     `);
 
@@ -835,7 +1049,7 @@ export class BionexaDatabase {
       JSON.stringify(job.skills || []),
       job.employmentType || 'Full-time',
       job.salary || 'Competitive',
-      job.applicationUrl,
+      job.applicationUrl || '',
       job.source || 'BIO-INEXA Portal',
       job.originalJobUrl || job.applicationUrl || '',
       job.publicationDate || now.split('T')[0],
@@ -849,6 +1063,10 @@ export class BionexaDatabase {
       JSON.stringify(job.responsibilities || []),
       JSON.stringify(job.requirements || []),
       job.sector || 'Biotechnology',
+      job.companyAccountId || '',
+      normalizeApplicationDestinationType(job.applicationDestinationType),
+      job.applicationEmail || '',
+      job.applicationInstructions || '',
       now,
       now
     );
@@ -868,6 +1086,14 @@ export class BionexaDatabase {
       ...existing,
       ...updates,
       verificationStatus: verStatus,
+      companyAccountId: updates.companyAccountId !== undefined ? updates.companyAccountId : (existing.companyAccountId || ''),
+      applicationDestinationType:
+        updates.applicationDestinationType !== undefined
+          ? normalizeApplicationDestinationType(updates.applicationDestinationType)
+          : normalizeApplicationDestinationType(existing.applicationDestinationType),
+      applicationEmail: updates.applicationEmail !== undefined ? updates.applicationEmail : (existing.applicationEmail || ''),
+      applicationInstructions:
+        updates.applicationInstructions !== undefined ? updates.applicationInstructions : (existing.applicationInstructions || ''),
       updatedAt: new Date().toISOString()
     };
 
@@ -878,7 +1104,9 @@ export class BionexaDatabase {
         application_url = ?, source = ?, original_job_url = ?, publication_date = ?, expiry_date = ?,
         last_verification_date = ?, verification_status = ?, verification_notes = ?,
         is_active = ?, is_approved = ?, featured = ?,
-        responsibilities = ?, requirements = ?, sector = ?, updated_at = ?
+        responsibilities = ?, requirements = ?, sector = ?,
+        company_account_id = ?, application_destination_type = ?, application_email = ?, application_instructions = ?,
+        updated_at = ?
       WHERE id = ?
     `);
 
@@ -891,7 +1119,7 @@ export class BionexaDatabase {
       JSON.stringify(merged.skills || []),
       merged.employmentType,
       merged.salary,
-      merged.applicationUrl,
+      merged.applicationUrl || '',
       merged.source,
       merged.originalJobUrl || merged.applicationUrl || '',
       merged.publicationDate,
@@ -905,6 +1133,10 @@ export class BionexaDatabase {
       JSON.stringify(merged.responsibilities || []),
       JSON.stringify(merged.requirements || []),
       merged.sector,
+      merged.companyAccountId || '',
+      normalizeApplicationDestinationType(merged.applicationDestinationType),
+      merged.applicationEmail || '',
+      merged.applicationInstructions || '',
       merged.updatedAt,
       id
     );
@@ -969,14 +1201,17 @@ export class BionexaDatabase {
   public getInternships(filter?: {
     search?: string;
     category?: string;
+    location?: string;
     mode?: string;
+    compensation?: string;
+    includeExpired?: boolean;
     onlyActive?: boolean;
     onlyApproved?: boolean;
   }): DbInternship[] {
     let sql = 'SELECT * FROM internships WHERE 1=1';
     const params: any[] = [];
 
-    if (filter?.onlyActive !== false) {
+    if (filter?.onlyActive !== false && !filter?.includeExpired) {
       sql += ' AND is_active = 1';
     }
     if (filter?.onlyApproved !== false) {
@@ -986,19 +1221,66 @@ export class BionexaDatabase {
       sql += ' AND category = ?';
       params.push(filter.category);
     }
-    if (filter?.mode && filter.mode !== 'All' && filter.mode !== 'all') {
-      sql += ' AND work_mode LIKE ?';
-      params.push(`%${filter.mode}%`);
+    if (filter?.location && filter.location !== 'All' && filter.location !== 'all') {
+      sql += ' AND location LIKE ?';
+      params.push(`%${filter.location}%`);
     }
     if (filter?.search) {
-      sql += ' AND (title LIKE ? OR organization LIKE ? OR description LIKE ? OR location LIKE ?)';
+      sql += ' AND (title LIKE ? OR organization LIKE ? OR description LIKE ? OR location LIKE ? OR eligibility LIKE ? OR skills_required LIKE ?)';
       const term = `%${filter.search}%`;
-      params.push(term, term, term, term);
+      params.push(term, term, term, term, term, term);
     }
 
     sql += ' ORDER BY featured DESC, created_at DESC';
-    const rows = this.db.prepare(sql).all(...params) as any[];
-    return rows.map((r) => this.mapInternshipRow(r));
+    const rows = (this.db.prepare(sql).all(...params) as any[]).map((r) => this.mapInternshipRow(r));
+    const compFilter = String(filter?.compensation || 'all').trim().toLowerCase();
+
+    return rows.filter((intern) => {
+      if (filter?.mode && !matchesInternshipModeFilter(intern.workMode, filter.mode)) {
+        return false;
+      }
+      if (compFilter === 'paid' || compFilter === 'unpaid') {
+        if (classifyInternshipCompensation(intern.stipend) !== compFilter) {
+          return false;
+        }
+      }
+      if (!filter?.includeExpired && filter?.onlyActive !== false) {
+        if (
+          intern.verificationStatus === 'Expired' ||
+          intern.verificationStatus === 'Rejected' ||
+          isInternshipDeadlineExpired(intern.deadline)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }
+
+  public expirePastDeadlineInternships(referenceDate: Date = new Date()): {
+    expiredCount: number;
+    expiredIds: string[];
+  } {
+    const all = this.getAllInternshipsAdmin();
+    const expiredIds: string[] = [];
+    for (const intern of all) {
+      if (
+        intern.isActive &&
+        intern.verificationStatus !== 'Rejected' &&
+        intern.verificationStatus !== 'Expired' &&
+        isInternshipDeadlineExpired(intern.deadline, referenceDate)
+      ) {
+        this.updateInternship(intern.id, {
+          isActive: false,
+          verificationStatus: 'Expired',
+          verificationNotes: intern.verificationNotes
+            ? `${intern.verificationNotes} · Automatically marked expired after deadline (${intern.deadline}).`
+            : `Automatically marked expired after deadline (${intern.deadline}).`,
+        });
+        expiredIds.push(intern.id);
+      }
+    }
+    return { expiredCount: expiredIds.length, expiredIds };
   }
 
   public getAllInternshipsAdmin(): DbInternship[] {
@@ -1289,9 +1571,13 @@ export class BionexaDatabase {
 
   public getWorkshops(filter?: boolean | {
     onlyActive?: boolean;
+    onlyApproved?: boolean;
     status?: string;
     format?: string;
+    category?: string;
+    approvalStatus?: string;
     featured?: boolean;
+    includeExpired?: boolean;
     search?: string;
   }): DbWorkshop[] {
     let sql = 'SELECT * FROM workshops WHERE 1=1';
@@ -1299,9 +1585,16 @@ export class BionexaDatabase {
 
     if (typeof filter === 'boolean') {
       if (filter) {
-        sql += " AND status != 'completed'";
+        sql += " AND status != 'completed' AND is_approved = 1";
       }
     } else if (filter) {
+      if (filter.onlyApproved) {
+        sql += " AND is_approved = 1 AND approval_status = 'approved'";
+      }
+      if (filter.approvalStatus && filter.approvalStatus !== 'all') {
+        sql += ' AND approval_status = ?';
+        params.push(filter.approvalStatus);
+      }
       if (filter.status && filter.status !== 'all') {
         sql += ' AND status = ?';
         params.push(filter.status);
@@ -1310,21 +1603,29 @@ export class BionexaDatabase {
         sql += ' AND format = ?';
         params.push(filter.format);
       }
+      if (filter.category && filter.category !== 'all') {
+        sql += ' AND LOWER(category) = LOWER(?)';
+        params.push(filter.category);
+      }
       if (filter.featured !== undefined) {
         sql += ' AND featured = ?';
         params.push(filter.featured ? 1 : 0);
       }
       if (filter.search) {
-        sql += ' AND (name LIKE ? OR instructor LIKE ? OR description LIKE ? OR venue LIKE ?)';
+        sql += ' AND (name LIKE ? OR organizer LIKE ? OR instructor LIKE ? OR category LIKE ? OR description LIKE ? OR venue LIKE ?)';
         const term = `%${filter.search}%`;
-        params.push(term, term, term, term);
+        params.push(term, term, term, term, term, term);
       }
     }
 
     sql += ' ORDER BY featured DESC, date ASC, created_at DESC';
 
     const rows = this.db.prepare(sql).all(...params) as any[];
-    return rows.map(this.mapWorkshopRow);
+    const mapped = rows.map((row) => this.mapWorkshopRow(row));
+    if (typeof filter === 'object' && filter && filter.includeExpired === false) {
+      return mapped.filter((w) => !isWorkshopExpired(w));
+    }
+    return mapped;
   }
 
   public getWorkshopById(id: string): DbWorkshop | null {
@@ -1336,33 +1637,40 @@ export class BionexaDatabase {
   public createWorkshop(data: Omit<DbWorkshop, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): DbWorkshop {
     const id = data.id || `ws-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const now = new Date().toISOString();
+    const approvalStatus = normalizeWorkshopApprovalStatus(data.approvalStatus, data.isApproved);
+    const isApproved = approvalStatus === 'approved' && data.isApproved !== false;
+    const capacityVal = Number.isFinite(Number(data.capacity)) && Number(data.capacity) > 0 ? Math.floor(Number(data.capacity)) : 0;
 
     this.db.prepare(`
       INSERT INTO workshops (
-        id, name, description, instructor, date, time, duration,
+        id, name, description, organizer, instructor, category, date, time, duration,
         format, venue, registration_deadline, registration_link,
         availability, status, fees, capacity, image_url,
-        featured, skills_covered, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        featured, skills_covered, approval_status, is_approved, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.name,
       data.description,
+      data.organizer || '',
       data.instructor || '',
+      data.category || '',
       data.date,
-      data.time || '09:30 AM - 04:30 PM IST',
-      data.duration || '1 Day',
+      data.time || '',
+      data.duration || '',
       data.format || 'Online',
       data.venue,
       data.registrationDeadline || '',
       data.registrationLink,
       data.availability || 'Open',
       data.status || 'upcoming',
-      data.fees || 'Free',
-      data.capacity || 50,
+      data.fees || '',
+      capacityVal,
       data.imageUrl || '',
       data.featured ? 1 : 0,
       JSON.stringify(data.skillsCovered || []),
+      approvalStatus,
+      isApproved ? 1 : 0,
       now,
       now
     );
@@ -1379,38 +1687,69 @@ export class BionexaDatabase {
       ...updates,
       updatedAt: new Date().toISOString()
     };
+    const approvalStatus = normalizeWorkshopApprovalStatus(merged.approvalStatus, merged.isApproved);
+    const isApproved = approvalStatus === 'approved' && merged.isApproved !== false;
+    const capacityVal = Number.isFinite(Number(merged.capacity)) && Number(merged.capacity) > 0 ? Math.floor(Number(merged.capacity)) : 0;
 
     this.db.prepare(`
       UPDATE workshops SET
-        name = ?, description = ?, instructor = ?, date = ?,
+        name = ?, description = ?, organizer = ?, instructor = ?, category = ?, date = ?,
         time = ?, duration = ?, format = ?, venue = ?,
         registration_deadline = ?, registration_link = ?,
         availability = ?, status = ?, fees = ?, capacity = ?,
-        image_url = ?, featured = ?, skills_covered = ?, updated_at = ?
+        image_url = ?, featured = ?, skills_covered = ?, approval_status = ?, is_approved = ?, updated_at = ?
       WHERE id = ?
     `).run(
       merged.name,
       merged.description,
-      merged.instructor,
+      merged.organizer || '',
+      merged.instructor || '',
+      merged.category || '',
       merged.date,
-      merged.time,
-      merged.duration,
+      merged.time || '',
+      merged.duration || '',
       merged.format,
       merged.venue,
-      merged.registrationDeadline,
+      merged.registrationDeadline || '',
       merged.registrationLink,
       merged.availability,
       merged.status,
-      merged.fees,
-      merged.capacity,
+      merged.fees || '',
+      capacityVal,
       merged.imageUrl || '',
       merged.featured ? 1 : 0,
       JSON.stringify(merged.skillsCovered || []),
+      approvalStatus,
+      isApproved ? 1 : 0,
       merged.updatedAt,
       id
     );
 
     return this.getWorkshopById(id);
+  }
+
+  /**
+   * Automatically scans active workshops whose registration deadline or workshop date has passed
+   * and marks them completed / Closed so expired sessions are accurately surfaced.
+   */
+  public expirePastWorkshops(referenceDate: Date = new Date()): { expiredCount: number; expiredIds: string[] } {
+    const rows = this.db.prepare("SELECT * FROM workshops WHERE status != 'completed'").all() as any[];
+    const expiredIds: string[] = [];
+    const nowIso = referenceDate.toISOString();
+
+    for (const row of rows) {
+      const ws = this.mapWorkshopRow(row);
+      if (isWorkshopExpired(ws, referenceDate)) {
+        this.db.prepare(`
+          UPDATE workshops
+          SET status = 'completed', availability = 'Closed', updated_at = ?
+          WHERE id = ?
+        `).run(nowIso, ws.id);
+        expiredIds.push(ws.id);
+      }
+    }
+
+    return { expiredCount: expiredIds.length, expiredIds };
   }
 
   public deleteWorkshop(id: string): boolean {
@@ -1424,8 +1763,13 @@ export class BionexaDatabase {
 
   public getCourses(filter?: boolean | {
     onlyAvailable?: boolean;
+    onlyApproved?: boolean;
+    approvalStatus?: string;
     category?: string;
     status?: string;
+    pricingType?: string;
+    providerType?: string;
+    includeExpired?: boolean;
     featured?: boolean;
     search?: string;
   }): DbCourse[] {
@@ -1434,11 +1778,19 @@ export class BionexaDatabase {
 
     if (typeof filter === 'boolean') {
       if (filter) {
-        sql += " AND status NOT IN ('closed', 'archived')";
+        sql += " AND status NOT IN ('closed', 'archived') AND is_approved = 1 AND approval_status = 'approved'";
       }
     } else if (filter) {
       if (filter.onlyAvailable) {
         sql += " AND status NOT IN ('closed', 'archived')";
+      }
+      if (filter.onlyApproved) {
+        sql += " AND is_approved = 1 AND approval_status = 'approved'";
+      }
+      if (filter.approvalStatus && filter.approvalStatus !== 'all') {
+        const normApproval = normalizeCourseApprovalStatus(filter.approvalStatus);
+        sql += ' AND approval_status = ?';
+        params.push(normApproval);
       }
       if (filter.status && filter.status !== 'all') {
         const norm = normalizeDbCourseStatus(filter.status);
@@ -1466,7 +1818,23 @@ export class BionexaDatabase {
     sql += ' ORDER BY featured DESC, created_at DESC';
 
     const rows = this.db.prepare(sql).all(...params) as any[];
-    return rows.map(this.mapCourseRow);
+    let mapped = rows.map(this.mapCourseRow);
+
+    if (typeof filter === 'object' && filter) {
+      if (filter.pricingType && filter.pricingType !== 'all') {
+        const targetPricing = filter.pricingType.toLowerCase();
+        mapped = mapped.filter((c) => c.pricingType === targetPricing);
+      }
+      if (filter.providerType && filter.providerType !== 'all') {
+        const targetProviderType = normalizeCourseProviderType(filter.providerType);
+        mapped = mapped.filter((c) => c.providerType === targetProviderType);
+      }
+      if (filter.includeExpired === false) {
+        mapped = mapped.filter((c) => !isCourseExpired(c));
+      }
+    }
+
+    return mapped;
   }
 
   public getCourseById(id: string): DbCourse | null {
@@ -1476,49 +1844,79 @@ export class BionexaDatabase {
   }
 
   public createCourse(
-    data: Omit<DbCourse, 'id' | 'createdAt' | 'updatedAt' | 'provider' | 'deliveryMode' | 'certificateInfo' | 'registrationDeadline' | 'isCertificateAvailable'> & {
+    data: Omit<
+      DbCourse,
+      | 'id'
+      | 'createdAt'
+      | 'updatedAt'
+      | 'provider'
+      | 'providerType'
+      | 'pricingType'
+      | 'deliveryMode'
+      | 'certificateInfo'
+      | 'registrationDeadline'
+      | 'isCertificateAvailable'
+      | 'approvalStatus'
+      | 'isApproved'
+    > & {
       id?: string;
       provider?: string;
+      providerType?: CourseProviderType;
+      pricingType?: CoursePricingType;
       deliveryMode?: string;
       certificateInfo?: string;
       registrationDeadline?: string;
       isCertificateAvailable?: boolean;
+      approvalStatus?: CourseApprovalStatus;
+      isApproved?: boolean;
     }
   ): DbCourse {
     const id = data.id || `course-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const now = new Date().toISOString();
-    const normStatus = normalizeDbCourseStatus(data.status);
+    const expired = isCourseExpired({ registrationDeadline: data.registrationDeadline });
+    const normStatus: CourseStatus = expired ? 'closed' : normalizeDbCourseStatus(data.status);
     const certInfo = (data.certificateInfo || '').trim();
-    const hasCert = Boolean(certInfo) || Boolean(data.isCertificateAvailable);
+    const hasCert = Boolean(certInfo);
+    const provider = String(data.provider || '').trim();
+    const providerType = normalizeCourseProviderType(data.providerType);
+    const fees = String(data.fees || '').trim();
+    const pricingType = classifyCoursePricing(fees, data.pricingType);
+    const approvalStatus = normalizeCourseApprovalStatus(data.approvalStatus, data.isApproved);
+    const isApproved = approvalStatus === 'approved';
 
     this.db.prepare(`
       INSERT INTO courses (
-        id, name, provider, description, duration, fees, eligibility,
-        curriculum, delivery_mode, certificate_info, registration_deadline,
-        registration_link, availability, status, instructor, level, category,
-        image_url, is_certificate_available, featured, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, name, provider, provider_type, description, duration, fees, pricing_type,
+        eligibility, curriculum, delivery_mode, certificate_info, registration_deadline,
+        registration_link, availability, status, approval_status, is_approved,
+        instructor, level, category, image_url, is_certificate_available, featured,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       data.name,
-      data.provider || data.instructor || 'Course Provider',
+      provider,
+      providerType,
       data.description,
-      data.duration || 'Self-Paced',
-      data.fees || 'Free',
-      data.eligibility || 'Life Sciences & Biotechnology Students',
+      data.duration || '',
+      fees,
+      pricingType,
+      data.eligibility || '',
       JSON.stringify(data.curriculum || []),
       data.deliveryMode || 'Online (Self-Paced)',
       certInfo,
-      data.registrationDeadline || 'Open / Rolling',
+      data.registrationDeadline || '',
       data.registrationLink,
-      normStatus === 'closed' ? 'Closed' : (data.availability || 'Available'),
+      expired ? 'Expired' : normStatus === 'closed' ? 'Closed' : (data.availability || 'Available'),
       normStatus,
-      data.instructor || data.provider || '',
-      data.level || 'Intermediate',
+      approvalStatus,
+      isApproved ? 1 : 0,
+      String(data.instructor || '').trim(),
+      data.level || '',
       data.category || 'Biotechnology',
       data.imageUrl || '',
       hasCert ? 1 : 0,
-      data.featured ? 1 : 0,
+      isApproved && data.featured ? 1 : 0,
       now,
       now
     );
@@ -1530,44 +1928,79 @@ export class BionexaDatabase {
     const existing = this.getCourseById(id);
     if (!existing) return null;
 
-    const mergedStatus = updates.status !== undefined
-      ? normalizeDbCourseStatus(updates.status)
-      : normalizeDbCourseStatus(existing.status);
+    const nextDeadline =
+      updates.registrationDeadline !== undefined
+        ? updates.registrationDeadline
+        : existing.registrationDeadline;
 
-    const certInfo = updates.certificateInfo !== undefined
-      ? updates.certificateInfo.trim()
-      : existing.certificateInfo;
+    const mergedStatus: CourseStatus =
+      updates.status !== undefined
+        ? normalizeDbCourseStatus(updates.status)
+        : normalizeDbCourseStatus(existing.status);
+
+    const certInfo =
+      updates.certificateInfo !== undefined
+        ? updates.certificateInfo.trim()
+        : existing.certificateInfo;
+
+    const nextFees = updates.fees !== undefined ? updates.fees : existing.fees;
+    const nextPricingType =
+      updates.pricingType !== undefined
+        ? classifyCoursePricing(nextFees, updates.pricingType)
+        : updates.fees !== undefined
+        ? classifyCoursePricing(nextFees)
+        : existing.pricingType;
+
+    const nextProviderType =
+      updates.providerType !== undefined
+        ? normalizeCourseProviderType(updates.providerType)
+        : existing.providerType;
+
+    const nextApprovalStatus =
+      updates.approvalStatus !== undefined || updates.isApproved !== undefined
+        ? normalizeCourseApprovalStatus(updates.approvalStatus, updates.isApproved)
+        : existing.approvalStatus;
+    const nextIsApproved = nextApprovalStatus === 'approved';
 
     const merged: DbCourse = {
       ...existing,
       ...updates,
+      providerType: nextProviderType,
+      fees: nextFees,
+      pricingType: nextPricingType,
+      registrationDeadline: nextDeadline,
       status: mergedStatus,
-      availability: updates.availability !== undefined
-        ? updates.availability
-        : mergedStatus === 'closed'
-        ? 'Closed'
-        : 'Available',
+      approvalStatus: nextApprovalStatus,
+      isApproved: nextIsApproved,
+      featured: nextIsApproved ? (updates.featured !== undefined ? Boolean(updates.featured) : existing.featured) : false,
+      availability:
+        updates.availability !== undefined
+          ? updates.availability
+          : mergedStatus === 'closed'
+          ? 'Closed'
+          : 'Available',
       certificateInfo: certInfo,
-      isCertificateAvailable: updates.certificateInfo !== undefined
-        ? Boolean(certInfo)
-        : (updates.isCertificateAvailable !== undefined ? updates.isCertificateAvailable : existing.isCertificateAvailable),
+      isCertificateAvailable: Boolean(certInfo),
       updatedAt: new Date().toISOString()
     };
 
     this.db.prepare(`
       UPDATE courses SET
-        name = ?, provider = ?, description = ?, duration = ?, fees = ?,
-        eligibility = ?, curriculum = ?, delivery_mode = ?, certificate_info = ?,
-        registration_deadline = ?, registration_link = ?, availability = ?,
-        status = ?, instructor = ?, level = ?, category = ?, image_url = ?,
+        name = ?, provider = ?, provider_type = ?, description = ?, duration = ?,
+        fees = ?, pricing_type = ?, eligibility = ?, curriculum = ?, delivery_mode = ?,
+        certificate_info = ?, registration_deadline = ?, registration_link = ?,
+        availability = ?, status = ?, approval_status = ?, is_approved = ?,
+        instructor = ?, level = ?, category = ?, image_url = ?,
         is_certificate_available = ?, featured = ?, updated_at = ?
       WHERE id = ?
     `).run(
       merged.name,
       merged.provider,
+      merged.providerType,
       merged.description,
       merged.duration,
       merged.fees,
+      merged.pricingType,
       merged.eligibility,
       JSON.stringify(merged.curriculum || []),
       merged.deliveryMode,
@@ -1576,6 +2009,8 @@ export class BionexaDatabase {
       merged.registrationLink,
       merged.availability,
       merged.status,
+      merged.approvalStatus,
+      merged.isApproved ? 1 : 0,
       merged.instructor,
       merged.level,
       merged.category,
@@ -1587,6 +2022,74 @@ export class BionexaDatabase {
     );
 
     return this.getCourseById(id);
+  }
+
+  public expirePastCourses(referenceDate: Date = new Date()): { expiredCount: number; expiredIds: string[] } {
+    const rows = this.db.prepare("SELECT * FROM courses WHERE status != 'closed'").all() as any[];
+    const nowIso = referenceDate.toISOString();
+    const expiredIds: string[] = [];
+
+    for (const row of rows) {
+      const mapped = this.mapCourseRow(row);
+      if (isCourseExpired(mapped, referenceDate)) {
+        this.db.prepare(`
+          UPDATE courses SET
+            status = 'closed',
+            availability = 'Expired',
+            updated_at = ?
+          WHERE id = ?
+        `).run(nowIso, mapped.id);
+        expiredIds.push(mapped.id);
+      }
+    }
+
+    return { expiredCount: expiredIds.length, expiredIds };
+  }
+
+  public getCourseCategories(): string[] {
+    const saved = this.getContent('course_categories', []);
+    const customList = Array.isArray(saved) ? saved : [];
+    const seen = new Map<string, string>();
+    for (const cat of COURSE_CATEGORIES) {
+      seen.set(cat.toLowerCase(), cat);
+    }
+    for (const cat of customList) {
+      const clean = String(cat || '').trim();
+      if (clean && !seen.has(clean.toLowerCase())) {
+        seen.set(clean.toLowerCase(), clean);
+      }
+    }
+    return Array.from(seen.values());
+  }
+
+  public addCourseCategory(categoryName: string, updatedBy: string = 'admin'): string[] {
+    const clean = String(categoryName || '').trim();
+    if (clean.length < 2 || clean.length > 64) {
+      throw new Error('Category name must be between 2 and 64 characters.');
+    }
+    const existing = this.getCourseCategories();
+    if (!existing.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+      const saved = this.getContent('course_categories', []);
+      const customList = Array.isArray(saved) ? saved : [];
+      customList.push(clean);
+      this.setContent('course_categories', customList, updatedBy);
+    }
+    return this.getCourseCategories();
+  }
+
+  public removeCourseCategory(categoryName: string, updatedBy: string = 'admin'): { categories: string[]; removed: boolean } {
+    const clean = String(categoryName || '').trim().toLowerCase();
+    if (COURSE_CATEGORIES.some((c) => c.toLowerCase() === clean)) {
+      return { categories: this.getCourseCategories(), removed: false };
+    }
+    const saved = this.getContent('course_categories', []);
+    const customList = Array.isArray(saved) ? saved : [];
+    const nextList = customList.filter((c) => String(c || '').trim().toLowerCase() !== clean);
+    const removed = nextList.length !== customList.length;
+    if (removed) {
+      this.setContent('course_categories', nextList, updatedBy);
+    }
+    return { categories: this.getCourseCategories(), removed };
   }
 
   public deleteCourse(id: string): boolean {
@@ -2460,6 +2963,10 @@ export class BionexaDatabase {
       responsibilities,
       requirements,
       sector: r.sector || 'Biotechnology',
+      companyAccountId: r.company_account_id || '',
+      applicationDestinationType: normalizeApplicationDestinationType(r.application_destination_type),
+      applicationEmail: r.application_email || '',
+      applicationInstructions: r.application_instructions || '',
       createdAt: r.created_at,
       updatedAt: r.updated_at
     };
@@ -2473,25 +2980,35 @@ export class BionexaDatabase {
       skillsCovered = [];
     }
 
+    const approvalStatus = normalizeWorkshopApprovalStatus(
+      r.approval_status,
+      r.is_approved === undefined ? true : r.is_approved === 1
+    );
+    const isApproved = approvalStatus === 'approved' && (r.is_approved === undefined || r.is_approved === 1);
+
     return {
       id: r.id,
       name: r.name,
       description: r.description,
+      organizer: r.organizer || '',
       instructor: r.instructor || '',
+      category: r.category || '',
       date: r.date,
-      time: r.time || '09:30 AM - 04:30 PM IST',
-      duration: r.duration || '1 Day',
+      time: r.time || '',
+      duration: r.duration || '',
       format: (r.format as WorkshopFormat) || 'Online',
       venue: r.venue,
       registrationDeadline: r.registration_deadline || '',
       registrationLink: r.registration_link,
       availability: (r.availability as WorkshopAvailability) || 'Open',
       status: (r.status as WorkshopStatus) || 'upcoming',
-      fees: r.fees || 'Free',
-      capacity: r.capacity || 50,
+      fees: r.fees || '',
+      capacity: typeof r.capacity === 'number' && r.capacity > 0 ? r.capacity : 0,
       imageUrl: r.image_url || '',
       featured: r.featured === 1,
       skillsCovered,
+      approvalStatus,
+      isApproved,
       createdAt: r.created_at,
       updatedAt: r.updated_at
     };
@@ -2507,27 +3024,42 @@ export class BionexaDatabase {
 
     const normStatus = normalizeDbCourseStatus(r.status);
     const certInfo = (r.certificate_info || '').trim();
+    const fees = String(r.fees || '').trim();
+    const pricingType = classifyCoursePricing(fees, r.pricing_type);
+    const providerType = normalizeCourseProviderType(r.provider_type);
+    const approvalStatus = normalizeCourseApprovalStatus(r.approval_status, r.is_approved);
+    const isApproved = approvalStatus === 'approved';
+    const expired = isCourseExpired({ registrationDeadline: r.registration_deadline });
 
     return {
       id: r.id,
       name: r.name,
-      provider: r.provider || r.instructor || 'Course Provider',
-      description: r.description,
-      duration: r.duration,
-      fees: r.fees,
-      eligibility: r.eligibility,
+      provider: String(r.provider || '').trim(),
+      providerType,
+      description: r.description || '',
+      duration: r.duration || '',
+      fees,
+      pricingType,
+      eligibility: r.eligibility || '',
       curriculum,
       deliveryMode: r.delivery_mode || 'Online (Self-Paced)',
       certificateInfo: certInfo,
-      registrationDeadline: r.registration_deadline || 'Open / Rolling',
+      registrationDeadline: r.registration_deadline || '',
       registrationLink: r.registration_link,
-      availability: normStatus === 'closed' ? 'Closed' : (r.availability || 'Available'),
-      status: normStatus,
-      instructor: r.instructor || r.provider || '',
-      level: r.level || 'Intermediate',
+      availability:
+        expired || String(r.availability || '').trim().toLowerCase() === 'expired'
+          ? 'Expired'
+          : normStatus === 'closed'
+          ? 'Closed'
+          : (r.availability || 'Available'),
+      status: expired ? 'closed' : normStatus,
+      approvalStatus,
+      isApproved,
+      instructor: String(r.instructor || '').trim(),
+      level: r.level || '',
       category: r.category || 'Biotechnology',
       imageUrl: r.image_url || '',
-      isCertificateAvailable: Boolean(certInfo) || r.is_certificate_available === 1,
+      isCertificateAvailable: Boolean(certInfo),
       featured: r.featured === 1,
       createdAt: r.created_at,
       updatedAt: r.updated_at
@@ -3161,6 +3693,37 @@ export class BionexaDatabase {
             WHERE id = ?
           `).run(imageUrl, format, status, deadline, time, duration, featured, availability, row.id);
         }
+
+        // Backfill category and organizer for legacy seeded workshops if missing
+        let seedCategory = '';
+        let seedOrganizer = '';
+        if (row.id === 'opp-work-1' || row.name.includes('CRISPR')) {
+          seedCategory = 'Molecular Biology & CRISPR';
+          seedOrganizer = 'CSIR-IGIB New Delhi';
+        } else if (row.id === 'opp-work-2' || row.name.includes('RNA-Seq')) {
+          seedCategory = 'Bioinformatics & NGS';
+          seedOrganizer = 'DBT Bioinformatics Centre';
+        } else if (row.id === 'opp-work-3' || row.name.includes('HACCP')) {
+          seedCategory = 'Quality Control & Regulatory';
+          seedOrganizer = 'AFSTI India';
+        } else if (row.id === 'opp-work-4' || row.name.includes('Manuscript')) {
+          seedCategory = 'Scientific Writing & Career';
+          seedOrganizer = 'DST Scientific Publishing Cell';
+        } else if (row.id === 'opp-work-5' || row.name.includes('Fermentation')) {
+          seedCategory = 'Bioprocess & Fermentation';
+          seedOrganizer = 'Biocon Academy';
+        } else if (row.id === 'opp-work-6' || row.name.includes('Flow Cytometry')) {
+          seedCategory = 'Cell Culture & Flow Cytometry';
+          seedOrganizer = 'NCBS-TIFR Bengaluru';
+        }
+        if (seedCategory || seedOrganizer) {
+          this.db.prepare(`
+            UPDATE workshops SET
+              category = CASE WHEN category = '' OR category IS NULL THEN ? ELSE category END,
+              organizer = CASE WHEN organizer = '' OR organizer IS NULL THEN ? ELSE organizer END
+            WHERE id = ?
+          `).run(seedCategory, seedOrganizer, row.id);
+        }
       }
 
       // Add Fermentation and Flow Cytometry if not existing
@@ -3170,7 +3733,9 @@ export class BionexaDatabase {
           id: 'opp-work-5',
           name: 'Industrial Bioprocess Scaling & Microbial Fermentation Practicum',
           description: 'Hands-on training on 100L pilot bioreactors, dissolved oxygen profiling, batch fed-batch kinetics, and downstream cross-flow filtration at Biocon Academy.',
+          organizer: 'Biocon Academy',
           instructor: 'Dr. Ramgopal Rao, Director of Academic Affairs',
+          category: 'Bioprocess & Fermentation',
           date: '2026-12-20',
           time: '09:00 AM - 05:30 PM IST',
           duration: '4 Days Pilot-Scale Lab',
@@ -3184,7 +3749,9 @@ export class BionexaDatabase {
           capacity: 25,
           imageUrl: 'https://images.unsplash.com/photo-1582719471384-894fbb16e074?auto=format&fit=crop&w=800&q=80',
           featured: true,
-          skillsCovered: ['Bioreactor Setup', 'Fed-Batch Fermentation', 'Downstream Processing', 'CIP / SIP Protocols']
+          skillsCovered: ['Bioreactor Setup', 'Fed-Batch Fermentation', 'Downstream Processing', 'CIP / SIP Protocols'],
+          approvalStatus: 'approved',
+          isApproved: true
         });
       }
 
@@ -3194,7 +3761,9 @@ export class BionexaDatabase {
           id: 'opp-work-6',
           name: 'Multicolor Flow Cytometry & High-Speed Cell Sorting Masterclass',
           description: 'Advanced fluorophore compensation, panel design for immunophenotyping, gating strategies with FlowJo, and aseptic sorting of primary T cells.',
+          organizer: 'NCBS-TIFR Bengaluru',
           instructor: 'NCBS Central Flow Cytometry Core Facility',
+          category: 'Cell Culture & Flow Cytometry',
           date: '2026-11-28',
           time: '09:30 AM - 04:30 PM IST',
           duration: '2 Days Hybrid Intensive',
@@ -3208,7 +3777,9 @@ export class BionexaDatabase {
           capacity: 25,
           imageUrl: 'https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&w=800&q=80',
           featured: false,
-          skillsCovered: ['Multicolor FlowJo', 'Antibody Conjugation', 'Cell Sorting', 'Gating Analysis']
+          skillsCovered: ['Multicolor FlowJo', 'Antibody Conjugation', 'Cell Sorting', 'Gating Analysis'],
+          approvalStatus: 'approved',
+          isApproved: true
         });
       }
     } catch (e) {
@@ -3587,6 +4158,1160 @@ export class BionexaDatabase {
         status: 'Under Review'
       });
     }
+  }
+
+  // ==========================================
+  // PHASE 14: STUDENT AUTHENTICATION, PROFILES, SESSIONS & DELETION REQUESTS
+  // ==========================================
+
+  private mapStudentAccountRow(r: any): DbStudentAccount {
+    let skills: string[] = [];
+    try {
+      const parsed = JSON.parse(r.skills || '[]');
+      if (Array.isArray(parsed)) skills = parsed.map((s) => String(s));
+    } catch {
+      skills = [];
+    }
+    const statusRaw = String(r.account_status || 'active');
+    const accountStatus: StudentAccountStatus =
+      statusRaw === 'deletion_pending' || statusRaw === 'suspended' ? statusRaw : 'active';
+
+    return {
+      id: r.id,
+      email: r.email,
+      passwordHash: r.password_hash,
+      fullName: r.full_name,
+      role: 'student',
+      degreeTitle: r.degree_title || '',
+      institution: r.institution || '',
+      specialization: r.specialization || '',
+      graduationYear: r.graduation_year || '',
+      location: r.location || '',
+      skills,
+      bio: r.bio || '',
+      linkedinUrl: r.linkedin_url || '',
+      orcidId: r.orcid_id || '',
+      profileVisibility: 'private',
+      emailVerified: r.email_verified === 1,
+      emailVerifiedAt: r.email_verified_at || null,
+      verificationTokenHash: r.verification_token_hash || null,
+      verificationExpiresAt: r.verification_expires_at || null,
+      resetTokenHash: r.reset_token_hash || null,
+      resetExpiresAt: r.reset_expires_at || null,
+      privacyConsentAt: r.privacy_consent_at,
+      accountStatus,
+      deletionRequestedAt: r.deletion_requested_at || null,
+      deletionReason: r.deletion_reason || null,
+      lastLoginAt: r.last_login_at || null,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  public getStudentByEmail(email: string): DbStudentAccount | null {
+    const clean = normalizeStudentEmail(email);
+    if (!clean) return null;
+    const row = this.db.prepare('SELECT * FROM student_accounts WHERE LOWER(email) = LOWER(?)').get(clean) as any;
+    return row ? this.mapStudentAccountRow(row) : null;
+  }
+
+  public getStudentById(id: string): DbStudentAccount | null {
+    if (!id) return null;
+    const row = this.db.prepare('SELECT * FROM student_accounts WHERE id = ?').get(id) as any;
+    return row ? this.mapStudentAccountRow(row) : null;
+  }
+
+  public createStudentAccount(input: {
+    id?: string;
+    email: string;
+    passwordHash: string;
+    fullName: string;
+    degreeTitle?: string;
+    institution?: string;
+    specialization?: string;
+    graduationYear?: string;
+    verificationTokenHash: string;
+    verificationExpiresAt: string;
+    privacyConsentAt?: string;
+  }): DbStudentAccount {
+    const cleanEmail = normalizeStudentEmail(input.email);
+    const existing = this.getStudentByEmail(cleanEmail);
+    if (existing) {
+      throw new Error('An account with this email address already exists.');
+    }
+
+    const now = new Date().toISOString();
+    const id = input.id || `stu-${crypto.randomBytes(8).toString('hex')}`;
+
+    this.db.prepare(`
+      INSERT INTO student_accounts (
+        id, email, password_hash, full_name, role,
+        degree_title, institution, specialization, graduation_year,
+        location, skills, bio, linkedin_url, orcid_id, profile_visibility,
+        email_verified, email_verified_at, verification_token_hash, verification_expires_at,
+        privacy_consent_at, account_status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'student', ?, ?, ?, ?, '', '[]', '', '', '', 'private', 0, NULL, ?, ?, ?, 'active', ?, ?)
+    `).run(
+      id,
+      cleanEmail,
+      input.passwordHash,
+      input.fullName,
+      input.degreeTitle || '',
+      input.institution || '',
+      input.specialization || '',
+      input.graduationYear || '',
+      input.verificationTokenHash,
+      input.verificationExpiresAt,
+      input.privacyConsentAt || now,
+      now,
+      now
+    );
+
+    return this.getStudentById(id)!;
+  }
+
+  public updateStudentLastLogin(studentId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE student_accounts SET last_login_at = ?, updated_at = ? WHERE id = ?')
+      .run(now, now, studentId);
+  }
+
+  public updateStudentProfile(
+    studentId: string,
+    updates: {
+      fullName?: string;
+      degreeTitle?: string;
+      institution?: string;
+      specialization?: string;
+      graduationYear?: string;
+      location?: string;
+      skills?: string[];
+      bio?: string;
+      linkedinUrl?: string;
+      orcidId?: string;
+    }
+  ): DbStudentAccount | null {
+    const existing = this.getStudentById(studentId);
+    if (!existing) return null;
+
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE student_accounts SET
+        full_name = ?,
+        degree_title = ?,
+        institution = ?,
+        specialization = ?,
+        graduation_year = ?,
+        location = ?,
+        skills = ?,
+        bio = ?,
+        linkedin_url = ?,
+        orcid_id = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(
+      updates.fullName !== undefined ? updates.fullName : existing.fullName,
+      updates.degreeTitle !== undefined ? updates.degreeTitle : existing.degreeTitle,
+      updates.institution !== undefined ? updates.institution : existing.institution,
+      updates.specialization !== undefined ? updates.specialization : existing.specialization,
+      updates.graduationYear !== undefined ? updates.graduationYear : existing.graduationYear,
+      updates.location !== undefined ? updates.location : existing.location,
+      JSON.stringify(updates.skills !== undefined ? updates.skills : existing.skills),
+      updates.bio !== undefined ? updates.bio : existing.bio,
+      updates.linkedinUrl !== undefined ? updates.linkedinUrl : existing.linkedinUrl,
+      updates.orcidId !== undefined ? updates.orcidId : existing.orcidId,
+      now,
+      studentId
+    );
+
+    return this.getStudentById(studentId);
+  }
+
+  public setStudentVerificationToken(
+    studentId: string,
+    tokenHash: string,
+    expiresAtIso: string
+  ): boolean {
+    const now = new Date().toISOString();
+    const res = this.db.prepare(`
+      UPDATE student_accounts SET
+        verification_token_hash = ?,
+        verification_expires_at = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(tokenHash, expiresAtIso, now, studentId) as any;
+    return (res.changes ?? 0) > 0;
+  }
+
+  public verifyStudentEmailByToken(rawToken: string, now: Date = new Date()): DbStudentAccount | null {
+    const tokenHash = hashOpaqueToken(rawToken);
+    if (!tokenHash) return null;
+    const row = this.db
+      .prepare('SELECT * FROM student_accounts WHERE verification_token_hash = ?')
+      .get(tokenHash) as any;
+    if (!row) return null;
+
+    const account = this.mapStudentAccountRow(row);
+    if (account.verificationExpiresAt && new Date(account.verificationExpiresAt).getTime() < now.getTime()) {
+      return null;
+    }
+
+    const nowIso = now.toISOString();
+    this.db.prepare(`
+      UPDATE student_accounts SET
+        email_verified = 1,
+        email_verified_at = ?,
+        verification_token_hash = NULL,
+        verification_expires_at = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `).run(nowIso, nowIso, account.id);
+
+    return this.getStudentById(account.id);
+  }
+
+  public setStudentPasswordResetToken(
+    studentId: string,
+    tokenHash: string,
+    expiresAtIso: string
+  ): boolean {
+    const now = new Date().toISOString();
+    const res = this.db.prepare(`
+      UPDATE student_accounts SET
+        reset_token_hash = ?,
+        reset_expires_at = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(tokenHash, expiresAtIso, now, studentId) as any;
+    return (res.changes ?? 0) > 0;
+  }
+
+  public consumeStudentPasswordResetToken(
+    rawToken: string,
+    newPasswordHash: string,
+    now: Date = new Date()
+  ): DbStudentAccount | null {
+    const tokenHash = hashOpaqueToken(rawToken);
+    if (!tokenHash) return null;
+    const row = this.db
+      .prepare('SELECT * FROM student_accounts WHERE reset_token_hash = ?')
+      .get(tokenHash) as any;
+    if (!row) return null;
+
+    const account = this.mapStudentAccountRow(row);
+    if (!account.resetExpiresAt || new Date(account.resetExpiresAt).getTime() < now.getTime()) {
+      return null;
+    }
+
+    const nowIso = now.toISOString();
+    this.db.prepare(`
+      UPDATE student_accounts SET
+        password_hash = ?,
+        reset_token_hash = NULL,
+        reset_expires_at = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `).run(newPasswordHash, nowIso, account.id);
+
+    // Revoke all active sessions after password reset
+    this.revokeAllStudentSessions(account.id);
+
+    return this.getStudentById(account.id);
+  }
+
+  public updateStudentPasswordHash(studentId: string, newPasswordHash: string): boolean {
+    const now = new Date().toISOString();
+    const res = this.db.prepare(`
+      UPDATE student_accounts SET
+        password_hash = ?,
+        reset_token_hash = NULL,
+        reset_expires_at = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `).run(newPasswordHash, now, studentId) as any;
+    return (res.changes ?? 0) > 0;
+  }
+
+  public createStudentSession(input: {
+    jti: string;
+    studentId: string;
+    tokenHash: string;
+    userAgent?: string;
+    ipAddressMasked?: string;
+    expiresAt: string;
+  }): DbStudentSession {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO student_sessions (
+        jti, student_id, token_hash, user_agent, ip_address_masked,
+        created_at, last_active_at, expires_at, revoked_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    `).run(
+      input.jti,
+      input.studentId,
+      input.tokenHash,
+      (input.userAgent || '').slice(0, 220),
+      input.ipAddressMasked || 'unknown',
+      now,
+      now,
+      input.expiresAt
+    );
+
+    return {
+      jti: input.jti,
+      studentId: input.studentId,
+      tokenHash: input.tokenHash,
+      userAgent: (input.userAgent || '').slice(0, 220),
+      ipAddressMasked: input.ipAddressMasked || 'unknown',
+      createdAt: now,
+      lastActiveAt: now,
+      expiresAt: input.expiresAt,
+      revokedAt: null,
+    };
+  }
+
+  public validateStudentSessionToken(
+    rawToken: string,
+    now: Date = new Date()
+  ): { session: DbStudentSession; student: DbStudentAccount } | null {
+    if (!rawToken || rawToken.length < 16) return null;
+    const tokenHash = hashOpaqueToken(rawToken);
+    const row = this.db
+      .prepare('SELECT * FROM student_sessions WHERE token_hash = ? AND revoked_at IS NULL')
+      .get(tokenHash) as any;
+    if (!row) return null;
+
+    const expiresMs = new Date(row.expires_at).getTime();
+    if (!Number.isFinite(expiresMs) || expiresMs <= now.getTime()) {
+      this.revokeStudentSessionByJti(row.jti);
+      return null;
+    }
+
+    const student = this.getStudentById(row.student_id);
+    if (!student || student.accountStatus === 'suspended') {
+      return null;
+    }
+
+    const nowIso = now.toISOString();
+    this.db.prepare('UPDATE student_sessions SET last_active_at = ? WHERE jti = ?').run(nowIso, row.jti);
+
+    return {
+      session: {
+        jti: row.jti,
+        studentId: row.student_id,
+        tokenHash: row.token_hash,
+        userAgent: row.user_agent || '',
+        ipAddressMasked: row.ip_address_masked || 'unknown',
+        createdAt: row.created_at,
+        lastActiveAt: nowIso,
+        expiresAt: row.expires_at,
+        revokedAt: null,
+      },
+      student,
+    };
+  }
+
+  public listStudentSessions(studentId: string, currentJti?: string): SafeStudentSession[] {
+    const nowIso = new Date().toISOString();
+    const rows = this.db.prepare(`
+      SELECT jti, user_agent, ip_address_masked, created_at, last_active_at, expires_at
+      FROM student_sessions
+      WHERE student_id = ? AND revoked_at IS NULL AND expires_at > ?
+      ORDER BY last_active_at DESC
+    `).all(studentId, nowIso) as any[];
+
+    return rows.map((r) => ({
+      jti: r.jti,
+      userAgent: r.user_agent || 'Web Browser',
+      ipAddressMasked: r.ip_address_masked || 'unknown',
+      createdAt: r.created_at,
+      lastActiveAt: r.last_active_at,
+      expiresAt: r.expires_at,
+      isCurrent: Boolean(currentJti && r.jti === currentJti),
+    }));
+  }
+
+  public revokeStudentSessionByJti(jti: string, studentId?: string): boolean {
+    const nowIso = new Date().toISOString();
+    const res = studentId
+      ? (this.db
+          .prepare('UPDATE student_sessions SET revoked_at = ? WHERE jti = ? AND student_id = ? AND revoked_at IS NULL')
+          .run(nowIso, jti, studentId) as any)
+      : (this.db
+          .prepare('UPDATE student_sessions SET revoked_at = ? WHERE jti = ? AND revoked_at IS NULL')
+          .run(nowIso, jti) as any);
+    return (res.changes ?? 0) > 0;
+  }
+
+  public revokeAllStudentSessions(studentId: string, exceptJti?: string): number {
+    const nowIso = new Date().toISOString();
+    const res = exceptJti
+      ? (this.db
+          .prepare('UPDATE student_sessions SET revoked_at = ? WHERE student_id = ? AND jti != ? AND revoked_at IS NULL')
+          .run(nowIso, studentId, exceptJti) as any)
+      : (this.db
+          .prepare('UPDATE student_sessions SET revoked_at = ? WHERE student_id = ? AND revoked_at IS NULL')
+          .run(nowIso, studentId) as any);
+    return res.changes ?? 0;
+  }
+
+  public createStudentDeletionRequest(
+    studentId: string,
+    reason: string,
+    mode: 'request' | 'delete_now' = 'request'
+  ): { request: StudentDeletionRequestRecord; deletedImmediately: boolean } {
+    const account = this.getStudentById(studentId);
+    if (!account) {
+      throw new Error('Student account not found.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const reqId = `del-stu-${crypto.randomBytes(6).toString('hex')}`;
+    const emailHash = hashEmailForAudit(account.email);
+
+    if (mode === 'delete_now') {
+      this.db.prepare(`
+        INSERT INTO student_deletion_requests (id, student_id, email_hash, reason, status, requested_at, processed_at)
+        VALUES (?, ?, ?, ?, 'completed', ?, ?)
+      `).run(reqId, studentId, emailHash, reason || 'Self-service immediate erasure', nowIso, nowIso);
+
+      this.revokeAllStudentSessions(studentId);
+      this.db.prepare('DELETE FROM student_accounts WHERE id = ?').run(studentId);
+
+      return {
+        request: {
+          id: reqId,
+          studentId,
+          emailHash,
+          reason: reason || 'Self-service immediate erasure',
+          status: 'completed',
+          requestedAt: nowIso,
+          processedAt: nowIso,
+        },
+        deletedImmediately: true,
+      };
+    }
+
+    this.db.prepare(`
+      UPDATE student_deletion_requests SET status = 'cancelled', processed_at = ?
+      WHERE student_id = ? AND status = 'pending'
+    `).run(nowIso, studentId);
+
+    this.db.prepare(`
+      INSERT INTO student_deletion_requests (id, student_id, email_hash, reason, status, requested_at, processed_at)
+      VALUES (?, ?, ?, ?, 'pending', ?, NULL)
+    `).run(reqId, studentId, emailHash, reason || 'Student requested account deletion', nowIso);
+
+    this.db.prepare(`
+      UPDATE student_accounts SET
+        account_status = 'deletion_pending',
+        deletion_requested_at = ?,
+        deletion_reason = ?,
+        updated_at = ?
+      WHERE id = ?
+    `).run(nowIso, reason || 'Student requested account deletion', nowIso, studentId);
+
+    return {
+      request: {
+        id: reqId,
+        studentId,
+        emailHash,
+        reason: reason || 'Student requested account deletion',
+        status: 'pending',
+        requestedAt: nowIso,
+        processedAt: null,
+      },
+      deletedImmediately: false,
+    };
+  }
+
+  public cancelStudentDeletionRequest(studentId: string): DbStudentAccount | null {
+    const account = this.getStudentById(studentId);
+    if (!account) return null;
+
+    const nowIso = new Date().toISOString();
+    this.db.prepare(`
+      UPDATE student_deletion_requests SET status = 'cancelled', processed_at = ?
+      WHERE student_id = ? AND status = 'pending'
+    `).run(nowIso, studentId);
+
+    this.db.prepare(`
+      UPDATE student_accounts SET
+        account_status = 'active',
+        deletion_requested_at = NULL,
+        deletion_reason = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `).run(nowIso, studentId);
+
+    return this.getStudentById(studentId);
+  }
+
+  public getStudentAccountCount(): number {
+    const row = this.db.prepare('SELECT COUNT(*) as count FROM student_accounts').get() as any;
+    return Number(row?.count || 0);
+  }
+
+  // =========================================================================
+  // PHASE 15: COMPANY & EMPLOYER AUTHENTICATION, VERIFICATION & AUDIT LOGS
+  // =========================================================================
+
+  private mapCompanyAccountRow(r: any): CompanyAccountRecord {
+    return {
+      id: r.id,
+      email: r.email,
+      passwordHash: r.password_hash,
+      contactName: r.contact_name,
+      contactTitle: r.contact_title || '',
+      contactPhone: r.contact_phone || '',
+      organizationName: r.organization_name,
+      organizationType: r.organization_type || 'Private Biopharma',
+      officialWebsite: r.official_website || '',
+      headquartersLocation: r.headquarters_location || '',
+      organizationSize: r.organization_size || '',
+      foundedYear: r.founded_year || '',
+      industryFocus: r.industry_focus || '',
+      description: r.description || '',
+      registrationIdentifier: r.registration_identifier || '',
+      linkedinUrl: r.linkedin_url || '',
+      defaultApplicationDestinationType: normalizeApplicationDestinationType(
+        r.default_application_destination_type
+      ),
+      defaultApplicationUrl: r.default_application_url || '',
+      defaultApplicationEmail: r.default_application_email || '',
+      emailVerified: r.email_verified === 1 || r.email_verified === true,
+      emailVerifiedAt: r.email_verified_at || null,
+      verificationStatus: normalizeCompanyVerificationStatus(r.verification_status),
+      verificationSubmittedAt: r.verification_submitted_at || null,
+      verificationEvidenceUrl: r.verification_evidence_url || '',
+      verificationNotes: r.verification_notes || '',
+      verifiedBy: r.verified_by || null,
+      verifiedAt: r.verified_at || null,
+      rejectionReason: r.rejection_reason || '',
+      accountStatus: normalizeCompanyAccountStatus(r.account_status),
+      suspendedAt: r.suspended_at || null,
+      suspendedBy: r.suspended_by || null,
+      suspensionReason: r.suspension_reason || '',
+      privacyConsentAccepted: r.privacy_consent_accepted === 1 || r.privacy_consent_accepted === true,
+      privacyConsentAt: r.privacy_consent_at || null,
+      lastLoginAt: r.last_login_at || null,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  private mapCompanySessionRow(r: any): CompanySessionRecord {
+    return {
+      jti: r.jti,
+      companyId: r.company_id,
+      userAgent: r.user_agent || '',
+      ipMasked: r.ip_masked || 'unknown',
+      createdAt: r.created_at,
+      lastActiveAt: r.last_active_at,
+      expiresAt: r.expires_at,
+      revokedAt: r.revoked_at || null,
+    };
+  }
+
+  private mapCompanyAuditLogRow(r: any): CompanyAuditLogRecord {
+    return {
+      id: r.id,
+      companyId: r.company_id,
+      organizationName: r.organization_name || undefined,
+      actorType: (r.actor_type || 'company') as 'company' | 'admin' | 'system',
+      actorId: r.actor_id || '',
+      actorEmail: r.actor_email || '',
+      action: r.action,
+      targetType: r.target_type || 'company',
+      targetId: r.target_id || '',
+      status: (r.status || 'success') as 'success' | 'denied' | 'failure',
+      ipMasked: r.ip_masked || 'unknown',
+      details: r.details || '',
+      createdAt: r.created_at,
+    };
+  }
+
+  public getCompanyById(id: string): CompanyAccountRecord | null {
+    const row = this.db.prepare('SELECT * FROM company_accounts WHERE id = ?').get(id) as any;
+    return row ? this.mapCompanyAccountRow(row) : null;
+  }
+
+  public getCompanyByEmail(email: string): CompanyAccountRecord | null {
+    const normalized = normalizeCompanyEmail(email);
+    const row = this.db.prepare('SELECT * FROM company_accounts WHERE email = ?').get(normalized) as any;
+    return row ? this.mapCompanyAccountRow(row) : null;
+  }
+
+  public listAllCompaniesAdmin(): Array<CompanyAccountRecord & { jobCount: number }> {
+    const rows = this.db
+      .prepare(`
+        SELECT c.*,
+               (SELECT COUNT(*) FROM jobs j WHERE j.company_account_id = c.id) AS job_count
+        FROM company_accounts c
+        ORDER BY c.created_at DESC
+      `)
+      .all() as any[];
+
+    return rows.map((r) => ({
+      ...this.mapCompanyAccountRow(r),
+      jobCount: Number(r.job_count || 0),
+    }));
+  }
+
+  public createCompanyAccount(input: {
+    email: string;
+    passwordHash: string;
+    contactName: string;
+    contactTitle?: string;
+    contactPhone?: string;
+    organizationName: string;
+    organizationType?: string;
+    officialWebsite: string;
+    headquartersLocation: string;
+    organizationSize?: string;
+    foundedYear?: string;
+    industryFocus?: string;
+    description?: string;
+    registrationIdentifier?: string;
+    verificationTokenHash: string;
+    verificationTokenExpiresAt: string;
+  }): CompanyAccountRecord {
+    const normalizedEmail = normalizeCompanyEmail(input.email);
+    const existing = this.getCompanyByEmail(normalizedEmail);
+    if (existing) {
+      throw new Error('A company account with this work email is already registered.');
+    }
+
+    const id = `comp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(`
+        INSERT INTO company_accounts (
+          id, email, password_hash, contact_name, contact_title, contact_phone,
+          organization_name, organization_type, official_website, headquarters_location,
+          organization_size, founded_year, industry_focus, description, registration_identifier,
+          default_application_destination_type, default_application_url, default_application_email,
+          email_verified, verification_token_hash, verification_token_expires_at,
+          verification_status, account_status, privacy_consent_accepted, privacy_consent_at,
+          created_at, updated_at
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?,
+          ?, ?, ?, ?,
+          ?, ?, ?, ?, ?,
+          'external_url', ?, ?,
+          0, ?, ?,
+          'unverified', 'active', 1, ?,
+          ?, ?
+        )
+      `)
+      .run(
+        id,
+        normalizedEmail,
+        input.passwordHash,
+        input.contactName,
+        input.contactTitle || '',
+        input.contactPhone || '',
+        input.organizationName,
+        input.organizationType || 'Private Biopharma',
+        input.officialWebsite,
+        input.headquartersLocation,
+        input.organizationSize || '',
+        input.foundedYear || '',
+        input.industryFocus || '',
+        input.description || '',
+        input.registrationIdentifier || '',
+        input.officialWebsite,
+        normalizedEmail,
+        input.verificationTokenHash,
+        input.verificationTokenExpiresAt,
+        now,
+        now,
+        now
+      );
+
+    return this.getCompanyById(id)!;
+  }
+
+  public setCompanyVerificationToken(companyId: string, tokenHash: string, expiresAtIso: string): boolean {
+    const res = this.db
+      .prepare(`
+        UPDATE company_accounts SET
+          verification_token_hash = ?,
+          verification_token_expires_at = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(tokenHash, expiresAtIso, new Date().toISOString(), companyId) as any;
+    return (res.changes ?? 0) > 0;
+  }
+
+  public verifyCompanyEmailByToken(rawToken: string): CompanyAccountRecord | null {
+    const tokenHash = hashOpaqueToken(rawToken);
+    const nowIso = new Date().toISOString();
+    const row = this.db
+      .prepare(`
+        SELECT * FROM company_accounts
+        WHERE verification_token_hash = ?
+          AND verification_token_expires_at IS NOT NULL
+          AND verification_token_expires_at > ?
+      `)
+      .get(tokenHash, nowIso) as any;
+    if (!row) return null;
+
+    this.db
+      .prepare(`
+        UPDATE company_accounts SET
+          email_verified = 1,
+          email_verified_at = ?,
+          verification_token_hash = NULL,
+          verification_token_expires_at = NULL,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(nowIso, nowIso, row.id);
+
+    return this.getCompanyById(row.id);
+  }
+
+  public setCompanyPasswordResetToken(companyId: string, tokenHash: string, expiresAtIso: string): boolean {
+    const res = this.db
+      .prepare(`
+        UPDATE company_accounts SET
+          reset_token_hash = ?,
+          reset_token_expires_at = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(tokenHash, expiresAtIso, new Date().toISOString(), companyId) as any;
+    return (res.changes ?? 0) > 0;
+  }
+
+  public consumeCompanyPasswordResetToken(rawToken: string, newPasswordHash: string): CompanyAccountRecord | null {
+    const tokenHash = hashOpaqueToken(rawToken);
+    const nowIso = new Date().toISOString();
+    const row = this.db
+      .prepare(`
+        SELECT * FROM company_accounts
+        WHERE reset_token_hash = ?
+          AND reset_token_expires_at IS NOT NULL
+          AND reset_token_expires_at > ?
+      `)
+      .get(tokenHash, nowIso) as any;
+    if (!row) return null;
+
+    this.db
+      .prepare(`
+        UPDATE company_accounts SET
+          password_hash = ?,
+          reset_token_hash = NULL,
+          reset_token_expires_at = NULL,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(newPasswordHash, nowIso, row.id);
+
+    this.revokeAllCompanySessions(row.id);
+    return this.getCompanyById(row.id);
+  }
+
+  public updateCompanyPassword(companyId: string, newPasswordHash: string): boolean {
+    const res = this.db
+      .prepare('UPDATE company_accounts SET password_hash = ?, updated_at = ? WHERE id = ?')
+      .run(newPasswordHash, new Date().toISOString(), companyId) as any;
+    return (res.changes ?? 0) > 0;
+  }
+
+  public updateCompanyLastLogin(companyId: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare('UPDATE company_accounts SET last_login_at = ?, updated_at = ? WHERE id = ?')
+      .run(now, now, companyId);
+  }
+
+  public updateCompanyProfile(
+    companyId: string,
+    updates: {
+      contactName?: string;
+      contactTitle?: string;
+      contactPhone?: string;
+      organizationName?: string;
+      organizationType?: string;
+      officialWebsite?: string;
+      headquartersLocation?: string;
+      organizationSize?: string;
+      foundedYear?: string;
+      industryFocus?: string;
+      description?: string;
+      registrationIdentifier?: string;
+      linkedinUrl?: string;
+      defaultApplicationDestinationType?: ApplicationDestinationType;
+      defaultApplicationUrl?: string;
+      defaultApplicationEmail?: string;
+    }
+  ): CompanyAccountRecord | null {
+    const existing = this.getCompanyById(companyId);
+    if (!existing) return null;
+
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        UPDATE company_accounts SET
+          contact_name = ?,
+          contact_title = ?,
+          contact_phone = ?,
+          organization_name = ?,
+          organization_type = ?,
+          official_website = ?,
+          headquarters_location = ?,
+          organization_size = ?,
+          founded_year = ?,
+          industry_focus = ?,
+          description = ?,
+          registration_identifier = ?,
+          linkedin_url = ?,
+          default_application_destination_type = ?,
+          default_application_url = ?,
+          default_application_email = ?,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        updates.contactName ?? existing.contactName,
+        updates.contactTitle ?? existing.contactTitle,
+        updates.contactPhone ?? existing.contactPhone,
+        updates.organizationName ?? existing.organizationName,
+        updates.organizationType ?? existing.organizationType,
+        updates.officialWebsite ?? existing.officialWebsite,
+        updates.headquartersLocation ?? existing.headquartersLocation,
+        updates.organizationSize ?? existing.organizationSize,
+        updates.foundedYear ?? existing.foundedYear,
+        updates.industryFocus ?? existing.industryFocus,
+        updates.description ?? existing.description,
+        updates.registrationIdentifier ?? existing.registrationIdentifier,
+        updates.linkedinUrl ?? existing.linkedinUrl,
+        updates.defaultApplicationDestinationType ?? existing.defaultApplicationDestinationType,
+        updates.defaultApplicationUrl ?? existing.defaultApplicationUrl,
+        updates.defaultApplicationEmail ?? existing.defaultApplicationEmail,
+        now,
+        companyId
+      );
+
+    return this.getCompanyById(companyId);
+  }
+
+  public submitCompanyEmployerVerification(
+    companyId: string,
+    payload: {
+      officialWebsite: string;
+      registrationIdentifier?: string;
+      verificationEvidenceUrl?: string;
+      verificationNotes: string;
+    }
+  ): CompanyAccountRecord | null {
+    const existing = this.getCompanyById(companyId);
+    if (!existing) return null;
+
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        UPDATE company_accounts SET
+          official_website = ?,
+          registration_identifier = ?,
+          verification_evidence_url = ?,
+          verification_notes = ?,
+          verification_status = 'pending_review',
+          verification_submitted_at = ?,
+          rejection_reason = '',
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .run(
+        payload.officialWebsite,
+        payload.registrationIdentifier ?? existing.registrationIdentifier,
+        payload.verificationEvidenceUrl || '',
+        payload.verificationNotes,
+        now,
+        now,
+        companyId
+      );
+
+    return this.getCompanyById(companyId);
+  }
+
+  public setCompanyVerificationDecisionAdmin(
+    companyId: string,
+    decision: 'verified' | 'rejected' | 'unverified',
+    adminIdentifier: string,
+    notesOrReason: string = ''
+  ): CompanyAccountRecord | null {
+    const existing = this.getCompanyById(companyId);
+    if (!existing) return null;
+
+    const now = new Date().toISOString();
+    if (decision === 'verified') {
+      this.db
+        .prepare(`
+          UPDATE company_accounts SET
+            verification_status = 'verified',
+            verified_by = ?,
+            verified_at = ?,
+            rejection_reason = '',
+            updated_at = ?
+          WHERE id = ?
+        `)
+        .run(adminIdentifier, now, now, companyId);
+    } else if (decision === 'rejected') {
+      this.db
+        .prepare(`
+          UPDATE company_accounts SET
+            verification_status = 'rejected',
+            verified_by = ?,
+            verified_at = NULL,
+            rejection_reason = ?,
+            updated_at = ?
+          WHERE id = ?
+        `)
+        .run(adminIdentifier, notesOrReason || 'Verification evidence could not be confirmed.', now, companyId);
+    } else {
+      this.db
+        .prepare(`
+          UPDATE company_accounts SET
+            verification_status = 'unverified',
+            verified_by = NULL,
+            verified_at = NULL,
+            rejection_reason = ?,
+            updated_at = ?
+          WHERE id = ?
+        `)
+        .run(notesOrReason, now, companyId);
+    }
+
+    return this.getCompanyById(companyId);
+  }
+
+  public setCompanyAccountStatusAdmin(
+    companyId: string,
+    status: CompanyAccountStatus,
+    adminIdentifier: string,
+    reason: string = ''
+  ): { company: CompanyAccountRecord | null; revokedSessions: number } {
+    const existing = this.getCompanyById(companyId);
+    if (!existing) return { company: null, revokedSessions: 0 };
+
+    const now = new Date().toISOString();
+    let revokedSessions = 0;
+
+    if (status === 'suspended') {
+      this.db
+        .prepare(`
+          UPDATE company_accounts SET
+            account_status = 'suspended',
+            suspended_at = ?,
+            suspended_by = ?,
+            suspension_reason = ?,
+            updated_at = ?
+          WHERE id = ?
+        `)
+        .run(now, adminIdentifier, reason || 'Suspended by platform administrator.', now, companyId);
+      revokedSessions = this.revokeAllCompanySessions(companyId);
+    } else {
+      this.db
+        .prepare(`
+          UPDATE company_accounts SET
+            account_status = 'active',
+            suspended_at = NULL,
+            suspended_by = NULL,
+            suspension_reason = '',
+            updated_at = ?
+          WHERE id = ?
+        `)
+        .run(now, companyId);
+    }
+
+    return {
+      company: this.getCompanyById(companyId),
+      revokedSessions,
+    };
+  }
+
+  public createCompanySession(input: {
+    jti: string;
+    companyId: string;
+    rawToken: string;
+    userAgent: string;
+    ipMasked: string;
+    expiresAt: string;
+  }): CompanySessionRecord {
+    const now = new Date().toISOString();
+    const tokenHash = hashOpaqueToken(input.rawToken);
+
+    this.db
+      .prepare(`
+        INSERT INTO company_sessions (jti, company_id, token_hash, user_agent, ip_masked, created_at, last_active_at, expires_at, revoked_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+      `)
+      .run(
+        input.jti,
+        input.companyId,
+        tokenHash,
+        input.userAgent.slice(0, 260),
+        input.ipMasked || 'unknown',
+        now,
+        now,
+        input.expiresAt
+      );
+
+    const row = this.db.prepare('SELECT * FROM company_sessions WHERE jti = ?').get(input.jti) as any;
+    return this.mapCompanySessionRow(row);
+  }
+
+  public validateCompanySessionToken(
+    rawToken: string
+  ): { session: CompanySessionRecord; company: CompanyAccountRecord } | null {
+    const tokenHash = hashOpaqueToken(rawToken);
+    const nowIso = new Date().toISOString();
+    const sessionRow = this.db
+      .prepare(`
+        SELECT * FROM company_sessions
+        WHERE token_hash = ?
+          AND revoked_at IS NULL
+          AND expires_at > ?
+      `)
+      .get(tokenHash, nowIso) as any;
+
+    if (!sessionRow) return null;
+
+    const company = this.getCompanyById(sessionRow.company_id);
+    if (!company) return null;
+
+    this.db
+      .prepare('UPDATE company_sessions SET last_active_at = ? WHERE jti = ?')
+      .run(nowIso, sessionRow.jti);
+
+    return {
+      session: { ...this.mapCompanySessionRow(sessionRow), lastActiveAt: nowIso },
+      company,
+    };
+  }
+
+  public listActiveCompanySessions(companyId: string, currentJti?: string): CompanySessionRecord[] {
+    const nowIso = new Date().toISOString();
+    const rows = this.db
+      .prepare(`
+        SELECT * FROM company_sessions
+        WHERE company_id = ? AND revoked_at IS NULL AND expires_at > ?
+        ORDER BY last_active_at DESC
+      `)
+      .all(companyId, nowIso) as any[];
+    return rows.map((r) => ({
+      ...this.mapCompanySessionRow(r),
+      isCurrent: Boolean(currentJti && r.jti === currentJti),
+    }));
+  }
+
+  public revokeCompanySessionByJti(jti: string, companyId?: string): boolean {
+    const nowIso = new Date().toISOString();
+    const res = companyId
+      ? (this.db
+          .prepare('UPDATE company_sessions SET revoked_at = ? WHERE jti = ? AND company_id = ? AND revoked_at IS NULL')
+          .run(nowIso, jti, companyId) as any)
+      : (this.db
+          .prepare('UPDATE company_sessions SET revoked_at = ? WHERE jti = ? AND revoked_at IS NULL')
+          .run(nowIso, jti) as any);
+    return (res.changes ?? 0) > 0;
+  }
+
+  public revokeAllCompanySessions(companyId: string, exceptJti?: string): number {
+    const nowIso = new Date().toISOString();
+    const res = exceptJti
+      ? (this.db
+          .prepare('UPDATE company_sessions SET revoked_at = ? WHERE company_id = ? AND jti != ? AND revoked_at IS NULL')
+          .run(nowIso, companyId, exceptJti) as any)
+      : (this.db
+          .prepare('UPDATE company_sessions SET revoked_at = ? WHERE company_id = ? AND revoked_at IS NULL')
+          .run(nowIso, companyId) as any);
+    return res.changes ?? 0;
+  }
+
+  public getJobsByCompanyAccountId(companyAccountId: string): DbJob[] {
+    const rows = this.db
+      .prepare('SELECT * FROM jobs WHERE company_account_id = ? ORDER BY created_at DESC')
+      .all(companyAccountId) as any[];
+    return rows.map((r) => this.mapJobRow(r));
+  }
+
+  public createCompanyAuditLog(entry: {
+    companyId: string;
+    actorType: 'company' | 'admin' | 'system';
+    actorId: string;
+    actorEmail: string;
+    action: string;
+    targetType?: string;
+    targetId?: string;
+    status?: 'success' | 'denied' | 'failure';
+    ipMasked?: string;
+    details?: string;
+  }): CompanyAuditLogRecord {
+    const id = generateCompanyAuditId();
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        INSERT INTO company_audit_logs (
+          id, company_id, actor_type, actor_id, actor_email,
+          action, target_type, target_id, status, ip_masked, details, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+      .run(
+        id,
+        entry.companyId,
+        entry.actorType,
+        entry.actorId || '',
+        entry.actorEmail || '',
+        entry.action,
+        entry.targetType || 'company',
+        entry.targetId || '',
+        entry.status || 'success',
+        entry.ipMasked || 'unknown',
+        entry.details || '',
+        now
+      );
+
+    const row = this.db.prepare('SELECT * FROM company_audit_logs WHERE id = ?').get(id) as any;
+    return this.mapCompanyAuditLogRow(row);
+  }
+
+  public getCompanyAuditLogs(companyId?: string, limit: number = 100): CompanyAuditLogRecord[] {
+    const clampedLimit = Math.max(1, Math.min(limit, 250));
+    const rows = companyId
+      ? (this.db
+          .prepare(`
+            SELECT l.*, c.organization_name
+            FROM company_audit_logs l
+            LEFT JOIN company_accounts c ON c.id = l.company_id
+            WHERE l.company_id = ?
+            ORDER BY l.created_at DESC
+            LIMIT ?
+          `)
+          .all(companyId, clampedLimit) as any[])
+      : (this.db
+          .prepare(`
+            SELECT l.*, c.organization_name
+            FROM company_audit_logs l
+            LEFT JOIN company_accounts c ON c.id = l.company_id
+            ORDER BY l.created_at DESC
+            LIMIT ?
+          `)
+          .all(clampedLimit) as any[]);
+
+    return rows.map((r) => this.mapCompanyAuditLogRow(r));
+  }
+
+  public deleteCompanyAccount(companyId: string): boolean {
+    this.revokeAllCompanySessions(companyId);
+    const res = this.db.prepare('DELETE FROM company_accounts WHERE id = ?').run(companyId) as any;
+    return (res.changes ?? 0) > 0;
   }
 }
 

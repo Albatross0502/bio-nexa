@@ -31,14 +31,15 @@ import { WorkshopCard, UnifiedWorkshop } from '../workshops/WorkshopCard';
 import { WorkshopDetailModal } from '../workshops/WorkshopDetailModal';
 import {
   filterWorkshops,
-  getDefaultWorkshopImageForTitle,
+  isWorkshopExpired,
   mapApiWorkshopToUnified,
-  mapUnifiedWorkshopToOpportunity,
-  normalizeWorkshopFormat
+  mapUnifiedWorkshopToOpportunity
 } from '../../services/workshops/workshopHelpers';
 import {
   UnifiedCourse,
   filterCourses,
+  isCourseExpired,
+  isCourseRegistrationClosed,
   mapApiCourseToUnified,
   mapUnifiedCourseToOpportunity
 } from '../../services/courses/courseHelpers';
@@ -78,11 +79,39 @@ export const HomePage: React.FC = () => {
   const [dbCourses, setDbCourses] = useState<UnifiedCourse[]>([]);
   const [dbCoursesLoaded, setDbCoursesLoaded] = useState(false);
 
+  const refreshLiveWorkshops = async () => {
+    try {
+      const r = await fetch('/api/workshops?includeExpired=false');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && Array.isArray(d.workshops)) {
+        setDbWorkshops(d.workshops.map(mapApiWorkshopToUnified));
+        setDbWorkshopsLoaded(true);
+      }
+    } catch {
+      // Keep existing state if transient network issue occurs
+    }
+  };
+
+  const refreshLiveCourses = async () => {
+    try {
+      const r = await fetch('/api/courses?onlyAvailable=true&includeExpired=false');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d && Array.isArray(d.courses)) {
+        setDbCourses(d.courses.map(mapApiCourseToUnified));
+        setDbCoursesLoaded(true);
+      }
+    } catch {
+      // Keep existing state if transient network issue occurs
+    }
+  };
+
   useEffect(() => {
     let isMounted = true;
     opportunityStore.refreshFromBackend().catch(() => {});
 
-    fetch('/api/workshops')
+    fetch('/api/workshops?includeExpired=false')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (isMounted && d && Array.isArray(d.workshops)) {
@@ -90,9 +119,11 @@ export const HomePage: React.FC = () => {
           setDbWorkshopsLoaded(true);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (isMounted) setDbWorkshopsLoaded(true);
+      });
 
-    fetch('/api/courses')
+    fetch('/api/courses?onlyAvailable=true&includeExpired=false')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (isMounted && d && Array.isArray(d.courses)) {
@@ -100,7 +131,9 @@ export const HomePage: React.FC = () => {
           setDbCoursesLoaded(true);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (isMounted) setDbCoursesLoaded(true);
+      });
 
     return () => {
       isMounted = false;
@@ -132,7 +165,9 @@ export const HomePage: React.FC = () => {
     try {
       const [backendOpps, sheetRes] = await Promise.all([
         opportunityStore.refreshFromBackend(),
-        opportunityStore.syncWithGoogleSheets(true)
+        opportunityStore.syncWithGoogleSheets(true),
+        refreshLiveWorkshops(),
+        refreshLiveCourses()
       ]);
       setLastSyncTime('Just now');
       if (sheetRes.success && !sheetRes.isFallback) {
@@ -154,34 +189,11 @@ export const HomePage: React.FC = () => {
     navigate(`/opportunities?q=${encodeURIComponent(query)}&loc=${encodeURIComponent(loc)}`);
   };
 
-  // Unified list of workshops (live DB preferred, static store fallback)
+  // Unified list of workshops synchronized strictly from live approved database records
   const allWorkshops: UnifiedWorkshop[] = useMemo(() => {
-    if (dbWorkshopsLoaded) {
-      return dbWorkshops;
-    }
-    return opportunities
-      .filter((opp) => opp.isApproved && opp.type === 'workshop')
-      .map((w) => ({
-        id: w.id,
-        title: w.title,
-        description: w.description,
-        instructor: w.workshopDetails?.speakerOrTrainer || w.organization || 'Senior Faculty Lead',
-        organizer: w.organization,
-        date: w.workshopDetails?.dates?.split(' to ')[0] || w.postedDate || '2026-12-01',
-        time: '09:30 AM - 04:30 PM IST',
-        duration: w.workshopDetails?.duration || '3 Days Intensive',
-        format: normalizeWorkshopFormat(w.workshopDetails?.mode || w.workMode),
-        venue: w.location || 'Online Live Portal',
-        registrationDeadline: w.deadline || '2026-12-05',
-        registrationUrl: w.workshopDetails?.registrationUrl || w.applicationUrl,
-        availability: w.status === 'Closed' ? 'Closed' : 'Open',
-        status: w.status === 'Closed' ? 'completed' : 'upcoming',
-        fees: w.workshopDetails?.fees || w.fees || '₹1,500 Subsidized',
-        imageUrl: getDefaultWorkshopImageForTitle(w.title),
-        featured: Boolean(w.featured),
-        skillsCovered: w.skills || ['Hands-on Wet Lab', 'Protocol Optimization']
-      }));
-  }, [dbWorkshopsLoaded, dbWorkshops, opportunities]);
+    if (!dbWorkshopsLoaded) return [];
+    return dbWorkshops.filter((w) => !isWorkshopExpired(w));
+  }, [dbWorkshopsLoaded, dbWorkshops]);
 
   // Filter public, non-expired opportunities (merging live DB workshops & courses)
   const activeOpportunities = useMemo(() => {
@@ -209,6 +221,7 @@ export const HomePage: React.FC = () => {
       .filter((o) => o.status !== 'Closed' && o.status !== 'Expired');
     const liveCoursesAsOpp = dbCoursesLoaded
       ? dbCourses
+          .filter((c) => c.isApproved !== false && !isCourseExpired(c) && !isCourseRegistrationClosed(c))
           .map(mapUnifiedCourseToOpportunity)
           .filter((o) => o.status !== 'Closed' && o.status !== 'Expired')
       : [];
@@ -279,26 +292,44 @@ export const HomePage: React.FC = () => {
       });
   }, [activeOpportunities, internshipModeFilter]);
 
-  // Section 04: Featured Workshops on Homepage
+  // Section 04: Synchronized Workshops on Homepage (active, approved, non-expired)
   const featuredWorkshopsList: UnifiedWorkshop[] = useMemo(() => {
-    return filterWorkshops(allWorkshops, {
-      onlyFeatured: true,
-      format: workshopModeFilter
+    if (workshopModeFilter === 'all') {
+      const featured = filterWorkshops(allWorkshops, {
+        onlyFeatured: true,
+        includeExpired: false,
+      });
+      return featured.length > 0
+        ? featured
+        : filterWorkshops(allWorkshops, { includeExpired: false });
+    }
+    const modeMatches = filterWorkshops(allWorkshops, {
+      format: workshopModeFilter,
+      includeExpired: false,
     });
+    return [...modeMatches].sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)));
   }, [allWorkshops, workshopModeFilter]);
 
   const activeWorkshopsCount = useMemo(() => {
     return activeOpportunities.filter((o) => o.type === 'workshop').length;
   }, [activeOpportunities]);
 
-  // Section 05: Featured Courses (falls back to active courses if none marked featured)
+  const activeCoursesCount = useMemo(() => {
+    return activeOpportunities.filter((o) => o.type === 'course').length;
+  }, [activeOpportunities]);
+
+  // Section 05: Synchronized Active Approved Courses (prioritizes featured, falls back to available)
   const coursesList = useMemo(() => {
     if (dbCoursesLoaded) {
-      const featuredLive = filterCourses(dbCourses, { onlyFeatured: true });
-      const pool = featuredLive.length > 0 ? featuredLive : filterCourses(dbCourses, { status: 'available' });
+      const activePool = filterCourses(dbCourses, {
+        status: 'available',
+        includeExpired: false
+      }).filter((c) => c.isApproved !== false);
+      const featuredLive = activePool.filter((c) => c.featured);
+      const pool = featuredLive.length > 0 ? featuredLive : activePool;
       return pool.slice(0, 6).map(mapUnifiedCourseToOpportunity);
     }
-    return activeOpportunities.filter(opp => opp.type === 'course');
+    return activeOpportunities.filter(opp => opp.type === 'course').slice(0, 6);
   }, [dbCoursesLoaded, dbCourses, activeOpportunities]);
 
   const latestPapers = SEED_RESEARCH.slice(0, 2);
@@ -428,7 +459,7 @@ export const HomePage: React.FC = () => {
                   Workshops &amp; Courses
                 </span>
                 <span className="text-2xl font-bold font-mono text-[#1F6FB2] dark:text-sky-400 tabular-nums">
-                  {activeWorkshopsCount + coursesList.length}
+                  {activeWorkshopsCount + activeCoursesCount}
                 </span>
                 <span className="text-xs text-slate-500 block mt-0.5">Hands-on Lab Training</span>
               </div>
@@ -483,7 +514,7 @@ export const HomePage: React.FC = () => {
               { id: 'biotech_job', label: 'Biotechnology Jobs', count: activeOpportunities.filter(o => o.type === 'job' || o.type === 'biotech_job').length },
               { id: 'internship', label: 'Internships', count: internshipsList.length },
               { id: 'workshop', label: 'Workshops', count: activeWorkshopsCount },
-              { id: 'course', label: 'Courses', count: coursesList.length },
+              { id: 'course', label: 'Courses', count: activeCoursesCount },
             ].map((cat) => (
               <button
                 key={cat.id}
@@ -930,36 +961,53 @@ export const HomePage: React.FC = () => {
           <div>
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1">
               <BookOpen className="w-4 h-4" />
-              <span>Section 05 · Academic Masterclasses</span>
+              <span>Section 05 · Curated Learning Directory</span>
             </div>
             <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-              Biotechnology Courses &amp; Certifications
+              Biotechnology Courses &amp; Training
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-              Curated educational courses across biotechnology, bioinformatics, clinical research, and laboratory methodology.
+              Active, approved third-party and institutional courses across biotechnology, bioinformatics, clinical research, and laboratory methodology.
             </p>
           </div>
 
           <button
+            type="button"
             onClick={() => navigate('/courses')}
             className="inline-flex items-center gap-1 text-sm font-bold text-amber-700 dark:text-amber-400 hover:underline shrink-0 cursor-pointer"
           >
-            <span>Explore All Academy Courses</span>
+            <span>All Courses ({activeCoursesCount})</span>
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {coursesList.map((course) => (
-            <OpportunityCard
-              key={course.id}
-              opportunity={course}
-              onSelect={(selected) => setSelectedOpportunity(selected)}
-              isBookmarked={isItemSaved(course.id)}
-              onToggleBookmark={(_id) => toggleSaveItem(course.id, course.title)}
-            />
-          ))}
-        </div>
+        {coursesList.length === 0 ? (
+          <div className="p-10 text-center bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 space-y-3">
+            <BookOpen className="w-8 h-8 mx-auto text-slate-400" />
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+              No active courses are currently open for enrollment.
+            </p>
+            <button
+              type="button"
+              onClick={() => navigate('/courses')}
+              className="px-4 py-2 text-xs font-bold bg-[#0B2A5B] text-white rounded-xl hover:bg-blue-900 cursor-pointer"
+            >
+              Browse Course Directory
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {coursesList.map((course) => (
+              <OpportunityCard
+                key={course.id}
+                opportunity={course}
+                onSelect={(selected) => setSelectedOpportunity(selected)}
+                isBookmarked={isItemSaved(course.id)}
+                onToggleBookmark={(_id) => toggleSaveItem(course.id, course.title)}
+              />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Research Literature Sync & PubMed */}

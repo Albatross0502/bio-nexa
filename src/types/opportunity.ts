@@ -57,6 +57,8 @@ export interface WorkshopDetails {
 
 export interface CourseDetails {
   provider?: string;
+  providerType?: 'third_party' | 'bionexa';
+  pricingType?: 'free' | 'paid';
   duration?: string;
   lessonsCount?: number;
   fees?: string;

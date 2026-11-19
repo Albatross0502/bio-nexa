@@ -234,7 +234,7 @@ export const JobsPage: React.FC = () => {
                   </span>
                 </div>
                 <p className="text-slate-600 dark:text-slate-400 text-xs mt-0.5">
-                  Search live vacancies across Microbiology, Molecular Biology, Clinical Research, Internships &amp; Research Assistant posts.
+                  Build encoded Google Search queries for Biotech, Internships, Fresher, Research Assistant, Pharma, Clinical, Molecular Biology, Bioinformatics &amp; Remote roles, plus official employer career portals.
                 </p>
               </div>
             </div>

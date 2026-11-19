@@ -9,6 +9,44 @@
 import crypto from 'node:crypto';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { isJobExpiredByDeadline } from '../../../src/services/jobs/jobVerification';
+import {
+  classifyInternshipCompensation,
+  isInternshipDeadlineExpired,
+  matchesInternshipModeFilter,
+} from '../../../src/services/internships/internshipHelpers';
+import {
+  isWorkshopExpired,
+  normalizeWorkshopApprovalStatus,
+} from '../../../src/services/workshops/workshopHelpers';
+import {
+  COURSE_CATEGORIES,
+  classifyCoursePricing,
+  isCourseExpired,
+  normalizeCourseApprovalStatus,
+  normalizeCourseProviderType,
+} from '../../../src/services/courses/courseHelpers';
+import {
+  type DbStudentAccount,
+  type DbStudentSession,
+  type SafeStudentSession,
+  type StudentAccountStatus,
+  type StudentDeletionRequestRecord,
+  hashEmailForAudit,
+  hashOpaqueToken,
+  normalizeStudentEmail,
+} from '../../../src/services/student/studentAuthService';
+import {
+  type ApplicationDestinationType,
+  type CompanyAccountRecord,
+  type CompanyAccountStatus,
+  type CompanyAuditLogRecord,
+  type CompanySessionRecord,
+  generateCompanyAuditId,
+  normalizeAccountStatus as normalizeCompanyAccountStatus,
+  normalizeApplicationDestinationType,
+  normalizeCompanyEmail,
+  normalizeVerificationStatus as normalizeCompanyVerificationStatus,
+} from '../../../src/services/company/companyAuthService';
 
 export type JobVerificationStatus =
   | 'Pending Verification'
@@ -101,6 +139,10 @@ function mapJobRow(row: any) {
     responsibilities: parseJsonArray(row.responsibilities),
     requirements: parseJsonArray(row.requirements),
     sector: row.sector || 'Biotechnology',
+    companyAccountId: row.company_account_id || '',
+    applicationDestinationType: normalizeApplicationDestinationType(row.application_destination_type),
+    applicationEmail: row.application_email || '',
+    applicationInstructions: row.application_instructions || '',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -158,6 +200,12 @@ function mapInternshipRow(row: any) {
   const verificationStatus = normalizeVerificationStatus(row.verification_status);
   const workMode = row.work_mode || 'On-site';
   const tags = parseJsonArray(row.tags);
+  const stipend = row.stipend || 'Competitive Stipend';
+  const compensationType = classifyInternshipCompensation(stipend);
+  const expired =
+    verificationStatus === 'Expired' ||
+    row.is_active === false ||
+    isInternshipDeadlineExpired(row.deadline || '');
   return {
     id: row.id,
     slug: row.slug || row.id,
@@ -166,7 +214,9 @@ function mapInternshipRow(row: any) {
     location: row.location || 'India',
     mode: workMode,
     workMode,
-    stipend: row.stipend || 'Competitive Stipend',
+    stipend,
+    compensationType,
+    isPaid: compensationType === 'paid',
     duration: row.duration || '3 Months',
     deadline: row.deadline || '',
     category: row.category || tags[0] || 'Industrial R&D',
@@ -182,12 +232,13 @@ function mapInternshipRow(row: any) {
     sourceName: row.source_name || 'Verified Partner Program',
     sourceUrl: row.source_url || row.application_url || '',
     applicationUrl: row.application_url || '',
-    verificationStatus,
+    verificationStatus: expired && verificationStatus !== 'Rejected' ? 'Expired' : verificationStatus,
     verificationNotes: row.verification_notes || '',
     lastVerificationDate: row.last_verification_date || '',
-    isVerified: verificationStatus === 'Verified',
+    isVerified: verificationStatus === 'Verified' && !expired,
     isApproved: Boolean(row.is_approved),
-    isActive: row.is_active !== false,
+    isActive: row.is_active !== false && !expired,
+    isExpired: expired,
     featured: Boolean(row.featured),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -207,52 +258,70 @@ export function formatAdminInternship(intern: ReturnType<typeof mapInternshipRow
 }
 
 function mapWorkshopRow(row: any) {
+  const approvalStatus = normalizeWorkshopApprovalStatus(row.approval_status, row.is_approved ?? true);
+  const expired = isWorkshopExpired({
+    status: row.status,
+    availability: row.availability,
+    date: row.date,
+    registrationDeadline: row.registration_deadline,
+  });
+  const numericCap = Number(row.capacity ?? 0);
   return {
     id: row.id,
     name: row.name,
     title: row.name,
-    description: row.description,
+    description: row.description || '',
+    organizer: row.organizer || '',
     instructor: row.instructor || '',
-    organizer: row.instructor || '',
-    date: row.date,
-    startDate: row.date,
-    endDate: row.date,
-    time: row.time || '09:00 AM - 05:00 PM IST',
-    duration: row.duration || '1 Day',
+    category: row.category || '',
+    date: row.date || '',
+    startDate: row.date || '',
+    endDate: row.date || '',
+    time: row.time || '',
+    duration: row.duration || '',
     format: row.format || 'Online',
     workMode: row.format || 'Online',
-    venue: row.venue,
-    location: row.venue,
+    venue: row.venue || '',
+    location: row.venue || '',
     registrationDeadline: row.registration_deadline || '',
     registrationLink: row.registration_link,
     registrationUrl: row.registration_link,
-    availability: row.availability || 'Open',
-    status: row.status || 'upcoming',
-    fees: row.fees || 'Free',
-    capacity: Number(row.capacity ?? 50),
+    availability: row.availability || (expired ? 'Closed' : 'Open'),
+    status: expired ? 'completed' : (row.status || 'upcoming'),
+    fees: row.fees || '',
+    capacity: Number.isFinite(numericCap) && numericCap > 0 ? numericCap : null,
     imageUrl: row.image_url || '',
     featured: Boolean(row.featured),
     skillsCovered: parseJsonArray(row.skills_covered),
-    isApproved: true,
+    approvalStatus,
+    isApproved: approvalStatus === 'approved',
+    isExpired: expired,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
 }
 
 function mapCourseRow(row: any) {
-  const status = normalizeCourseStatus(row.status);
+  const expired = isCourseExpired({ registrationDeadline: row.registration_deadline });
+  const status = expired ? 'closed' : normalizeCourseStatus(row.status);
   const certInfo = (row.certificate_info || '').trim();
-  const isCert = Boolean(certInfo) || Boolean(row.is_certificate_available);
+  const fees = String(row.fees || '').trim();
+  const pricingType = classifyCoursePricing(fees, row.pricing_type);
+  const providerType = normalizeCourseProviderType(row.provider_type);
+  const approvalStatus = normalizeCourseApprovalStatus(row.approval_status, row.is_approved);
+  const isApproved = approvalStatus === 'approved';
   return {
     id: row.id,
     name: row.name,
     title: row.name,
-    provider: row.provider || row.instructor || 'Course Provider',
-    description: row.description,
-    duration: row.duration,
-    fees: row.fees || 'Free',
-    price: row.fees || 'Free',
-    eligibility: row.eligibility || 'Open to all Science Students',
+    provider: String(row.provider || '').trim(),
+    providerType,
+    description: row.description || '',
+    duration: row.duration || '',
+    fees,
+    price: fees,
+    pricingType,
+    eligibility: row.eligibility || '',
     curriculum: parseJsonArray(row.curriculum),
     syllabus: parseJsonArray(row.curriculum),
     deliveryMode: row.delivery_mode || 'Online (Self-Paced)',
@@ -260,13 +329,16 @@ function mapCourseRow(row: any) {
     registrationDeadline: row.registration_deadline || '',
     registrationLink: row.registration_link,
     registrationUrl: row.registration_link,
-    availability: status === 'closed' ? 'Closed' : row.availability || 'Available',
+    availability: expired ? 'Expired' : status === 'closed' ? 'Closed' : row.availability || 'Available',
     status,
-    instructor: row.instructor || row.provider || '',
-    level: row.level || 'Intermediate',
+    approvalStatus,
+    isApproved,
+    isExpired: expired,
+    instructor: String(row.instructor || '').trim(),
+    level: row.level || '',
     category: row.category || 'Biotechnology',
     imageUrl: row.image_url || '',
-    isCertificateAvailable: isCert,
+    isCertificateAvailable: Boolean(certInfo),
     featured: Boolean(row.featured),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -438,6 +510,10 @@ export class SupabaseRepository {
     responsibilities?: string[];
     requirements?: string[];
     sector?: string;
+    companyAccountId?: string;
+    applicationDestinationType?: ApplicationDestinationType;
+    applicationEmail?: string;
+    applicationInstructions?: string;
   }) {
     const now = new Date().toISOString();
     const id = input.id || `job-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
@@ -458,7 +534,7 @@ export class SupabaseRepository {
           skills: input.skills || [],
           employment_type: input.employmentType || 'Full-time',
           salary: input.salary || 'Competitive',
-          application_url: input.applicationUrl,
+          application_url: input.applicationUrl || '',
           source: input.source || 'BIO-INEXA Verified',
           original_job_url: input.originalJobUrl || '',
           publication_date: pubDate,
@@ -472,6 +548,10 @@ export class SupabaseRepository {
           responsibilities: input.responsibilities || [],
           requirements: input.requirements || [],
           sector: input.sector || 'Biotechnology',
+          company_account_id: input.companyAccountId || '',
+          application_destination_type: normalizeApplicationDestinationType(input.applicationDestinationType),
+          application_email: input.applicationEmail || '',
+          application_instructions: input.applicationInstructions || '',
           created_at: now,
           updated_at: now,
         })
@@ -517,6 +597,14 @@ export class SupabaseRepository {
     if (updates.responsibilities !== undefined) patch.responsibilities = updates.responsibilities;
     if (updates.requirements !== undefined) patch.requirements = updates.requirements;
     if (updates.sector !== undefined) patch.sector = updates.sector;
+    if (updates.companyAccountId !== undefined) patch.company_account_id = updates.companyAccountId;
+    if (updates.applicationDestinationType !== undefined) {
+      patch.application_destination_type = normalizeApplicationDestinationType(updates.applicationDestinationType);
+    }
+    if (updates.applicationEmail !== undefined) patch.application_email = updates.applicationEmail;
+    if (updates.applicationInstructions !== undefined) {
+      patch.application_instructions = updates.applicationInstructions;
+    }
 
     const row = this.assertOk<any>(
       await this.client.from('jobs').update(patch).eq('id', id).select('*').single(),
@@ -575,7 +663,10 @@ export class SupabaseRepository {
   public async getInternships(filter?: {
     search?: string;
     category?: string;
+    location?: string;
     mode?: string;
+    compensation?: string;
+    includeExpired?: boolean;
     onlyApproved?: boolean;
     onlyActive?: boolean;
   }) {
@@ -588,27 +679,68 @@ export class SupabaseRepository {
     if (filter?.onlyApproved !== false) {
       query = query.eq('is_approved', true);
     }
-    if (filter?.onlyActive !== false) {
+    if (filter?.onlyActive !== false && !filter?.includeExpired) {
       query = query.eq('is_active', true);
     }
 
     const rows = this.assertOk<any[]>(await query, 'getInternships') || [];
+    const compFilter = String(filter?.compensation || 'all').trim().toLowerCase();
+
     return rows.map(mapInternshipRow).filter((item) => {
+      if (!filter?.includeExpired && filter?.onlyActive !== false && item.isExpired) {
+        return false;
+      }
       if (filter?.category && filter.category !== 'All' && filter.category !== 'all' && item.category !== filter.category) {
         return false;
       }
-      if (filter?.mode && filter.mode !== 'All' && filter.mode !== 'all' && !item.workMode.toLowerCase().includes(filter.mode.toLowerCase())) {
+      if (filter?.location && filter.location !== 'All' && filter.location !== 'all') {
+        if (!item.location.toLowerCase().includes(filter.location.toLowerCase())) {
+          return false;
+        }
+      }
+      if (filter?.mode && !matchesInternshipModeFilter(item.workMode, filter.mode)) {
         return false;
+      }
+      if (compFilter === 'paid' || compFilter === 'unpaid') {
+        if (item.compensationType !== compFilter) {
+          return false;
+        }
       }
       if (filter?.search) {
         const term = filter.search.toLowerCase();
-        return [item.title, item.organization, item.description, item.location, ...item.skillsRequired]
+        return [item.title, item.organization, item.description, item.location, item.eligibility, ...item.skillsRequired]
           .join(' ')
           .toLowerCase()
           .includes(term);
       }
       return true;
     });
+  }
+
+  public async expirePastDeadlineInternships(referenceDate: Date = new Date()): Promise<{
+    expiredCount: number;
+    expiredIds: string[];
+  }> {
+    const all = await this.getAllInternshipsAdmin();
+    const expiredIds: string[] = [];
+    for (const item of all) {
+      if (
+        item.isActive &&
+        item.verificationStatus !== 'Rejected' &&
+        item.verificationStatus !== 'Expired' &&
+        isInternshipDeadlineExpired(item.deadline, referenceDate)
+      ) {
+        await this.updateInternship(item.id, {
+          isActive: false,
+          verificationStatus: 'Expired',
+          verificationNotes: item.verificationNotes
+            ? `${item.verificationNotes} · Automatically marked expired after deadline (${item.deadline}).`
+            : `Automatically marked expired after deadline (${item.deadline}).`,
+        });
+        expiredIds.push(item.id);
+      }
+    }
+    return { expiredCount: expiredIds.length, expiredIds };
   }
 
   public async getAllInternshipsAdmin() {
@@ -657,7 +789,7 @@ export class SupabaseRepository {
           verification_notes: input.verificationNotes || '',
           last_verification_date: input.lastVerificationDate || (verStatus === 'Verified' ? now.split('T')[0] : ''),
           is_active: input.isActive !== false,
-          is_approved: input.isApproved !== false,
+          is_approved: Boolean(input.isApproved),
           featured: Boolean(input.featured),
           created_at: now,
           updated_at: now,
@@ -736,6 +868,10 @@ export class SupabaseRepository {
   // -----------------------------------------------------------------------
 
   public async getWorkshops(filter?: {
+    onlyApproved?: boolean;
+    approvalStatus?: string;
+    category?: string;
+    includeExpired?: boolean;
     status?: string;
     format?: string;
     featured?: boolean;
@@ -759,12 +895,22 @@ export class SupabaseRepository {
 
     const rows = this.assertOk<any[]>(await query, 'getWorkshops') || [];
     return rows.map(mapWorkshopRow).filter((ws) => {
-      if (!filter?.search) return true;
-      const term = filter.search.toLowerCase();
-      return [ws.name, ws.description, ws.instructor, ws.venue, ...ws.skillsCovered]
-        .join(' ')
-        .toLowerCase()
-        .includes(term);
+      if (filter?.onlyApproved && !ws.isApproved) return false;
+      if (filter?.approvalStatus && filter.approvalStatus !== 'all' && ws.approvalStatus !== filter.approvalStatus) {
+        return false;
+      }
+      if (filter?.category && filter.category !== 'all' && ws.category.toLowerCase() !== filter.category.toLowerCase()) {
+        return false;
+      }
+      if (filter?.includeExpired === false && ws.isExpired) return false;
+      if (filter?.search) {
+        const term = filter.search.toLowerCase();
+        const hay = [ws.name, ws.description, ws.organizer, ws.instructor, ws.category, ws.venue, ...ws.skillsCovered]
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      return true;
     });
   }
 
@@ -777,6 +923,8 @@ export class SupabaseRepository {
   public async createWorkshop(input: Record<string, any>) {
     const now = new Date().toISOString();
     const id = input.id || `ws-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const approvalStatus = normalizeWorkshopApprovalStatus(input.approvalStatus, input.isApproved ?? true);
+    const parsedCap = input.capacity !== undefined && input.capacity !== null && input.capacity !== '' ? Number(input.capacity) : 0;
     const row = this.assertOk<any>(
       await this.client
         .from('workshops')
@@ -784,21 +932,25 @@ export class SupabaseRepository {
           id,
           name: input.title || input.name,
           description: input.description || '',
-          instructor: input.organizer || input.instructor || '',
-          date: input.date || input.startDate || now.split('T')[0],
-          time: input.time || '09:30 AM - 04:30 PM IST',
-          duration: input.duration || '1 Day',
+          organizer: input.organizer || '',
+          instructor: input.instructor || '',
+          category: input.category || '',
+          date: input.date || input.startDate || '',
+          time: input.time || '',
+          duration: input.duration || '',
           format: input.format || input.workMode || 'Online',
-          venue: input.venue || input.location || 'Online',
+          venue: input.venue || input.location || '',
           registration_deadline: input.registrationDeadline || '',
           registration_link: input.registrationUrl || input.registrationLink,
           availability: input.availability || 'Open',
           status: input.status || 'upcoming',
-          fees: input.fees || 'Free',
-          capacity: Number(input.capacity ?? 50),
+          fees: input.fees || '',
+          capacity: Number.isFinite(parsedCap) && parsedCap > 0 ? Math.floor(parsedCap) : 0,
           image_url: input.imageUrl || '',
-          featured: Boolean(input.featured),
+          featured: approvalStatus === 'approved' ? Boolean(input.featured) : false,
           skills_covered: input.skillsCovered || [],
+          approval_status: approvalStatus,
+          is_approved: approvalStatus === 'approved',
           created_at: now,
           updated_at: now,
         })
@@ -816,9 +968,9 @@ export class SupabaseRepository {
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     if (updates.title !== undefined || updates.name !== undefined) patch.name = updates.title ?? updates.name;
     if (updates.description !== undefined) patch.description = updates.description;
-    if (updates.organizer !== undefined || updates.instructor !== undefined) {
-      patch.instructor = updates.organizer ?? updates.instructor;
-    }
+    if (updates.organizer !== undefined) patch.organizer = updates.organizer;
+    if (updates.instructor !== undefined) patch.instructor = updates.instructor;
+    if (updates.category !== undefined) patch.category = updates.category;
     if (updates.date !== undefined || updates.startDate !== undefined) patch.date = updates.date ?? updates.startDate;
     if (updates.time !== undefined) patch.time = updates.time;
     if (updates.duration !== undefined) patch.duration = updates.duration;
@@ -831,16 +983,37 @@ export class SupabaseRepository {
     if (updates.availability !== undefined) patch.availability = updates.availability;
     if (updates.status !== undefined) patch.status = updates.status;
     if (updates.fees !== undefined) patch.fees = updates.fees;
-    if (updates.capacity !== undefined) patch.capacity = Number(updates.capacity);
+    if (updates.capacity !== undefined) {
+      const cap = updates.capacity === null || updates.capacity === '' ? 0 : Number(updates.capacity);
+      patch.capacity = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : 0;
+    }
     if (updates.imageUrl !== undefined) patch.image_url = updates.imageUrl;
     if (updates.featured !== undefined) patch.featured = Boolean(updates.featured);
     if (updates.skillsCovered !== undefined) patch.skills_covered = updates.skillsCovered;
+    if (updates.approvalStatus !== undefined) {
+      const status = normalizeWorkshopApprovalStatus(updates.approvalStatus);
+      patch.approval_status = status;
+      patch.is_approved = status === 'approved';
+      if (status !== 'approved') patch.featured = false;
+    }
 
     const row = this.assertOk<any>(
       await this.client.from('workshops').update(patch).eq('id', id).select('*').single(),
       'updateWorkshop'
     );
     return mapWorkshopRow(row);
+  }
+
+  public async expirePastWorkshops(): Promise<{ expiredCount: number; expiredIds: string[] }> {
+    const all = await this.getWorkshops();
+    const expiredIds: string[] = [];
+    for (const w of all) {
+      if (w.isExpired && w.status !== 'completed') {
+        await this.updateWorkshop(w.id, { status: 'completed', availability: 'Closed' });
+        expiredIds.push(w.id);
+      }
+    }
+    return { expiredCount: expiredIds.length, expiredIds };
   }
 
   public async deleteWorkshop(id: string): Promise<boolean> {
@@ -856,8 +1029,13 @@ export class SupabaseRepository {
 
   public async getCourses(filter?: {
     onlyAvailable?: boolean;
+    onlyApproved?: boolean;
+    approvalStatus?: string;
     category?: string;
     status?: string;
+    pricingType?: string;
+    providerType?: string;
+    includeExpired?: boolean;
     featured?: boolean;
     search?: string;
   }) {
@@ -873,8 +1051,15 @@ export class SupabaseRepository {
 
     const rows = this.assertOk<any[]>(await query, 'getCourses') || [];
     return rows.map(mapCourseRow).filter((c) => {
+      if (filter?.onlyApproved && (!c.isApproved || c.approvalStatus !== 'approved')) return false;
+      if (filter?.approvalStatus && filter.approvalStatus !== 'all') {
+        if (c.approvalStatus !== normalizeCourseApprovalStatus(filter.approvalStatus)) return false;
+      }
       if (filter?.onlyAvailable && c.status !== 'available') return false;
+      if (filter?.includeExpired === false && c.isExpired) return false;
       if (filter?.status && filter.status !== 'all' && c.status !== normalizeCourseStatus(filter.status)) return false;
+      if (filter?.pricingType && filter.pricingType !== 'all' && c.pricingType !== filter.pricingType.toLowerCase()) return false;
+      if (filter?.providerType && filter.providerType !== 'all' && c.providerType !== normalizeCourseProviderType(filter.providerType)) return false;
       if (filter?.category && filter.category !== 'all') {
         if (c.category.toLowerCase() !== filter.category.toLowerCase()) return false;
       }
@@ -897,32 +1082,42 @@ export class SupabaseRepository {
   public async createCourse(input: Record<string, any>) {
     const now = new Date().toISOString();
     const id = input.id || `course-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-    const normStatus = normalizeCourseStatus(input.status);
+    const expired = isCourseExpired({ registrationDeadline: input.registrationDeadline });
+    const normStatus = expired ? 'closed' : normalizeCourseStatus(input.status);
     const certInfo = String(input.certificateInfo || '').trim();
+    const fees = String(input.fees ?? input.price ?? '').trim();
+    const pricingType = classifyCoursePricing(fees, input.pricingType);
+    const providerType = normalizeCourseProviderType(input.providerType);
+    const approvalStatus = normalizeCourseApprovalStatus(input.approvalStatus, input.isApproved);
+    const isApproved = approvalStatus === 'approved';
     const row = this.assertOk<any>(
       await this.client
         .from('courses')
         .insert({
           id,
           name: input.title || input.name,
-          provider: input.provider || input.instructor || 'Course Provider',
+          provider: String(input.provider || '').trim(),
+          provider_type: providerType,
           description: input.description || '',
-          duration: input.duration || 'Self-Paced',
-          fees: input.fees || input.price || 'Free',
-          eligibility: input.eligibility || 'Open to all Science Students',
+          duration: input.duration || '',
+          fees,
+          pricing_type: pricingType,
+          eligibility: input.eligibility || '',
           curriculum: input.curriculum || input.syllabus || [],
           delivery_mode: input.deliveryMode || 'Online (Self-Paced)',
           certificate_info: certInfo,
-          registration_deadline: input.registrationDeadline || 'Open / Rolling',
+          registration_deadline: input.registrationDeadline || '',
           registration_link: input.registrationUrl || input.registrationLink,
-          availability: normStatus === 'closed' ? 'Closed' : input.availability || 'Available',
+          availability: expired ? 'Expired' : normStatus === 'closed' ? 'Closed' : input.availability || 'Available',
           status: normStatus,
-          instructor: input.instructor || input.provider || '',
-          level: input.level || 'Intermediate',
+          approval_status: approvalStatus,
+          is_approved: isApproved,
+          instructor: String(input.instructor || '').trim(),
+          level: input.level || '',
           category: input.category || 'Biotechnology',
           image_url: input.imageUrl || '',
-          is_certificate_available: Boolean(certInfo) || Boolean(input.isCertificateAvailable),
-          featured: Boolean(input.featured),
+          is_certificate_available: Boolean(certInfo),
+          featured: isApproved && Boolean(input.featured),
           created_at: now,
           updated_at: now,
         })
@@ -940,9 +1135,16 @@ export class SupabaseRepository {
     const patch: Record<string, any> = { updated_at: new Date().toISOString() };
     if (updates.title !== undefined || updates.name !== undefined) patch.name = updates.title ?? updates.name;
     if (updates.provider !== undefined) patch.provider = updates.provider;
+    if (updates.providerType !== undefined) patch.provider_type = normalizeCourseProviderType(updates.providerType);
     if (updates.description !== undefined) patch.description = updates.description;
     if (updates.duration !== undefined) patch.duration = updates.duration;
-    if (updates.fees !== undefined || updates.price !== undefined) patch.fees = updates.fees ?? updates.price;
+    if (updates.fees !== undefined || updates.price !== undefined) {
+      const nextFees = String(updates.fees ?? updates.price ?? '').trim();
+      patch.fees = nextFees;
+      patch.pricing_type = classifyCoursePricing(nextFees, updates.pricingType);
+    } else if (updates.pricingType !== undefined) {
+      patch.pricing_type = classifyCoursePricing(existing.fees, updates.pricingType);
+    }
     if (updates.eligibility !== undefined) patch.eligibility = updates.eligibility;
     if (updates.curriculum !== undefined || updates.syllabus !== undefined) {
       patch.curriculum = updates.curriculum ?? updates.syllabus;
@@ -963,6 +1165,12 @@ export class SupabaseRepository {
     } else if (updates.availability !== undefined) {
       patch.availability = updates.availability;
     }
+    if (updates.approvalStatus !== undefined || updates.isApproved !== undefined) {
+      const nextApproval = normalizeCourseApprovalStatus(updates.approvalStatus, updates.isApproved);
+      patch.approval_status = nextApproval;
+      patch.is_approved = nextApproval === 'approved';
+      if (nextApproval !== 'approved') patch.featured = false;
+    }
     if (updates.instructor !== undefined) patch.instructor = updates.instructor;
     if (updates.level !== undefined) patch.level = updates.level;
     if (updates.category !== undefined) patch.category = updates.category;
@@ -974,6 +1182,64 @@ export class SupabaseRepository {
       'updateCourse'
     );
     return mapCourseRow(row);
+  }
+
+  public async expirePastCourses(referenceDate: Date = new Date()): Promise<{ expiredCount: number; expiredIds: string[] }> {
+    const allCourses = await this.getCourses();
+    const expiredIds: string[] = [];
+    for (const c of allCourses) {
+      if (c.status !== 'closed' && isCourseExpired(c, referenceDate)) {
+        await this.client
+          .from('courses')
+          .update({ status: 'closed', availability: 'Expired', updated_at: referenceDate.toISOString() })
+          .eq('id', c.id);
+        expiredIds.push(c.id);
+      }
+    }
+    return { expiredCount: expiredIds.length, expiredIds };
+  }
+
+  public async getCourseCategories(): Promise<string[]> {
+    const saved = await this.getContentRecord<string[]>('course_categories', []);
+    const customList = Array.isArray(saved) ? saved : [];
+    const seen = new Map<string, string>();
+    for (const cat of COURSE_CATEGORIES) {
+      seen.set(cat.toLowerCase(), cat);
+    }
+    for (const cat of customList) {
+      const clean = String(cat || '').trim();
+      if (clean && !seen.has(clean.toLowerCase())) {
+        seen.set(clean.toLowerCase(), clean);
+      }
+    }
+    return Array.from(seen.values());
+  }
+
+  public async addCourseCategory(categoryName: string, updatedBy: string = 'admin'): Promise<string[]> {
+    const clean = String(categoryName || '').trim();
+    const existing = await this.getCourseCategories();
+    if (!existing.some((c) => c.toLowerCase() === clean.toLowerCase())) {
+      const saved = await this.getContentRecord<string[]>('course_categories', []);
+      const customList = Array.isArray(saved) ? saved : [];
+      customList.push(clean);
+      await this.setContentRecord('course_categories', customList, updatedBy);
+    }
+    return this.getCourseCategories();
+  }
+
+  public async removeCourseCategory(categoryName: string, updatedBy: string = 'admin'): Promise<{ categories: string[]; removed: boolean }> {
+    const clean = String(categoryName || '').trim().toLowerCase();
+    if (COURSE_CATEGORIES.some((c) => c.toLowerCase() === clean)) {
+      return { categories: await this.getCourseCategories(), removed: false };
+    }
+    const saved = await this.getContentRecord<string[]>('course_categories', []);
+    const customList = Array.isArray(saved) ? saved : [];
+    const nextList = customList.filter((c) => String(c || '').trim().toLowerCase() !== clean);
+    const removed = nextList.length !== customList.length;
+    if (removed) {
+      await this.setContentRecord('course_categories', nextList, updatedBy);
+    }
+    return { categories: await this.getCourseCategories(), removed };
   }
 
   public async deleteCourse(id: string): Promise<boolean> {
@@ -2254,6 +2520,1187 @@ export class SupabaseRepository {
       adminUserId: row.admin_user_id || '',
       actorUsername: row.actor_username,
     };
+  }
+
+  // -----------------------------------------------------------------------
+  // PHASE 14: STUDENT ACCOUNTS, SESSIONS & DELETION REQUESTS
+  // -----------------------------------------------------------------------
+
+  private mapStudentAccount(r: any): DbStudentAccount {
+    let skills: string[] = [];
+    if (Array.isArray(r.skills)) {
+      skills = r.skills.map((s: any) => String(s));
+    } else if (typeof r.skills === 'string') {
+      try {
+        const parsed = JSON.parse(r.skills);
+        if (Array.isArray(parsed)) skills = parsed.map((s: any) => String(s));
+      } catch {
+        skills = [];
+      }
+    }
+    const statusRaw = String(r.account_status || 'active');
+    const accountStatus: StudentAccountStatus =
+      statusRaw === 'deletion_pending' || statusRaw === 'suspended' ? statusRaw : 'active';
+
+    return {
+      id: r.id,
+      email: r.email,
+      passwordHash: r.password_hash,
+      fullName: r.full_name,
+      role: 'student',
+      degreeTitle: r.degree_title || '',
+      institution: r.institution || '',
+      specialization: r.specialization || '',
+      graduationYear: r.graduation_year || '',
+      location: r.location || '',
+      skills,
+      bio: r.bio || '',
+      linkedinUrl: r.linkedin_url || '',
+      orcidId: r.orcid_id || '',
+      profileVisibility: 'private',
+      emailVerified: Boolean(r.email_verified),
+      emailVerifiedAt: r.email_verified_at || null,
+      verificationTokenHash: r.verification_token_hash || null,
+      verificationExpiresAt: r.verification_expires_at || null,
+      resetTokenHash: r.reset_token_hash || null,
+      resetExpiresAt: r.reset_expires_at || null,
+      privacyConsentAt: r.privacy_consent_at,
+      accountStatus,
+      deletionRequestedAt: r.deletion_requested_at || null,
+      deletionReason: r.deletion_reason || null,
+      lastLoginAt: r.last_login_at || null,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  public async getStudentByEmail(email: string): Promise<DbStudentAccount | null> {
+    const clean = normalizeStudentEmail(email);
+    if (!clean) return null;
+    const { data, error } = await this.client
+      .from('student_accounts')
+      .select('*')
+      .ilike('email', clean)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase getStudentByEmail failed: ${error.message}`);
+    return data ? this.mapStudentAccount(data) : null;
+  }
+
+  public async getStudentById(id: string): Promise<DbStudentAccount | null> {
+    if (!id) return null;
+    const { data, error } = await this.client
+      .from('student_accounts')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase getStudentById failed: ${error.message}`);
+    return data ? this.mapStudentAccount(data) : null;
+  }
+
+  public async createStudentAccount(input: {
+    id?: string;
+    email: string;
+    passwordHash: string;
+    fullName: string;
+    degreeTitle?: string;
+    institution?: string;
+    specialization?: string;
+    graduationYear?: string;
+    verificationTokenHash: string;
+    verificationExpiresAt: string;
+    privacyConsentAt?: string;
+  }): Promise<DbStudentAccount> {
+    const cleanEmail = normalizeStudentEmail(input.email);
+    const existing = await this.getStudentByEmail(cleanEmail);
+    if (existing) {
+      throw new Error('An account with this email address already exists.');
+    }
+    const now = new Date().toISOString();
+    const id = input.id || `stu-${crypto.randomBytes(8).toString('hex')}`;
+    const row = this.assertOk<any>(
+      await this.client
+        .from('student_accounts')
+        .insert({
+          id,
+          email: cleanEmail,
+          password_hash: input.passwordHash,
+          full_name: input.fullName,
+          role: 'student',
+          degree_title: input.degreeTitle || '',
+          institution: input.institution || '',
+          specialization: input.specialization || '',
+          graduation_year: input.graduationYear || '',
+          location: '',
+          skills: [],
+          bio: '',
+          linkedin_url: '',
+          orcid_id: '',
+          profile_visibility: 'private',
+          email_verified: false,
+          email_verified_at: null,
+          verification_token_hash: input.verificationTokenHash,
+          verification_expires_at: input.verificationExpiresAt,
+          privacy_consent_at: input.privacyConsentAt || now,
+          account_status: 'active',
+          created_at: now,
+          updated_at: now,
+        })
+        .select('*')
+        .single(),
+      'createStudentAccount'
+    );
+    return this.mapStudentAccount(row);
+  }
+
+  public async updateStudentLastLogin(studentId: string): Promise<void> {
+    const now = new Date().toISOString();
+    this.assertOk(
+      await this.client
+        .from('student_accounts')
+        .update({ last_login_at: now, updated_at: now })
+        .eq('id', studentId),
+      'updateStudentLastLogin'
+    );
+  }
+
+  public async updateStudentProfile(
+    studentId: string,
+    updates: {
+      fullName?: string;
+      degreeTitle?: string;
+      institution?: string;
+      specialization?: string;
+      graduationYear?: string;
+      location?: string;
+      skills?: string[];
+      bio?: string;
+      linkedinUrl?: string;
+      orcidId?: string;
+    }
+  ): Promise<DbStudentAccount | null> {
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (updates.fullName !== undefined) patch.full_name = updates.fullName;
+    if (updates.degreeTitle !== undefined) patch.degree_title = updates.degreeTitle;
+    if (updates.institution !== undefined) patch.institution = updates.institution;
+    if (updates.specialization !== undefined) patch.specialization = updates.specialization;
+    if (updates.graduationYear !== undefined) patch.graduation_year = updates.graduationYear;
+    if (updates.location !== undefined) patch.location = updates.location;
+    if (updates.skills !== undefined) patch.skills = updates.skills;
+    if (updates.bio !== undefined) patch.bio = updates.bio;
+    if (updates.linkedinUrl !== undefined) patch.linkedin_url = updates.linkedinUrl;
+    if (updates.orcidId !== undefined) patch.orcid_id = updates.orcidId;
+
+    const { data, error } = await this.client
+      .from('student_accounts')
+      .update(patch)
+      .eq('id', studentId)
+      .select('*')
+      .maybeSingle();
+    if (error) throw new Error(`Supabase updateStudentProfile failed: ${error.message}`);
+    return data ? this.mapStudentAccount(data) : null;
+  }
+
+  public async setStudentVerificationToken(
+    studentId: string,
+    tokenHash: string,
+    expiresAtIso: string
+  ): Promise<boolean> {
+    const now = new Date().toISOString();
+    this.assertOk(
+      await this.client
+        .from('student_accounts')
+        .update({
+          verification_token_hash: tokenHash,
+          verification_expires_at: expiresAtIso,
+          updated_at: now,
+        })
+        .eq('id', studentId),
+      'setStudentVerificationToken'
+    );
+    return true;
+  }
+
+  public async verifyStudentEmailByToken(rawToken: string, now: Date = new Date()): Promise<DbStudentAccount | null> {
+    const tokenHash = hashOpaqueToken(rawToken);
+    if (!tokenHash) return null;
+    const { data: row, error } = await this.client
+      .from('student_accounts')
+      .select('*')
+      .eq('verification_token_hash', tokenHash)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase verifyStudentEmailByToken failed: ${error.message}`);
+    if (!row) return null;
+
+    const account = this.mapStudentAccount(row);
+    if (account.verificationExpiresAt && new Date(account.verificationExpiresAt).getTime() < now.getTime()) {
+      return null;
+    }
+
+    const nowIso = now.toISOString();
+    const updated = this.assertOk<any>(
+      await this.client
+        .from('student_accounts')
+        .update({
+          email_verified: true,
+          email_verified_at: nowIso,
+          verification_token_hash: null,
+          verification_expires_at: null,
+          updated_at: nowIso,
+        })
+        .eq('id', account.id)
+        .select('*')
+        .single(),
+      'verifyStudentEmailUpdate'
+    );
+    return this.mapStudentAccount(updated);
+  }
+
+  public async setStudentPasswordResetToken(
+    studentId: string,
+    tokenHash: string,
+    expiresAtIso: string
+  ): Promise<boolean> {
+    const now = new Date().toISOString();
+    this.assertOk(
+      await this.client
+        .from('student_accounts')
+        .update({
+          reset_token_hash: tokenHash,
+          reset_expires_at: expiresAtIso,
+          updated_at: now,
+        })
+        .eq('id', studentId),
+      'setStudentPasswordResetToken'
+    );
+    return true;
+  }
+
+  public async consumeStudentPasswordResetToken(
+    rawToken: string,
+    newPasswordHash: string,
+    now: Date = new Date()
+  ): Promise<DbStudentAccount | null> {
+    const tokenHash = hashOpaqueToken(rawToken);
+    if (!tokenHash) return null;
+    const { data: row, error } = await this.client
+      .from('student_accounts')
+      .select('*')
+      .eq('reset_token_hash', tokenHash)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase consumeStudentPasswordResetToken failed: ${error.message}`);
+    if (!row) return null;
+
+    const account = this.mapStudentAccount(row);
+    if (!account.resetExpiresAt || new Date(account.resetExpiresAt).getTime() < now.getTime()) {
+      return null;
+    }
+
+    const nowIso = now.toISOString();
+    const updated = this.assertOk<any>(
+      await this.client
+        .from('student_accounts')
+        .update({
+          password_hash: newPasswordHash,
+          reset_token_hash: null,
+          reset_expires_at: null,
+          updated_at: nowIso,
+        })
+        .eq('id', account.id)
+        .select('*')
+        .single(),
+      'consumeStudentPasswordResetUpdate'
+    );
+    await this.revokeAllStudentSessions(account.id);
+    return this.mapStudentAccount(updated);
+  }
+
+  public async updateStudentPasswordHash(studentId: string, newPasswordHash: string): Promise<boolean> {
+    const now = new Date().toISOString();
+    this.assertOk(
+      await this.client
+        .from('student_accounts')
+        .update({
+          password_hash: newPasswordHash,
+          reset_token_hash: null,
+          reset_expires_at: null,
+          updated_at: now,
+        })
+        .eq('id', studentId),
+      'updateStudentPasswordHash'
+    );
+    return true;
+  }
+
+  public async createStudentSession(input: {
+    jti: string;
+    studentId: string;
+    tokenHash: string;
+    userAgent?: string;
+    ipAddressMasked?: string;
+    expiresAt: string;
+  }): Promise<DbStudentSession> {
+    const now = new Date().toISOString();
+    this.assertOk(
+      await this.client.from('student_sessions').insert({
+        jti: input.jti,
+        student_id: input.studentId,
+        token_hash: input.tokenHash,
+        user_agent: (input.userAgent || '').slice(0, 220),
+        ip_address_masked: input.ipAddressMasked || 'unknown',
+        created_at: now,
+        last_active_at: now,
+        expires_at: input.expiresAt,
+        revoked_at: null,
+      }),
+      'createStudentSession'
+    );
+    return {
+      jti: input.jti,
+      studentId: input.studentId,
+      tokenHash: input.tokenHash,
+      userAgent: (input.userAgent || '').slice(0, 220),
+      ipAddressMasked: input.ipAddressMasked || 'unknown',
+      createdAt: now,
+      lastActiveAt: now,
+      expiresAt: input.expiresAt,
+      revokedAt: null,
+    };
+  }
+
+  public async validateStudentSessionToken(
+    rawToken: string,
+    now: Date = new Date()
+  ): Promise<{ session: DbStudentSession; student: DbStudentAccount } | null> {
+    if (!rawToken || rawToken.length < 16) return null;
+    const tokenHash = hashOpaqueToken(rawToken);
+    const { data: row, error } = await this.client
+      .from('student_sessions')
+      .select('*')
+      .eq('token_hash', tokenHash)
+      .is('revoked_at', null)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase validateStudentSessionToken failed: ${error.message}`);
+    if (!row) return null;
+
+    const expiresMs = new Date(row.expires_at).getTime();
+    if (!Number.isFinite(expiresMs) || expiresMs <= now.getTime()) {
+      await this.revokeStudentSessionByJti(row.jti);
+      return null;
+    }
+
+    const student = await this.getStudentById(row.student_id);
+    if (!student || student.accountStatus === 'suspended') {
+      return null;
+    }
+
+    const nowIso = now.toISOString();
+    await this.client.from('student_sessions').update({ last_active_at: nowIso }).eq('jti', row.jti);
+
+    return {
+      session: {
+        jti: row.jti,
+        studentId: row.student_id,
+        tokenHash: row.token_hash,
+        userAgent: row.user_agent || '',
+        ipAddressMasked: row.ip_address_masked || 'unknown',
+        createdAt: row.created_at,
+        lastActiveAt: nowIso,
+        expiresAt: row.expires_at,
+        revokedAt: null,
+      },
+      student,
+    };
+  }
+
+  public async listStudentSessions(studentId: string, currentJti?: string): Promise<SafeStudentSession[]> {
+    const nowIso = new Date().toISOString();
+    const rows =
+      this.assertOk<any[]>(
+        await this.client
+          .from('student_sessions')
+          .select('jti, user_agent, ip_address_masked, created_at, last_active_at, expires_at')
+          .eq('student_id', studentId)
+          .is('revoked_at', null)
+          .gt('expires_at', nowIso)
+          .order('last_active_at', { ascending: false }),
+        'listStudentSessions'
+      ) || [];
+
+    return rows.map((r) => ({
+      jti: r.jti,
+      userAgent: r.user_agent || 'Web Browser',
+      ipAddressMasked: r.ip_address_masked || 'unknown',
+      createdAt: r.created_at,
+      lastActiveAt: r.last_active_at,
+      expiresAt: r.expires_at,
+      isCurrent: Boolean(currentJti && r.jti === currentJti),
+    }));
+  }
+
+  public async revokeStudentSessionByJti(jti: string, studentId?: string): Promise<boolean> {
+    const nowIso = new Date().toISOString();
+    let query = this.client
+      .from('student_sessions')
+      .update({ revoked_at: nowIso })
+      .eq('jti', jti)
+      .is('revoked_at', null);
+    if (studentId) {
+      query = query.eq('student_id', studentId);
+    }
+    const { data, error } = await query.select('jti');
+    if (error) throw new Error(`Supabase revokeStudentSessionByJti failed: ${error.message}`);
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  public async revokeAllStudentSessions(studentId: string, exceptJti?: string): Promise<number> {
+    const nowIso = new Date().toISOString();
+    let query = this.client
+      .from('student_sessions')
+      .update({ revoked_at: nowIso })
+      .eq('student_id', studentId)
+      .is('revoked_at', null);
+    if (exceptJti) {
+      query = query.neq('jti', exceptJti);
+    }
+    const { data, error } = await query.select('jti');
+    if (error) throw new Error(`Supabase revokeAllStudentSessions failed: ${error.message}`);
+    return Array.isArray(data) ? data.length : 0;
+  }
+
+  public async createStudentDeletionRequest(
+    studentId: string,
+    reason: string,
+    mode: 'request' | 'delete_now' = 'request'
+  ): Promise<{ request: StudentDeletionRequestRecord; deletedImmediately: boolean }> {
+    const account = await this.getStudentById(studentId);
+    if (!account) {
+      throw new Error('Student account not found.');
+    }
+
+    const nowIso = new Date().toISOString();
+    const reqId = `del-stu-${crypto.randomBytes(6).toString('hex')}`;
+    const emailHash = hashEmailForAudit(account.email);
+
+    if (mode === 'delete_now') {
+      this.assertOk(
+        await this.client.from('student_deletion_requests').insert({
+          id: reqId,
+          student_id: studentId,
+          email_hash: emailHash,
+          reason: reason || 'Self-service immediate erasure',
+          status: 'completed',
+          requested_at: nowIso,
+          processed_at: nowIso,
+        }),
+        'createImmediateDeletionRecord'
+      );
+      await this.revokeAllStudentSessions(studentId);
+      this.assertOk(
+        await this.client.from('student_accounts').delete().eq('id', studentId),
+        'deleteStudentAccountImmediate'
+      );
+      return {
+        request: {
+          id: reqId,
+          studentId,
+          emailHash,
+          reason: reason || 'Self-service immediate erasure',
+          status: 'completed',
+          requestedAt: nowIso,
+          processedAt: nowIso,
+        },
+        deletedImmediately: true,
+      };
+    }
+
+    await this.client
+      .from('student_deletion_requests')
+      .update({ status: 'cancelled', processed_at: nowIso })
+      .eq('student_id', studentId)
+      .eq('status', 'pending');
+
+    this.assertOk(
+      await this.client.from('student_deletion_requests').insert({
+        id: reqId,
+        student_id: studentId,
+        email_hash: emailHash,
+        reason: reason || 'Student requested account deletion',
+        status: 'pending',
+        requested_at: nowIso,
+        processed_at: null,
+      }),
+      'createPendingDeletionRecord'
+    );
+
+    this.assertOk(
+      await this.client
+        .from('student_accounts')
+        .update({
+          account_status: 'deletion_pending',
+          deletion_requested_at: nowIso,
+          deletion_reason: reason || 'Student requested account deletion',
+          updated_at: nowIso,
+        })
+        .eq('id', studentId),
+      'markStudentDeletionPending'
+    );
+
+    return {
+      request: {
+        id: reqId,
+        studentId,
+        emailHash,
+        reason: reason || 'Student requested account deletion',
+        status: 'pending',
+        requestedAt: nowIso,
+        processedAt: null,
+      },
+      deletedImmediately: false,
+    };
+  }
+
+  public async cancelStudentDeletionRequest(studentId: string): Promise<DbStudentAccount | null> {
+    const nowIso = new Date().toISOString();
+    await this.client
+      .from('student_deletion_requests')
+      .update({ status: 'cancelled', processed_at: nowIso })
+      .eq('student_id', studentId)
+      .eq('status', 'pending');
+
+    const { data, error } = await this.client
+      .from('student_accounts')
+      .update({
+        account_status: 'active',
+        deletion_requested_at: null,
+        deletion_reason: null,
+        updated_at: nowIso,
+      })
+      .eq('id', studentId)
+      .select('*')
+      .maybeSingle();
+    if (error) throw new Error(`Supabase cancelStudentDeletionRequest failed: ${error.message}`);
+    return data ? this.mapStudentAccount(data) : null;
+  }
+
+  // =========================================================================
+  // PHASE 15: COMPANY & EMPLOYER AUTHENTICATION (SUPABASE POSTGRESQL)
+  // =========================================================================
+
+  private mapCompanyAccount(r: any): CompanyAccountRecord {
+    return {
+      id: r.id,
+      email: r.email,
+      passwordHash: r.password_hash,
+      contactName: r.contact_name,
+      contactTitle: r.contact_title || '',
+      contactPhone: r.contact_phone || '',
+      organizationName: r.organization_name,
+      organizationType: r.organization_type || 'Private Biopharma',
+      officialWebsite: r.official_website || '',
+      headquartersLocation: r.headquarters_location || '',
+      organizationSize: r.organization_size || '',
+      foundedYear: r.founded_year || '',
+      industryFocus: r.industry_focus || '',
+      description: r.description || '',
+      registrationIdentifier: r.registration_identifier || '',
+      linkedinUrl: r.linkedin_url || '',
+      defaultApplicationDestinationType: normalizeApplicationDestinationType(
+        r.default_application_destination_type
+      ),
+      defaultApplicationUrl: r.default_application_url || '',
+      defaultApplicationEmail: r.default_application_email || '',
+      emailVerified: Boolean(r.email_verified),
+      emailVerifiedAt: r.email_verified_at || null,
+      verificationStatus: normalizeCompanyVerificationStatus(r.verification_status),
+      verificationSubmittedAt: r.verification_submitted_at || null,
+      verificationEvidenceUrl: r.verification_evidence_url || '',
+      verificationNotes: r.verification_notes || '',
+      verifiedBy: r.verified_by || null,
+      verifiedAt: r.verified_at || null,
+      rejectionReason: r.rejection_reason || '',
+      accountStatus: normalizeCompanyAccountStatus(r.account_status),
+      suspendedAt: r.suspended_at || null,
+      suspendedBy: r.suspended_by || null,
+      suspensionReason: r.suspension_reason || '',
+      privacyConsentAccepted: Boolean(r.privacy_consent_accepted),
+      privacyConsentAt: r.privacy_consent_at || null,
+      lastLoginAt: r.last_login_at || null,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    };
+  }
+
+  private mapCompanySession(r: any): CompanySessionRecord {
+    return {
+      jti: r.jti,
+      companyId: r.company_id,
+      userAgent: r.user_agent || '',
+      ipMasked: r.ip_masked || 'unknown',
+      createdAt: r.created_at,
+      lastActiveAt: r.last_active_at,
+      expiresAt: r.expires_at,
+      revokedAt: r.revoked_at || null,
+    };
+  }
+
+  private mapCompanyAuditLog(r: any): CompanyAuditLogRecord {
+    return {
+      id: r.id,
+      companyId: r.company_id,
+      organizationName: r.organization_name || undefined,
+      actorType: (r.actor_type || 'company') as 'company' | 'admin' | 'system',
+      actorId: r.actor_id || '',
+      actorEmail: r.actor_email || '',
+      action: r.action,
+      targetType: r.target_type || 'company',
+      targetId: r.target_id || '',
+      status: (r.status || 'success') as 'success' | 'denied' | 'failure',
+      ipMasked: r.ip_masked || 'unknown',
+      details: r.details || '',
+      createdAt: r.created_at,
+    };
+  }
+
+  public async getCompanyById(id: string): Promise<CompanyAccountRecord | null> {
+    const { data, error } = await this.client
+      .from('company_accounts')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase getCompanyById failed: ${error.message}`);
+    return data ? this.mapCompanyAccount(data) : null;
+  }
+
+  public async getCompanyByEmail(email: string): Promise<CompanyAccountRecord | null> {
+    const normalized = normalizeCompanyEmail(email);
+    const { data, error } = await this.client
+      .from('company_accounts')
+      .select('*')
+      .eq('email', normalized)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase getCompanyByEmail failed: ${error.message}`);
+    return data ? this.mapCompanyAccount(data) : null;
+  }
+
+  public async listAllCompaniesAdmin(): Promise<Array<CompanyAccountRecord & { jobCount: number }>> {
+    const { data: companies, error } = await this.client
+      .from('company_accounts')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(`Supabase listAllCompaniesAdmin failed: ${error.message}`);
+
+    const { data: jobRows } = await this.client
+      .from('jobs')
+      .select('company_account_id')
+      .neq('company_account_id', '');
+
+    const countMap = new Map<string, number>();
+    for (const j of jobRows || []) {
+      const cid = String((j as any).company_account_id || '');
+      if (cid) countMap.set(cid, (countMap.get(cid) || 0) + 1);
+    }
+
+    return (companies || []).map((r: any) => {
+      const mapped = this.mapCompanyAccount(r);
+      return { ...mapped, jobCount: countMap.get(mapped.id) || 0 };
+    });
+  }
+
+  public async createCompanyAccount(input: {
+    email: string;
+    passwordHash: string;
+    contactName: string;
+    contactTitle?: string;
+    contactPhone?: string;
+    organizationName: string;
+    organizationType?: string;
+    officialWebsite: string;
+    headquartersLocation: string;
+    organizationSize?: string;
+    foundedYear?: string;
+    industryFocus?: string;
+    description?: string;
+    registrationIdentifier?: string;
+    verificationTokenHash: string;
+    verificationTokenExpiresAt: string;
+  }): Promise<CompanyAccountRecord> {
+    const normalizedEmail = normalizeCompanyEmail(input.email);
+    const existing = await this.getCompanyByEmail(normalizedEmail);
+    if (existing) {
+      throw new Error('A company account with this work email is already registered.');
+    }
+
+    const id = `comp-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const now = new Date().toISOString();
+
+    const row = this.assertOk<any>(
+      await this.client
+        .from('company_accounts')
+        .insert({
+          id,
+          email: normalizedEmail,
+          password_hash: input.passwordHash,
+          contact_name: input.contactName,
+          contact_title: input.contactTitle || '',
+          contact_phone: input.contactPhone || '',
+          organization_name: input.organizationName,
+          organization_type: input.organizationType || 'Private Biopharma',
+          official_website: input.officialWebsite,
+          headquarters_location: input.headquartersLocation,
+          organization_size: input.organizationSize || '',
+          founded_year: input.foundedYear || '',
+          industry_focus: input.industryFocus || '',
+          description: input.description || '',
+          registration_identifier: input.registrationIdentifier || '',
+          default_application_destination_type: 'external_url',
+          default_application_url: input.officialWebsite,
+          default_application_email: normalizedEmail,
+          email_verified: false,
+          verification_token_hash: input.verificationTokenHash,
+          verification_token_expires_at: input.verificationTokenExpiresAt,
+          verification_status: 'unverified',
+          account_status: 'active',
+          privacy_consent_accepted: true,
+          privacy_consent_at: now,
+          created_at: now,
+          updated_at: now,
+        })
+        .select('*')
+        .single(),
+      'createCompanyAccount'
+    );
+
+    return this.mapCompanyAccount(row);
+  }
+
+  public async setCompanyVerificationToken(
+    companyId: string,
+    tokenHash: string,
+    expiresAtIso: string
+  ): Promise<boolean> {
+    const { data, error } = await this.client
+      .from('company_accounts')
+      .update({
+        verification_token_hash: tokenHash,
+        verification_token_expires_at: expiresAtIso,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', companyId)
+      .select('id');
+    if (error) throw new Error(`Supabase setCompanyVerificationToken failed: ${error.message}`);
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  public async verifyCompanyEmailByToken(rawToken: string): Promise<CompanyAccountRecord | null> {
+    const tokenHash = hashOpaqueToken(rawToken);
+    const nowIso = new Date().toISOString();
+    const { data: match, error } = await this.client
+      .from('company_accounts')
+      .select('*')
+      .eq('verification_token_hash', tokenHash)
+      .gt('verification_token_expires_at', nowIso)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase verifyCompanyEmailByToken lookup failed: ${error.message}`);
+    if (!match) return null;
+
+    const updated = this.assertOk<any>(
+      await this.client
+        .from('company_accounts')
+        .update({
+          email_verified: true,
+          email_verified_at: nowIso,
+          verification_token_hash: null,
+          verification_token_expires_at: null,
+          updated_at: nowIso,
+        })
+        .eq('id', match.id)
+        .select('*')
+        .single(),
+      'verifyCompanyEmailByToken'
+    );
+    return this.mapCompanyAccount(updated);
+  }
+
+  public async setCompanyPasswordResetToken(
+    companyId: string,
+    tokenHash: string,
+    expiresAtIso: string
+  ): Promise<boolean> {
+    const { data, error } = await this.client
+      .from('company_accounts')
+      .update({
+        reset_token_hash: tokenHash,
+        reset_token_expires_at: expiresAtIso,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', companyId)
+      .select('id');
+    if (error) throw new Error(`Supabase setCompanyPasswordResetToken failed: ${error.message}`);
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  public async consumeCompanyPasswordResetToken(
+    rawToken: string,
+    newPasswordHash: string
+  ): Promise<CompanyAccountRecord | null> {
+    const tokenHash = hashOpaqueToken(rawToken);
+    const nowIso = new Date().toISOString();
+    const { data: match, error } = await this.client
+      .from('company_accounts')
+      .select('*')
+      .eq('reset_token_hash', tokenHash)
+      .gt('reset_token_expires_at', nowIso)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase consumeCompanyPasswordResetToken failed: ${error.message}`);
+    if (!match) return null;
+
+    const updated = this.assertOk<any>(
+      await this.client
+        .from('company_accounts')
+        .update({
+          password_hash: newPasswordHash,
+          reset_token_hash: null,
+          reset_token_expires_at: null,
+          updated_at: nowIso,
+        })
+        .eq('id', match.id)
+        .select('*')
+        .single(),
+      'consumeCompanyPasswordResetToken'
+    );
+    await this.revokeAllCompanySessions(match.id);
+    return this.mapCompanyAccount(updated);
+  }
+
+  public async updateCompanyPassword(companyId: string, newPasswordHash: string): Promise<boolean> {
+    const { data, error } = await this.client
+      .from('company_accounts')
+      .update({ password_hash: newPasswordHash, updated_at: new Date().toISOString() })
+      .eq('id', companyId)
+      .select('id');
+    if (error) throw new Error(`Supabase updateCompanyPassword failed: ${error.message}`);
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  public async updateCompanyLastLogin(companyId: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.client
+      .from('company_accounts')
+      .update({ last_login_at: now, updated_at: now })
+      .eq('id', companyId);
+  }
+
+  public async updateCompanyProfile(
+    companyId: string,
+    updates: Record<string, any>
+  ): Promise<CompanyAccountRecord | null> {
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (updates.contactName !== undefined) patch.contact_name = updates.contactName;
+    if (updates.contactTitle !== undefined) patch.contact_title = updates.contactTitle;
+    if (updates.contactPhone !== undefined) patch.contact_phone = updates.contactPhone;
+    if (updates.organizationName !== undefined) patch.organization_name = updates.organizationName;
+    if (updates.organizationType !== undefined) patch.organization_type = updates.organizationType;
+    if (updates.officialWebsite !== undefined) patch.official_website = updates.officialWebsite;
+    if (updates.headquartersLocation !== undefined) patch.headquarters_location = updates.headquartersLocation;
+    if (updates.organizationSize !== undefined) patch.organization_size = updates.organizationSize;
+    if (updates.foundedYear !== undefined) patch.founded_year = updates.foundedYear;
+    if (updates.industryFocus !== undefined) patch.industry_focus = updates.industryFocus;
+    if (updates.description !== undefined) patch.description = updates.description;
+    if (updates.registrationIdentifier !== undefined) patch.registration_identifier = updates.registrationIdentifier;
+    if (updates.linkedinUrl !== undefined) patch.linkedin_url = updates.linkedinUrl;
+    if (updates.defaultApplicationDestinationType !== undefined) {
+      patch.default_application_destination_type = normalizeApplicationDestinationType(
+        updates.defaultApplicationDestinationType
+      );
+    }
+    if (updates.defaultApplicationUrl !== undefined) patch.default_application_url = updates.defaultApplicationUrl;
+    if (updates.defaultApplicationEmail !== undefined) patch.default_application_email = updates.defaultApplicationEmail;
+
+    const { data, error } = await this.client
+      .from('company_accounts')
+      .update(patch)
+      .eq('id', companyId)
+      .select('*')
+      .maybeSingle();
+    if (error) throw new Error(`Supabase updateCompanyProfile failed: ${error.message}`);
+    return data ? this.mapCompanyAccount(data) : null;
+  }
+
+  public async submitCompanyEmployerVerification(
+    companyId: string,
+    payload: {
+      officialWebsite: string;
+      registrationIdentifier?: string;
+      verificationEvidenceUrl?: string;
+      verificationNotes: string;
+    }
+  ): Promise<CompanyAccountRecord | null> {
+    const now = new Date().toISOString();
+    const { data, error } = await this.client
+      .from('company_accounts')
+      .update({
+        official_website: payload.officialWebsite,
+        registration_identifier: payload.registrationIdentifier || '',
+        verification_evidence_url: payload.verificationEvidenceUrl || '',
+        verification_notes: payload.verificationNotes,
+        verification_status: 'pending_review',
+        verification_submitted_at: now,
+        rejection_reason: '',
+        updated_at: now,
+      })
+      .eq('id', companyId)
+      .select('*')
+      .maybeSingle();
+    if (error) throw new Error(`Supabase submitCompanyEmployerVerification failed: ${error.message}`);
+    return data ? this.mapCompanyAccount(data) : null;
+  }
+
+  public async setCompanyVerificationDecisionAdmin(
+    companyId: string,
+    decision: 'verified' | 'rejected' | 'unverified',
+    adminIdentifier: string,
+    notesOrReason: string = ''
+  ): Promise<CompanyAccountRecord | null> {
+    const now = new Date().toISOString();
+    const patch: Record<string, any> = { updated_at: now };
+    if (decision === 'verified') {
+      patch.verification_status = 'verified';
+      patch.verified_by = adminIdentifier;
+      patch.verified_at = now;
+      patch.rejection_reason = '';
+    } else if (decision === 'rejected') {
+      patch.verification_status = 'rejected';
+      patch.verified_by = adminIdentifier;
+      patch.verified_at = null;
+      patch.rejection_reason = notesOrReason || 'Verification evidence could not be confirmed.';
+    } else {
+      patch.verification_status = 'unverified';
+      patch.verified_by = null;
+      patch.verified_at = null;
+      patch.rejection_reason = notesOrReason;
+    }
+
+    const { data, error } = await this.client
+      .from('company_accounts')
+      .update(patch)
+      .eq('id', companyId)
+      .select('*')
+      .maybeSingle();
+    if (error) throw new Error(`Supabase setCompanyVerificationDecisionAdmin failed: ${error.message}`);
+    return data ? this.mapCompanyAccount(data) : null;
+  }
+
+  public async setCompanyAccountStatusAdmin(
+    companyId: string,
+    status: CompanyAccountStatus,
+    adminIdentifier: string,
+    reason: string = ''
+  ): Promise<{ company: CompanyAccountRecord | null; revokedSessions: number }> {
+    const now = new Date().toISOString();
+    let revokedSessions = 0;
+
+    const patch: Record<string, any> =
+      status === 'suspended'
+        ? {
+            account_status: 'suspended',
+            suspended_at: now,
+            suspended_by: adminIdentifier,
+            suspension_reason: reason || 'Suspended by platform administrator.',
+            updated_at: now,
+          }
+        : {
+            account_status: 'active',
+            suspended_at: null,
+            suspended_by: null,
+            suspension_reason: '',
+            updated_at: now,
+          };
+
+    const { data, error } = await this.client
+      .from('company_accounts')
+      .update(patch)
+      .eq('id', companyId)
+      .select('*')
+      .maybeSingle();
+    if (error) throw new Error(`Supabase setCompanyAccountStatusAdmin failed: ${error.message}`);
+
+    if (data && status === 'suspended') {
+      revokedSessions = await this.revokeAllCompanySessions(companyId);
+    }
+
+    return {
+      company: data ? this.mapCompanyAccount(data) : null,
+      revokedSessions,
+    };
+  }
+
+  public async createCompanySession(input: {
+    jti: string;
+    companyId: string;
+    rawToken: string;
+    userAgent: string;
+    ipMasked: string;
+    expiresAt: string;
+  }): Promise<CompanySessionRecord> {
+    const now = new Date().toISOString();
+    const tokenHash = hashOpaqueToken(input.rawToken);
+    const row = this.assertOk<any>(
+      await this.client
+        .from('company_sessions')
+        .insert({
+          jti: input.jti,
+          company_id: input.companyId,
+          token_hash: tokenHash,
+          user_agent: input.userAgent.slice(0, 260),
+          ip_masked: input.ipMasked || 'unknown',
+          created_at: now,
+          last_active_at: now,
+          expires_at: input.expiresAt,
+          revoked_at: null,
+        })
+        .select('*')
+        .single(),
+      'createCompanySession'
+    );
+    return this.mapCompanySession(row);
+  }
+
+  public async validateCompanySessionToken(
+    rawToken: string
+  ): Promise<{ session: CompanySessionRecord; company: CompanyAccountRecord } | null> {
+    const tokenHash = hashOpaqueToken(rawToken);
+    const nowIso = new Date().toISOString();
+    const { data: sessionRow, error } = await this.client
+      .from('company_sessions')
+      .select('*')
+      .eq('token_hash', tokenHash)
+      .is('revoked_at', null)
+      .gt('expires_at', nowIso)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase validateCompanySessionToken failed: ${error.message}`);
+    if (!sessionRow) return null;
+
+    const company = await this.getCompanyById(sessionRow.company_id);
+    if (!company) return null;
+
+    await this.client
+      .from('company_sessions')
+      .update({ last_active_at: nowIso })
+      .eq('jti', sessionRow.jti);
+
+    return {
+      session: { ...this.mapCompanySession(sessionRow), lastActiveAt: nowIso },
+      company,
+    };
+  }
+
+  public async listActiveCompanySessions(
+    companyId: string,
+    currentJti?: string
+  ): Promise<CompanySessionRecord[]> {
+    const nowIso = new Date().toISOString();
+    const { data, error } = await this.client
+      .from('company_sessions')
+      .select('*')
+      .eq('company_id', companyId)
+      .is('revoked_at', null)
+      .gt('expires_at', nowIso)
+      .order('last_active_at', { ascending: false });
+    if (error) throw new Error(`Supabase listActiveCompanySessions failed: ${error.message}`);
+    return (data || []).map((r: any) => ({
+      ...this.mapCompanySession(r),
+      isCurrent: Boolean(currentJti && r.jti === currentJti),
+    }));
+  }
+
+  public async revokeCompanySessionByJti(jti: string, companyId?: string): Promise<boolean> {
+    const nowIso = new Date().toISOString();
+    let query = this.client
+      .from('company_sessions')
+      .update({ revoked_at: nowIso })
+      .eq('jti', jti)
+      .is('revoked_at', null);
+    if (companyId) query = query.eq('company_id', companyId);
+    const { data, error } = await query.select('jti');
+    if (error) throw new Error(`Supabase revokeCompanySessionByJti failed: ${error.message}`);
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  public async revokeAllCompanySessions(companyId: string, exceptJti?: string): Promise<number> {
+    const nowIso = new Date().toISOString();
+    let query = this.client
+      .from('company_sessions')
+      .update({ revoked_at: nowIso })
+      .eq('company_id', companyId)
+      .is('revoked_at', null);
+    if (exceptJti) query = query.neq('jti', exceptJti);
+    const { data, error } = await query.select('jti');
+    if (error) throw new Error(`Supabase revokeAllCompanySessions failed: ${error.message}`);
+    return Array.isArray(data) ? data.length : 0;
+  }
+
+  public async getJobsByCompanyAccountId(companyAccountId: string) {
+    const { data, error } = await this.client
+      .from('jobs')
+      .select('*')
+      .eq('company_account_id', companyAccountId)
+      .order('created_at', { ascending: false });
+    if (error) throw new Error(`Supabase getJobsByCompanyAccountId failed: ${error.message}`);
+    return (data || []).map(mapJobRow);
+  }
+
+  public async createCompanyAuditLog(entry: {
+    companyId: string;
+    actorType: 'company' | 'admin' | 'system';
+    actorId: string;
+    actorEmail: string;
+    action: string;
+    targetType?: string;
+    targetId?: string;
+    status?: 'success' | 'denied' | 'failure';
+    ipMasked?: string;
+    details?: string;
+  }): Promise<CompanyAuditLogRecord> {
+    const id = generateCompanyAuditId();
+    const now = new Date().toISOString();
+    const row = this.assertOk<any>(
+      await this.client
+        .from('company_audit_logs')
+        .insert({
+          id,
+          company_id: entry.companyId,
+          actor_type: entry.actorType,
+          actor_id: entry.actorId || '',
+          actor_email: entry.actorEmail || '',
+          action: entry.action,
+          target_type: entry.targetType || 'company',
+          target_id: entry.targetId || '',
+          status: entry.status || 'success',
+          ip_masked: entry.ipMasked || 'unknown',
+          details: entry.details || '',
+          created_at: now,
+        })
+        .select('*')
+        .single(),
+      'createCompanyAuditLog'
+    );
+    return this.mapCompanyAuditLog(row);
+  }
+
+  public async getCompanyAuditLogs(
+    companyId?: string,
+    limit: number = 100
+  ): Promise<CompanyAuditLogRecord[]> {
+    const clampedLimit = Math.max(1, Math.min(limit, 250));
+    let query = this.client
+      .from('company_audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(clampedLimit);
+    if (companyId) query = query.eq('company_id', companyId);
+    const { data, error } = await query;
+    if (error) throw new Error(`Supabase getCompanyAuditLogs failed: ${error.message}`);
+    return (data || []).map((r: any) => this.mapCompanyAuditLog(r));
   }
 }
 

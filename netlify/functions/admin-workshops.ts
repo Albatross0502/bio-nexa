@@ -2,8 +2,10 @@
  * Netlify Function: admin-workshops
  * Routes:
  * - POST   /api/admin/workshops/upload-image
+ * - POST   /api/admin/workshops/expire-scan
  * - POST   /api/admin/workshops
  * - PUT    /api/admin/workshops/:id
+ * - PATCH  /api/admin/workshops/:id/status
  * - PATCH  /api/admin/workshops/:id/quick
  * - DELETE /api/admin/workshops/:id
  */
@@ -12,7 +14,6 @@ import {
   errorResponse,
   extractSubPath,
   handleCorsPreflight,
-  isValidHttpUrl,
   jsonResponse,
   methodNotAllowedResponse,
   NetlifyEvent,
@@ -24,6 +25,7 @@ import {
 import { requireServerlessAdminAuthAsync } from './_shared/serverlessAuth';
 import { SERVERLESS_WORKSHOPS } from './_shared/serverlessCatalog';
 import { getSupabaseRepository } from './_shared/supabaseDb';
+import { validateWorkshopRegistrationUrl } from '../../src/services/workshops/workshopHelpers';
 
 const ALLOWED_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
 const BASE_PREFIXES = ['/.netlify/functions/admin-workshops', '/api/admin/workshops'];
@@ -93,6 +95,43 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
     );
   }
 
+  if (subPath === 'expire-scan') {
+    if (method !== 'POST') {
+      return methodNotAllowedResponse(event, ['POST']);
+    }
+    if (!repo) {
+      return serviceUnavailableResponse(
+        event,
+        'Persistent workshop expiry scans require Supabase PostgreSQL configuration.',
+        'PERSISTENT_DB_NOT_CONFIGURED',
+        ['POST']
+      );
+    }
+    const result = await repo.expirePastWorkshops();
+    await repo.recordAdminAuditLog({
+      adminUserId: auth.user.id,
+      actorUsername: auth.user.username,
+      action: 'ADMIN_WORKSHOPS_EXPIRE_SCAN',
+      entityType: 'workshop',
+      entityId: 'batch',
+      details: result,
+    }).catch(() => {});
+    return jsonResponse(
+      event,
+      200,
+      {
+        success: true,
+        expiredCount: result.expiredCount,
+        expiredIds: result.expiredIds,
+        message:
+          result.expiredCount > 0
+            ? `Marked ${result.expiredCount} past-date or past-deadline workshop(s) as expired/completed.`
+            : 'All workshops are up to date.',
+      },
+      ['POST']
+    );
+  }
+
   if (!subPath) {
     if (method !== 'POST') {
       return methodNotAllowedResponse(event, ['POST']);
@@ -108,6 +147,8 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
 
     const body = parsed.data;
     const name = sanitizeString(body.title || body.name);
+    const organizer = sanitizeString(body.organizer || '');
+    const instructor = sanitizeString(body.instructor || '');
     const registrationLink = sanitizeString(body.registrationUrl || body.registrationLink);
 
     if (!name || !registrationLink) {
@@ -120,12 +161,23 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       );
     }
 
-    if (!isValidHttpUrl(registrationLink)) {
+    if (!organizer && !instructor) {
       return errorResponse(
         event,
         400,
         'Validation Error',
-        'Registration URL must start with http:// or https://',
+        'Organizer or instructor information is required.',
+        { code: 'MISSING_ORGANIZER', allowedMethods: ['POST'] }
+      );
+    }
+
+    const urlCheck = validateWorkshopRegistrationUrl(registrationLink);
+    if (!urlCheck.valid) {
+      return errorResponse(
+        event,
+        400,
+        'Validation Error',
+        urlCheck.reason || 'Invalid registration URL.',
         { code: 'INVALID_URL', allowedMethods: ['POST'] }
       );
     }
@@ -139,7 +191,12 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       );
     }
 
-    const workshop = await repo.createWorkshop(body);
+    const workshop = await repo.createWorkshop({
+      ...body,
+      organizer,
+      instructor,
+      registrationUrl: urlCheck.normalizedUrl || registrationLink,
+    });
     await repo.recordAdminAuditLog({
       adminUserId: auth.user.id,
       actorUsername: auth.user.username,
@@ -160,6 +217,53 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       code: 'API_ROUTE_NOT_FOUND',
       allowedMethods: ALLOWED_METHODS,
     });
+  }
+
+  if (action === 'status') {
+    if (method !== 'PATCH') {
+      return methodNotAllowedResponse(event, ['PATCH']);
+    }
+    const parsed = parseJsonBody(event);
+    if (!parsed.ok) {
+      return errorResponse(event, 400, 'Validation Error', parsed.message, { code: 'INVALID_JSON' });
+    }
+    const rawStatus = sanitizeString(parsed.data.approvalStatus || parsed.data.status).toLowerCase();
+    if (rawStatus !== 'approved' && rawStatus !== 'rejected' && rawStatus !== 'pending') {
+      return errorResponse(
+        event,
+        400,
+        'Validation Error',
+        'approvalStatus must be one of: approved, rejected, pending.',
+        { code: 'INVALID_APPROVAL_STATUS', allowedMethods: ['PATCH'] }
+      );
+    }
+    const existing = repo
+      ? await repo.getWorkshopById(workshopId)
+      : SERVERLESS_WORKSHOPS.find((w) => w.id === workshopId) || null;
+    if (!existing) {
+      return errorResponse(event, 404, 'Not Found', 'Workshop not found.', {
+        code: 'WORKSHOP_NOT_FOUND',
+        allowedMethods: ['PATCH'],
+      });
+    }
+    if (!repo) {
+      return serviceUnavailableResponse(
+        event,
+        'Persistent workshop approval updates require Supabase PostgreSQL configuration.',
+        'PERSISTENT_DB_NOT_CONFIGURED',
+        ['PATCH']
+      );
+    }
+    const workshop = await repo.updateWorkshop(workshopId, { approvalStatus: rawStatus });
+    await repo.recordAdminAuditLog({
+      adminUserId: auth.user.id,
+      actorUsername: auth.user.username,
+      action: 'ADMIN_WORKSHOP_APPROVAL_UPDATED',
+      entityType: 'workshop',
+      entityId: workshopId,
+      details: { approvalStatus: rawStatus },
+    }).catch(() => {});
+    return jsonResponse(event, 200, { success: true, workshop }, ['PATCH']);
   }
 
   if (action === 'quick') {
@@ -221,14 +325,18 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       });
     }
     const regUrl = sanitizeString(parsed.data.registrationUrl || parsed.data.registrationLink);
-    if (regUrl && !isValidHttpUrl(regUrl)) {
-      return errorResponse(
-        event,
-        400,
-        'Validation Error',
-        'Registration URL must start with http:// or https://',
-        { code: 'INVALID_URL', allowedMethods: ['PUT', 'DELETE'] }
-      );
+    if (regUrl) {
+      const urlCheck = validateWorkshopRegistrationUrl(regUrl);
+      if (!urlCheck.valid) {
+        return errorResponse(
+          event,
+          400,
+          'Validation Error',
+          urlCheck.reason || 'Invalid registration URL.',
+          { code: 'INVALID_URL', allowedMethods: ['PUT', 'DELETE'] }
+        );
+      }
+      parsed.data.registrationUrl = urlCheck.normalizedUrl || regUrl;
     }
     if (!repo) {
       return serviceUnavailableResponse(

@@ -23,6 +23,15 @@ import { handler as adminAutomationHandler } from '../admin-automation';
 import { handler as adminInboxHandler } from '../admin-inbox';
 import { handler as adminExportHandler } from '../admin-export';
 import { handler as communityHandler } from '../community';
+import {
+  handler as studentAuthHandler,
+  resetServerlessStudentRateLimitersForTest,
+} from '../student-auth';
+import {
+  handler as companyAuthHandler,
+  resetServerlessCompanyRateLimitersForTest,
+} from '../company-auth';
+import { handler as adminCompaniesHandler } from '../admin-companies';
 import { handler as apiNotFoundHandler } from '../api-not-found';
 import {
   runServerlessGoogleSheetsSync,
@@ -181,6 +190,10 @@ test('netlify.toml and public/_redirects route all /api/* paths before SPA /* ca
     '/api/applications/*',
     '/api/discussions',
     '/api/discussions/*',
+    '/api/student/*',
+    '/api/admin/companies',
+    '/api/admin/companies/*',
+    '/api/company/*',
     '/api/*',
   ];
 
@@ -257,6 +270,54 @@ test('public catalog endpoints return genuine jobs, workshops, courses, announce
   const internshipsData = JSON.parse(internshipsRes.body);
   assert.equal(internshipsData.success, true);
   assert.ok(internshipsData.internships.length >= 4);
+  assert.ok(['paid', 'unpaid'].includes(internshipsData.internships[0].compensationType));
+
+  const paidInternshipsRes = await internshipsHandler(
+    makeEvent({ path: '/api/internships', queryStringParameters: { compensation: 'paid', includeExpired: 'true' } })
+  );
+  assert.equal(paidInternshipsRes.statusCode, 200);
+  const paidInternshipsData = JSON.parse(paidInternshipsRes.body);
+  assert.ok(paidInternshipsData.internships.length >= 1);
+  assert.ok(paidInternshipsData.internships.every((i: any) => i.compensationType === 'paid'));
+
+  const badInternSubmit = await internshipsHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/internships/submit',
+      body: JSON.stringify({
+        title: 'Bad URL Internship',
+        organization: 'Test Bio Lab',
+        location: 'Bengaluru',
+        duration: '8 Weeks',
+        eligibility: 'M.Sc Biotech',
+        description: 'Testing strict URL rejection on internship submission.',
+        applicationUrl: 'https://example.com/fake-internship',
+      }),
+    })
+  );
+  assert.equal(badInternSubmit.statusCode, 400);
+
+  const validInternSubmit = await internshipsHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/internships/submit',
+      body: JSON.stringify({
+        title: 'Genomics Summer Fellowship',
+        organization: 'CSIR-IGIB',
+        location: 'New Delhi',
+        mode: 'Remote / Dry Lab',
+        stipend: '₹15,000 / month',
+        duration: '8 Weeks',
+        deadline: '2027-06-30',
+        category: 'Summer Fellowship',
+        eligibility: 'M.Sc Life Sciences / B.Tech Biotechnology',
+        description: 'Computational genomics and transcriptomics summer fellowship training.',
+        applicationUrl: 'https://www.igib.res.in/academics/summer-fellowship',
+      }),
+    })
+  );
+  assert.equal(validInternSubmit.statusCode, 503);
+  assert.equal(JSON.parse(validInternSubmit.body).code, 'PERSISTENT_DB_NOT_CONFIGURED');
 });
 
 test('public write and opportunity endpoints validate payloads strictly and return honest 503 instead of fake success IDs', async () => {
@@ -491,6 +552,20 @@ test('admin endpoints fail closed when unconfigured, use HttpOnly cookies (no to
     assert.equal(verificationsBody.success, true);
     assert.ok(Array.isArray(verificationsBody.verifications));
 
+    const invalidWorkshopUrl = await adminWorkshopsHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/workshops',
+        headers: authHeaders,
+        body: JSON.stringify({
+          title: 'Invalid URL Workshop',
+          organizer: 'CSIR-IGIB',
+          registrationUrl: 'https://example.com/fake',
+        }),
+      })
+    );
+    assert.equal(invalidWorkshopUrl.statusCode, 400);
+
     const validWorkshopCreate = await adminWorkshopsHandler(
       makeEvent({
         httpMethod: 'POST',
@@ -498,11 +573,31 @@ test('admin endpoints fail closed when unconfigured, use HttpOnly cookies (no to
         headers: authHeaders,
         body: JSON.stringify({
           title: 'qPCR Masterclass',
+          organizer: 'CSIR-IGIB',
           registrationUrl: 'https://www.igib.res.in/',
         }),
       })
     );
     assert.equal(validWorkshopCreate.statusCode, 503);
+
+    const workshopStatusNoDb = await adminWorkshopsHandler(
+      makeEvent({
+        httpMethod: 'PATCH',
+        path: '/api/admin/workshops/opp-work-1/status',
+        headers: authHeaders,
+        body: JSON.stringify({ approvalStatus: 'approved' }),
+      })
+    );
+    assert.equal(workshopStatusNoDb.statusCode, 503);
+
+    const workshopExpireScanNoDb = await adminWorkshopsHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/workshops/expire-scan',
+        headers: authHeaders,
+      })
+    );
+    assert.equal(workshopExpireScanNoDb.statusCode, 503);
 
     const missingCourseUpdate = await adminCoursesHandler(
       makeEvent({
@@ -577,6 +672,30 @@ test('admin endpoints fail closed when unconfigured, use HttpOnly cookies (no to
     );
     assert.equal(adminInternshipsGet.statusCode, 200);
     assert.ok(JSON.parse(adminInternshipsGet.body).internships.length >= 4);
+
+    const badAdminInternCreate = await adminInternshipsHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/internships',
+        headers: authHeaders,
+        body: JSON.stringify({
+          title: 'Invalid URL Fellowship',
+          organization: 'NCBS',
+          applicationUrl: 'javascript:alert(1)',
+        }),
+      })
+    );
+    assert.equal(badAdminInternCreate.statusCode, 400);
+
+    const expireScanNoDb = await adminInternshipsHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/internships/expire-scan',
+        headers: authHeaders,
+      })
+    );
+    assert.equal(expireScanNoDb.statusCode, 503);
+    assert.equal(JSON.parse(expireScanNoDb.body).code, 'PERSISTENT_DB_NOT_CONFIGURED');
 
     const exportJobsCsv = await adminExportHandler(
       makeEvent({
@@ -874,3 +993,334 @@ test('runServerlessOpportunitySync persists Pending Verification jobs via Supaba
   assert.ok(contentStore.has('google_sheets_sync_status'));
   assert.equal(syncLogs.length, 2);
 });
+
+test('Phase 12: public workshops endpoint supports category/includeExpired filters and validates /api/workshops/submit', async () => {
+  const byCategory = await workshopsHandler(
+    makeEvent({
+      httpMethod: 'GET',
+      path: '/api/workshops',
+      queryStringParameters: { category: 'Genomics & Gene Editing', includeExpired: 'false' },
+    })
+  );
+  assert.equal(byCategory.statusCode, 200);
+  const catBody = JSON.parse(byCategory.body);
+  assert.ok(catBody.workshops.length >= 1);
+  assert.ok(catBody.workshops.every((w: any) => w.category === 'Genomics & Gene Editing' && !w.isExpired));
+
+  const badSubmit = await workshopsHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/workshops/submit',
+      body: JSON.stringify({
+        title: 'Fake Domain Workshop',
+        organizer: 'Test Org',
+        category: 'Genomics & Gene Editing',
+        description: 'Testing strict domain validation on public workshop submission.',
+        format: 'Online',
+        date: '2027-01-15',
+        registrationUrl: 'https://example.com/fake-registration',
+      }),
+    })
+  );
+  assert.equal(badSubmit.statusCode, 400);
+  assert.equal(JSON.parse(badSubmit.body).code, 'INVALID_WORKSHOP_SUBMISSION');
+
+  const validSubmitNoDb = await workshopsHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/workshops/submit',
+      body: JSON.stringify({
+        title: 'Single-Cell Proteomics Bootcamp',
+        organizer: 'NCBS-TIFR',
+        category: 'Proteomics & Structural Biology',
+        description: 'Hands-on mass spectrometry proteomics workflow and bioinformatics analysis.',
+        format: 'Hybrid',
+        venue: 'NCBS Campus & Online',
+        date: '2027-04-12',
+        registrationDeadline: '2027-04-01',
+        registrationUrl: 'https://www.ncbs.res.in/workshops/proteomics',
+      }),
+    })
+  );
+  assert.equal(validSubmitNoDb.statusCode, 503);
+  assert.equal(JSON.parse(validSubmitNoDb.body).code, 'PERSISTENT_DB_NOT_CONFIGURED');
+});
+
+test('Phase 13: courses endpoint supports pricingType/categories/includeExpired filters and validates /api/courses/submit and admin course routes', async () => {
+  const categoriesRes = await coursesHandler(
+    makeEvent({
+      httpMethod: 'GET',
+      path: '/api/courses/categories',
+    })
+  );
+  assert.equal(categoriesRes.statusCode, 200);
+  const categoriesBody = JSON.parse(categoriesRes.body);
+  assert.ok(Array.isArray(categoriesBody.categories));
+  assert.ok(categoriesBody.categories.length >= 9);
+
+  const freeCoursesRes = await coursesHandler(
+    makeEvent({
+      httpMethod: 'GET',
+      path: '/api/courses',
+      queryStringParameters: { pricingType: 'free', includeExpired: 'false' },
+    })
+  );
+  assert.equal(freeCoursesRes.statusCode, 200);
+  const freeBody = JSON.parse(freeCoursesRes.body);
+  assert.ok(Array.isArray(freeBody.courses));
+  assert.ok(freeBody.courses.every((c: any) => c.pricingType === 'free' && c.providerType === 'third_party'));
+
+  const badCourseSubmit = await coursesHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/courses/submit',
+      body: JSON.stringify({
+        title: 'Placeholder URL Biotech Course',
+        provider: 'Test Institute',
+        category: 'Biotechnology',
+        description: 'Testing strict rejection of example.com registration links.',
+        duration: '6 Weeks',
+        fees: 'Free',
+        registrationUrl: 'https://example.com/fake-course',
+      }),
+    })
+  );
+  assert.equal(badCourseSubmit.statusCode, 400);
+  assert.equal(JSON.parse(badCourseSubmit.body).code, 'INVALID_COURSE_SUBMISSION');
+
+  const validCourseSubmitNoDb = await coursesHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/courses/submit',
+      body: JSON.stringify({
+        title: 'Applied Bioprocess Fermentation',
+        provider: 'NPTEL / IIT Guwahati',
+        category: 'Biotechnology',
+        description: 'Quantitative upstream bioprocess engineering and bioreactor kinetics.',
+        duration: '8 Weeks',
+        fees: 'Free online learning',
+        registrationUrl: 'https://onlinecourses.nptel.ac.in/noc26_bt12',
+      }),
+    })
+  );
+  assert.equal(validCourseSubmitNoDb.statusCode, 503);
+  assert.equal(JSON.parse(validCourseSubmitNoDb.body).code, 'PERSISTENT_DB_NOT_CONFIGURED');
+
+  // Admin course Phase 13 endpoints
+  resetServerlessAdminRateLimiterForTest();
+  await withAdminEnv(async () => {
+    const loginRes = await adminAuthHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/login',
+        headers: { origin: 'https://bio-inexa-0.netlify.app', 'x-forwarded-for': '10.0.0.77' },
+        body: JSON.stringify({ username: 'admin@bio-inexa.org', password: 'TestAdminPassword!2026' }),
+      })
+    );
+    assert.equal(loginRes.statusCode, 200);
+    const cookie = extractCookiePair(loginRes.headers?.['Set-Cookie']);
+    const authHeaders = { origin: 'https://bio-inexa-0.netlify.app', cookie };
+
+    const adminCatsRes = await adminCoursesHandler(
+      makeEvent({
+        httpMethod: 'GET',
+        path: '/api/admin/courses/categories',
+        headers: authHeaders,
+      })
+    );
+    assert.equal(adminCatsRes.statusCode, 200);
+    assert.ok(JSON.parse(adminCatsRes.body).coreCategories.length === 9);
+
+    const expireScanNoDb = await adminCoursesHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/courses/expire-scan',
+        headers: authHeaders,
+      })
+    );
+    assert.equal(expireScanNoDb.statusCode, 503);
+    assert.equal(JSON.parse(expireScanNoDb.body).code, 'PERSISTENT_DB_NOT_CONFIGURED');
+
+    const badAdminCourseCreate = await adminCoursesHandler(
+      makeEvent({
+        httpMethod: 'POST',
+        path: '/api/admin/courses',
+        headers: authHeaders,
+        body: JSON.stringify({
+          title: 'Invalid Course Link',
+          provider: 'Test Provider',
+          description: 'Description that meets length requirements.',
+          duration: '4 Weeks',
+          fees: 'Free',
+          registrationUrl: 'https://localhost:3000/bad',
+        }),
+      })
+    );
+    assert.equal(badAdminCourseCreate.statusCode, 400);
+  });
+});
+
+test('Phase 14: student-auth serverless routes validate inputs, return honest 503 without Supabase, and enforce student/admin RBAC isolation', async () => {
+  resetServerlessStudentRateLimitersForTest();
+
+  // GET /api/student/me without session cookie returns unauthenticated
+  const meGuest = await studentAuthHandler(
+    makeEvent({ httpMethod: 'GET', path: '/api/student/me' })
+  );
+  assert.equal(meGuest.statusCode, 200);
+  assert.equal(JSON.parse(meGuest.body).authenticated, false);
+
+  // Invalid registration (missing privacyConsent + weak password) fails with 400
+  const badReg = await studentAuthHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/student/register',
+      body: JSON.stringify({
+        fullName: 'Meera',
+        email: 'meera@iisc.ac.in',
+        password: 'weak',
+        privacyConsent: false,
+      }),
+    })
+  );
+  assert.equal(badReg.statusCode, 400);
+  assert.equal(JSON.parse(badReg.body).code, 'INVALID_REGISTRATION');
+
+  // Valid registration returns honest 503 when Supabase is unconfigured
+  const validRegNoDb = await studentAuthHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/student/register',
+      body: JSON.stringify({
+        fullName: 'Meera Krishnan',
+        email: 'meera.k@iisc.ac.in',
+        password: 'BioSecure#2026!',
+        degreeTitle: 'M.Sc Biotechnology',
+        institution: 'IISc Bengaluru',
+        privacyConsent: true,
+      }),
+    })
+  );
+  assert.equal(validRegNoDb.statusCode, 503);
+  assert.equal(JSON.parse(validRegNoDb.body).code, 'PERSISTENT_DB_NOT_CONFIGURED');
+
+  // Unauthenticated profile update returns 401
+  const unauthProfile = await studentAuthHandler(
+    makeEvent({
+      httpMethod: 'PATCH',
+      path: '/api/student/profile',
+      body: JSON.stringify({ institution: 'NCBS' }),
+    })
+  );
+  assert.equal(unauthProfile.statusCode, 401);
+  assert.equal(JSON.parse(unauthProfile.body).code, 'STUDENT_AUTH_REQUIRED');
+
+  // Student session cookie presented to /api/admin/data is strictly rejected with 403 ROLE_FORBIDDEN
+  const studentAdminAttempt = await adminDataHandler(
+    makeEvent({
+      httpMethod: 'GET',
+      path: '/api/admin/data',
+      headers: {
+        origin: 'https://bio-inexa-0.netlify.app',
+        cookie: 'bionexa_student_session=fake-student-session-token',
+      },
+    })
+  );
+  assert.equal(studentAdminAttempt.statusCode, 403);
+  assert.equal(JSON.parse(studentAdminAttempt.body).code, 'ROLE_FORBIDDEN');
+});
+
+test('Phase 15: company-auth and admin-companies serverless routes enforce validation, 503 without Supabase, and strict company/admin RBAC isolation', async () => {
+  resetServerlessCompanyRateLimitersForTest();
+
+  // GET /api/company/me without cookie returns authenticated: false
+  const meGuest = await companyAuthHandler(
+    makeEvent({ httpMethod: 'GET', path: '/api/company/me' })
+  );
+  assert.equal(meGuest.statusCode, 200);
+  const meBody = JSON.parse(meGuest.body);
+  assert.equal(meBody.authenticated, false);
+  assert.equal(meBody.company, null);
+
+  // Invalid company registration (missing consent + invalid website) returns 400
+  const badReg = await companyAuthHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/company/register',
+      body: JSON.stringify({
+        contactName: 'Dr. Kavitha Rao',
+        email: 'hr@helixgen.in',
+        password: 'weak',
+        organizationName: 'HelixGen',
+        officialWebsite: 'https://example.com',
+        headquartersLocation: 'Bengaluru',
+        privacyConsentAccepted: false,
+      }),
+    })
+  );
+  assert.equal(badReg.statusCode, 400);
+  assert.equal(JSON.parse(badReg.body).code, 'VALIDATION_ERROR');
+
+  // Valid company registration returns honest 503 when Supabase is unconfigured
+  const validRegNoDb = await companyAuthHandler(
+    makeEvent({
+      httpMethod: 'POST',
+      path: '/api/company/register',
+      body: JSON.stringify({
+        contactName: 'Dr. Kavitha Rao',
+        email: 'hr@helixgen.in',
+        password: 'HelixSecure#2026!',
+        organizationName: 'HelixGen Diagnostics Pvt Ltd',
+        organizationType: 'Diagnostics & CRO',
+        officialWebsite: 'https://helixgen.in',
+        headquartersLocation: 'Bengaluru, Karnataka',
+        privacyConsentAccepted: true,
+      }),
+    })
+  );
+  assert.equal(validRegNoDb.statusCode, 503);
+  assert.equal(JSON.parse(validRegNoDb.body).code, 'PERSISTENT_DB_NOT_CONFIGURED');
+
+  // Protected company jobs endpoint requires company auth cookie
+  const unauthJobs = await companyAuthHandler(
+    makeEvent({ httpMethod: 'GET', path: '/api/company/jobs' })
+  );
+  assert.equal(unauthJobs.statusCode, 401);
+  assert.equal(JSON.parse(unauthJobs.body).code, 'COMPANY_AUTH_REQUIRED');
+
+  // Admin companies endpoint requires admin auth (401 when unauthenticated)
+  const unauthAdminCompanies = await adminCompaniesHandler(
+    makeEvent({ httpMethod: 'GET', path: '/api/admin/companies' })
+  );
+  assert.equal(unauthAdminCompanies.statusCode, 401);
+
+  // Strict RBAC isolation: company session cookie presented to admin endpoints MUST return 403 ROLE_FORBIDDEN
+  const companyToAdminData = await adminDataHandler(
+    makeEvent({
+      httpMethod: 'GET',
+      path: '/api/admin/data',
+      headers: {
+        origin: 'https://bio-inexa-0.netlify.app',
+        cookie: 'bionexa_company_session=fake-company-session-token',
+      },
+    })
+  );
+  assert.equal(companyToAdminData.statusCode, 403);
+  assert.equal(JSON.parse(companyToAdminData.body).code, 'ROLE_FORBIDDEN');
+
+  const companyToAdminCompanies = await adminCompaniesHandler(
+    makeEvent({
+      httpMethod: 'GET',
+      path: '/api/admin/companies',
+      headers: {
+        origin: 'https://bio-inexa-0.netlify.app',
+        cookie: 'bionexa_company_session=fake-company-session-token',
+      },
+    })
+  );
+  assert.equal(companyToAdminCompanies.statusCode, 403);
+  assert.equal(JSON.parse(companyToAdminCompanies.body).code, 'ROLE_FORBIDDEN');
+});
+
+
+

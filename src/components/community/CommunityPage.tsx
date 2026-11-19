@@ -40,8 +40,8 @@ export const CommunityPage: React.FC = () => {
     try {
       await addDiscussion({
         title: newTopicTitle.trim(),
-        authorName: currentUser.name,
-        authorRole: currentUser.title || 'BIO-INEXA Member',
+        authorName: currentUser.name || 'BIO-INEXA Researcher',
+        authorRole: currentUser.title || 'Community Member',
         category: newTopicCategory,
         content: newTopicContent.trim()
       });

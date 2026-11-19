@@ -68,6 +68,14 @@ export interface PublicInternship {
   sourceUrl?: string;
   applicationUrl: string;
   verificationStatus?: string;
+  verificationNotes?: string;
+  lastVerificationDate?: string;
+  isVerified?: boolean;
+  isApproved?: boolean;
+  isActive?: boolean;
+  isExpired?: boolean;
+  compensationType?: 'paid' | 'unpaid';
+  isPaid?: boolean;
   featured?: boolean;
 }
 
@@ -76,24 +84,50 @@ export interface PublicWorkshop {
   name: string;
   title?: string;
   description: string;
-  instructor: string;
   organizer?: string;
+  instructor?: string;
+  category?: string;
   date: string;
-  time: string;
+  startDate?: string;
+  endDate?: string;
+  time?: string;
   venue: string;
   location?: string;
   format?: string;
+  workMode?: string;
   registrationLink: string;
   registrationUrl?: string;
   registrationDeadline?: string;
   availability: string;
   status?: string;
-  fees: string;
-  duration: string;
-  capacity: number;
+  fees?: string;
+  duration?: string;
+  capacity?: number | null;
   imageUrl?: string;
   featured?: boolean;
   skillsCovered: string[];
+  approvalStatus?: 'approved' | 'pending' | 'rejected';
+  isApproved?: boolean;
+  isExpired?: boolean;
+}
+
+export interface SubmitWorkshopPayload {
+  title: string;
+  organizer: string;
+  instructor?: string;
+  category: string;
+  description: string;
+  format: 'Online' | 'Offline' | 'Hybrid';
+  venue?: string;
+  date: string;
+  time?: string;
+  duration?: string;
+  registrationDeadline?: string;
+  registrationUrl: string;
+  fees?: string;
+  capacity?: number | null;
+  skillsCovered?: string[];
+  imageUrl?: string;
 }
 
 export interface PublicCourse {
@@ -101,9 +135,11 @@ export interface PublicCourse {
   name: string;
   title?: string;
   provider?: string;
+  providerType?: 'third_party' | 'bionexa';
   description: string;
   duration: string;
   fees: string;
+  pricingType?: 'free' | 'paid';
   eligibility: string;
   curriculum: string[];
   deliveryMode?: string;
@@ -113,12 +149,34 @@ export interface PublicCourse {
   registrationUrl?: string;
   availability: string;
   status?: string;
+  approvalStatus?: 'approved' | 'pending' | 'rejected';
+  isApproved?: boolean;
+  isExpired?: boolean;
   instructor: string;
   level: string;
   category: string;
   imageUrl?: string;
   isCertificateAvailable: boolean;
   featured: boolean;
+}
+
+export interface SubmitCoursePayload {
+  title: string;
+  provider: string;
+  instructor?: string;
+  category: string;
+  description: string;
+  duration: string;
+  eligibility?: string;
+  curriculum?: string[];
+  deliveryMode?: string;
+  fees: string;
+  pricingType?: 'free' | 'paid';
+  certificateInfo?: string;
+  registrationDeadline?: string;
+  registrationUrl: string;
+  level?: string;
+  imageUrl?: string;
 }
 
 export interface PublicAnnouncement {
@@ -260,14 +318,20 @@ class BionexaApiClient {
   public async getInternships(params?: {
     search?: string;
     category?: string;
+    location?: string;
     mode?: string;
+    compensation?: 'all' | 'paid' | 'unpaid' | string;
+    includeExpired?: boolean;
     page?: number;
     limit?: number;
   }): Promise<PublicInternship[]> {
     const query = new URLSearchParams();
     if (params?.search) query.set('search', params.search);
-    if (params?.category) query.set('category', params.category);
-    if (params?.mode) query.set('mode', params.mode);
+    if (params?.category && params.category !== 'all') query.set('category', params.category);
+    if (params?.location && params.location !== 'all') query.set('location', params.location);
+    if (params?.mode && params.mode !== 'all') query.set('mode', params.mode);
+    if (params?.compensation && params.compensation !== 'all') query.set('compensation', params.compensation);
+    if (params?.includeExpired) query.set('includeExpired', 'true');
     if (params?.page) query.set('page', String(params.page));
     if (params?.limit) query.set('limit', String(params.limit));
 
@@ -278,12 +342,39 @@ class BionexaApiClient {
     return data.internships || [];
   }
 
+  public async submitInternship(payload: {
+    title: string;
+    organization: string;
+    location: string;
+    mode: string;
+    stipend: string;
+    duration: string;
+    deadline?: string;
+    category: string;
+    eligibility: string;
+    description: string;
+    applicationUrl: string;
+    sourceName?: string;
+    skillsRequired?: string[];
+    learningOutcomes?: string[];
+  }): Promise<{ success: boolean; message: string; internship: PublicInternship }> {
+    return requestJson<{ success: boolean; message: string; internship: PublicInternship }>(
+      `${this.baseUrl}/internships/submit`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }
+    );
+  }
+
   // --- Workshops, Courses & Content ---
 
   public async getWorkshops(params?: {
     status?: string;
     format?: string;
+    category?: string;
     featured?: boolean;
+    includeExpired?: boolean;
     search?: string;
     page?: number;
     limit?: number;
@@ -291,7 +382,9 @@ class BionexaApiClient {
     const query = new URLSearchParams();
     if (params?.status) query.set('status', params.status);
     if (params?.format) query.set('format', params.format);
+    if (params?.category) query.set('category', params.category);
     if (params?.featured !== undefined) query.set('featured', String(params.featured));
+    if (params?.includeExpired !== undefined) query.set('includeExpired', String(params.includeExpired));
     if (params?.search) query.set('search', params.search);
     if (params?.page) query.set('page', String(params.page));
     if (params?.limit) query.set('limit', String(params.limit));
@@ -303,11 +396,27 @@ class BionexaApiClient {
     return data.workshops || [];
   }
 
+  public async submitWorkshop(
+    payload: SubmitWorkshopPayload
+  ): Promise<{ success: boolean; status: string; message: string; workshop?: PublicWorkshop }> {
+    return requestJson<{ success: boolean; status: string; message: string; workshop?: PublicWorkshop }>(
+      `${this.baseUrl}/workshops/submit`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }
+    );
+  }
+
   public async getCourses(params?: {
     category?: string;
     status?: string;
+    pricingType?: 'free' | 'paid' | 'all' | string;
+    providerType?: 'third_party' | 'bionexa' | 'all' | string;
     featured?: boolean;
     onlyAvailable?: boolean;
+    includeExpired?: boolean;
     search?: string;
     page?: number;
     limit?: number;
@@ -315,8 +424,11 @@ class BionexaApiClient {
     const query = new URLSearchParams();
     if (params?.category) query.set('category', params.category);
     if (params?.status) query.set('status', params.status);
+    if (params?.pricingType && params.pricingType !== 'all') query.set('pricingType', params.pricingType);
+    if (params?.providerType && params.providerType !== 'all') query.set('providerType', params.providerType);
     if (params?.featured !== undefined) query.set('featured', String(params.featured));
     if (params?.onlyAvailable !== undefined) query.set('onlyAvailable', String(params.onlyAvailable));
+    if (params?.includeExpired !== undefined) query.set('includeExpired', String(params.includeExpired));
     if (params?.search) query.set('search', params.search);
     if (params?.page) query.set('page', String(params.page));
     if (params?.limit) query.set('limit', String(params.limit));
@@ -326,6 +438,23 @@ class BionexaApiClient {
       `${this.baseUrl}/courses${qs ? `?${qs}` : ''}`
     );
     return data.courses || [];
+  }
+
+  public async getCourseCategories(): Promise<string[]> {
+    const data = await requestJson<{ categories?: string[] }>(`${this.baseUrl}/courses/categories`);
+    return Array.isArray(data.categories) ? data.categories : [];
+  }
+
+  public async submitCourse(
+    payload: SubmitCoursePayload
+  ): Promise<{ success: boolean; status: string; message: string; course?: PublicCourse }> {
+    return requestJson<{ success: boolean; status: string; message: string; course?: PublicCourse }>(
+      `${this.baseUrl}/courses/submit`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }
+    );
   }
 
   public async getAnnouncements(): Promise<PublicAnnouncement[]> {

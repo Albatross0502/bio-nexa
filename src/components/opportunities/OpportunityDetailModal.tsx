@@ -288,74 +288,108 @@ export const OpportunityDetailModal: React.FC<OpportunityDetailModalProps> = ({
           )}
 
           {/* Course Details (if type is course) */}
-          {opportunity.type === 'course' && (
-            <div className="p-4 bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 rounded-2xl space-y-4">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-200 text-sm">
-                  <BookOpen className="w-4 h-4 text-amber-600" />
-                  <span>Course Specifications</span>
+          {opportunity.type === 'course' && (() => {
+            const isThirdParty = opportunity.courseDetails?.providerType !== 'bionexa';
+            const pricingType = opportunity.courseDetails?.pricingType
+              || (opportunity.salaryTier === 'unpaid' ? 'free' : 'paid');
+            const providerLabel = opportunity.courseDetails?.provider || opportunity.organization || 'Course Provider';
+            return (
+              <div className="p-4 bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 rounded-2xl space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-bold text-amber-900 dark:text-amber-200 text-sm">
+                    <BookOpen className="w-4 h-4 text-amber-600" />
+                    <span>Course Specifications</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
+                        isThirdParty
+                          ? 'bg-slate-800 text-sky-200'
+                          : 'bg-[#14A3A0] text-white'
+                      }`}
+                    >
+                      {isThirdParty ? 'Third-Party Course' : 'BIO-INEXA Provided'}
+                    </span>
+                    <span
+                      className={`text-[10px] font-bold uppercase tracking-wider px-2.5 py-0.5 rounded-full ${
+                        pricingType === 'free'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-indigo-600 text-white'
+                      }`}
+                    >
+                      {pricingType === 'free' ? 'Free' : 'Paid'}
+                    </span>
+                    {opportunity.category && (
+                      <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-white dark:bg-slate-900 text-[#0B2A5B] dark:text-sky-300 border border-amber-200 dark:border-amber-800">
+                        {opportunity.category}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                {opportunity.category && (
-                  <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-white dark:bg-slate-900 text-[#0B2A5B] dark:text-sky-300 border border-amber-200 dark:border-amber-800">
-                    {opportunity.category}
-                  </span>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <span className="text-slate-500 block">Provider / Institution:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{providerLabel}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Duration:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.duration || opportunity.duration || 'Not specified'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Delivery Mode:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.deliveryMode || opportunity.location || 'Not specified'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Fees ({pricingType === 'free' ? 'Free' : 'Paid'}):</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.fees || opportunity.fees || 'Not specified'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Registration Deadline:</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.registrationDeadline || opportunity.deadline || 'Not specified'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block">Availability:</span>
+                    <span className={`font-semibold ${isUnavailable ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {isExpired ? 'Expired' : isClosed ? 'Closed' : 'Available'}
+                    </span>
+                  </div>
+                </div>
+
+                {(opportunity.courseDetails?.eligibility || opportunity.eligibility) && (
+                  <div className="text-xs text-slate-700 dark:text-slate-300 pt-1 border-t border-amber-200/70 dark:border-amber-800/40">
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">Eligibility: </span>
+                    {opportunity.courseDetails?.eligibility || opportunity.eligibility}
+                  </div>
+                )}
+
+                {opportunity.courseDetails?.certificateInfo && (
+                  <div className="text-xs text-slate-700 dark:text-slate-300 pt-1">
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">
+                      {isThirdParty ? 'Provider Certificate Information: ' : 'BIO-INEXA Certificate Information: '}
+                    </span>
+                    {opportunity.courseDetails.certificateInfo}
+                  </div>
+                )}
+
+                {opportunity.courseDetails?.syllabus && opportunity.courseDetails.syllabus.length > 0 && (
+                  <div className="space-y-1.5 pt-2 border-t border-amber-200/70 dark:border-amber-800/40">
+                    <div className="text-xs font-bold text-slate-900 dark:text-slate-100">Curriculum Modules</div>
+                    <ul className="list-disc list-inside space-y-1 text-xs text-slate-700 dark:text-slate-300">
+                      {opportunity.courseDetails.syllabus.map((mod, idx) => (
+                        <li key={idx}>{mod}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {isThirdParty && (
+                  <p className="text-[11px] text-amber-900/80 dark:text-amber-200/80 pt-2 border-t border-amber-200/70 dark:border-amber-800/40">
+                    Third-party course administered by <strong>{providerLabel}</strong>. BIO-INEXA does not provide or certify this course.
+                  </p>
                 )}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-                <div>
-                  <span className="text-slate-500 block">Provider / Institution:</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.provider || opportunity.organization}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Duration:</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.duration || opportunity.duration || 'Self-paced'}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Delivery Mode:</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.deliveryMode || opportunity.location || 'Online'}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Fees:</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.fees || opportunity.fees || 'See Provider Portal'}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Registration Deadline:</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{opportunity.courseDetails?.registrationDeadline || opportunity.deadline || 'Open / Rolling'}</span>
-                </div>
-                <div>
-                  <span className="text-slate-500 block">Availability:</span>
-                  <span className={`font-semibold ${isUnavailable ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                    {isUnavailable ? 'Closed' : 'Available'}
-                  </span>
-                </div>
-              </div>
-
-              {(opportunity.courseDetails?.eligibility || opportunity.eligibility) && (
-                <div className="text-xs text-slate-700 dark:text-slate-300 pt-1 border-t border-amber-200/70 dark:border-amber-800/40">
-                  <span className="font-semibold text-slate-900 dark:text-slate-100">Eligibility: </span>
-                  {opportunity.courseDetails?.eligibility || opportunity.eligibility}
-                </div>
-              )}
-
-              {opportunity.courseDetails?.certificateInfo && (
-                <div className="text-xs text-slate-700 dark:text-slate-300 pt-1">
-                  <span className="font-semibold text-slate-900 dark:text-slate-100">Certificate Information: </span>
-                  {opportunity.courseDetails.certificateInfo}
-                </div>
-              )}
-
-              {opportunity.courseDetails?.syllabus && opportunity.courseDetails.syllabus.length > 0 && (
-                <div className="space-y-1.5 pt-2 border-t border-amber-200/70 dark:border-amber-800/40">
-                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100">Curriculum Modules</div>
-                  <ul className="list-disc list-inside space-y-1 text-xs text-slate-700 dark:text-slate-300">
-                    {opportunity.courseDetails.syllabus.map((mod, idx) => (
-                      <li key={idx}>{mod}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
+            );
+          })()}
 
           {/* Source Attribution & Legal Disclaimer */}
           <div className="p-4 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-2 text-xs">

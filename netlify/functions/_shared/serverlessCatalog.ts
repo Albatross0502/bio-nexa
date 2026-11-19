@@ -8,7 +8,12 @@
  */
 
 import { SEED_JOBS, SEED_INTERNSHIPS } from '../../../src/data/seedData';
-import { normalizeCourseCategory, normalizeCourseStatus } from '../../../src/services/courses/courseHelpers';
+import {
+  classifyCoursePricing,
+  isCourseExpired,
+  normalizeCourseCategory,
+  normalizeCourseStatus,
+} from '../../../src/services/courses/courseHelpers';
 
 export interface ServerlessJobRecord {
   id: string;
@@ -44,6 +49,7 @@ export interface ServerlessWorkshopRecord {
   name: string;
   organizer: string;
   instructor: string;
+  category: string;
   location: string;
   venue: string;
   workMode: 'Online' | 'Offline' | 'Hybrid';
@@ -54,7 +60,7 @@ export interface ServerlessWorkshopRecord {
   time: string;
   duration: string;
   fees: string;
-  capacity: number;
+  capacity: number | null;
   registrationUrl: string;
   registrationLink: string;
   registrationDeadline: string;
@@ -64,7 +70,9 @@ export interface ServerlessWorkshopRecord {
   featured: boolean;
   skillsCovered: string[];
   status: 'upcoming' | 'ongoing' | 'completed';
+  approvalStatus: 'approved' | 'pending' | 'rejected';
   isApproved: boolean;
+  isExpired?: boolean;
 }
 
 export interface ServerlessCourseRecord {
@@ -72,6 +80,7 @@ export interface ServerlessCourseRecord {
   title: string;
   name: string;
   provider: string;
+  providerType: 'third_party' | 'bionexa';
   instructor: string;
   category: string;
   duration: string;
@@ -79,6 +88,7 @@ export interface ServerlessCourseRecord {
   deliveryMode: string;
   fees: string;
   price: string;
+  pricingType: 'free' | 'paid';
   eligibility: string;
   description: string;
   curriculum: string[];
@@ -91,6 +101,9 @@ export interface ServerlessCourseRecord {
   imageUrl: string;
   status: 'available' | 'closed';
   availability: string;
+  approvalStatus: 'approved' | 'pending' | 'rejected';
+  isApproved: boolean;
+  isExpired: boolean;
   featured: boolean;
   createdAt: string;
   updatedAt: string;
@@ -156,8 +169,9 @@ export const SERVERLESS_WORKSHOPS: ServerlessWorkshopRecord[] = [
     id: 'opp-work-1',
     title: 'National Hands-On Workshop on CRISPR-Cas9 & Base Editing',
     name: 'National Hands-On Workshop on CRISPR-Cas9 & Base Editing',
-    organizer: 'Dr. Debojyoti Chakraborty, Senior Scientist (CSIR)',
+    organizer: 'CSIR-Institute of Genomics & Integrative Biology (CSIR-IGIB)',
     instructor: 'Dr. Debojyoti Chakraborty, Senior Scientist (CSIR)',
+    category: 'Genomics & Gene Editing',
     location: 'CSIR-IGIB Wet Lab, Mathura Road, New Delhi 110025',
     venue: 'CSIR-IGIB Wet Lab, Mathura Road, New Delhi 110025',
     workMode: 'Offline',
@@ -179,14 +193,16 @@ export const SERVERLESS_WORKSHOPS: ServerlessWorkshopRecord[] = [
     featured: true,
     skillsCovered: ['sgRNA Design', 'RNP Electroporation', 'Agarose Gel Electrophoresis', 'In Vitro Cleavage Assay'],
     status: 'upcoming',
+    approvalStatus: 'approved',
     isApproved: true,
   },
   {
     id: 'opp-work-2',
     title: 'International Hands-on Bootcamp on RNA-Seq Analytics & Python for Biologists',
     name: 'International Hands-on Bootcamp on RNA-Seq Analytics & Python for Biologists',
-    organizer: 'Dr. Vikram Joshi, Computational Genomics Lead',
+    organizer: 'DBT Open Access Bioinformatics Consortium',
     instructor: 'Dr. Vikram Joshi, Computational Genomics Lead',
+    category: 'Bioinformatics & Computational Biology',
     location: 'Live Zoom Portal & Cloud Galaxy Server (India)',
     venue: 'Live Zoom Portal & Cloud Galaxy Server (India)',
     workMode: 'Online',
@@ -208,14 +224,16 @@ export const SERVERLESS_WORKSHOPS: ServerlessWorkshopRecord[] = [
     featured: true,
     skillsCovered: ['DESeq2', 'R Programming', 'Python Biopython', 'Volcano Plots', 'Pathway Enrichment (GO/KEGG)'],
     status: 'upcoming',
+    approvalStatus: 'approved',
     isApproved: true,
   },
   {
     id: 'opp-work-3',
     title: 'Executive Workshop on HACCP Food Safety Implementation & FSSAI Lab Auditing',
     name: 'Executive Workshop on HACCP Food Safety Implementation & FSSAI Lab Auditing',
-    organizer: 'Er. Rajesh Mathur, Lead FSSAI Auditor',
+    organizer: 'Association of Food Scientists & Technologists (India) — AFSTI',
     instructor: 'Er. Rajesh Mathur, Lead FSSAI Auditor',
+    category: 'Quality, Regulatory & Food Safety',
     location: 'AFSTI Lecture Hall, Malaviya Nagar Industrial Area, Jaipur',
     venue: 'AFSTI Lecture Hall, Malaviya Nagar Industrial Area, Jaipur',
     workMode: 'Offline',
@@ -224,7 +242,7 @@ export const SERVERLESS_WORKSHOPS: ServerlessWorkshopRecord[] = [
     endDate: '2026-12-20',
     date: '2026-12-20',
     time: '10:00 AM - 03:00 PM IST',
-    duration: '1 Day Certification',
+    duration: '1 Day Intensive',
     fees: '₹850 (Subsidized Student Rate)',
     capacity: 60,
     registrationUrl: 'https://www.afsti.org/',
@@ -232,19 +250,21 @@ export const SERVERLESS_WORKSHOPS: ServerlessWorkshopRecord[] = [
     registrationDeadline: '2026-12-15',
     availability: 'Open',
     description:
-      'Intensive certification workshop covering the 7 principles of HACCP, identification of chemical, physical, and biological food hazards, risk assessment matrices, and preparation for FSSAI third-party audits.',
+      'Intensive technical workshop covering the 7 principles of HACCP, identification of chemical, physical, and biological food hazards, risk assessment matrices, and preparation for FSSAI third-party audits.',
     imageUrl: 'https://images.unsplash.com/photo-1576086213369-97a306d36557?auto=format&fit=crop&w=800&q=80',
     featured: true,
     skillsCovered: ['HACCP Plan Formulation', 'Critical Control Points (CCPs)', 'ISO 22000', 'FSSAI Rules'],
     status: 'ongoing',
+    approvalStatus: 'approved',
     isApproved: true,
   },
   {
     id: 'opp-work-4',
     title: 'National Workshop on High-Impact Scientific Manuscript Writing & Journal Selection',
     name: 'National Workshop on High-Impact Scientific Manuscript Writing & Journal Selection',
-    organizer: 'Prof. S. Ranganathan, Chief Editor (Life Science Reviews)',
+    organizer: 'Department of Science & Technology (DST), India',
     instructor: 'Prof. S. Ranganathan, Chief Editor (Life Science Reviews)',
+    category: 'Scientific Writing & Research Methodology',
     location: 'DST Auditorium & Live Webcast, New Delhi',
     venue: 'DST Auditorium & Live Webcast, New Delhi',
     workMode: 'Hybrid',
@@ -266,14 +286,17 @@ export const SERVERLESS_WORKSHOPS: ServerlessWorkshopRecord[] = [
     featured: false,
     skillsCovered: ['Manuscript Structuring', 'Scientific English', 'Journal Selection', 'Responding to Reviewers', 'Bioethics'],
     status: 'completed',
+    approvalStatus: 'approved',
     isApproved: true,
+    isExpired: true,
   },
   {
     id: 'opp-work-5',
     title: 'Industrial Bioprocess Scaling & Microbial Fermentation Practicum',
     name: 'Industrial Bioprocess Scaling & Microbial Fermentation Practicum',
-    organizer: 'Dr. Ramgopal Rao, Director of Academic Affairs',
+    organizer: 'Biocon Academy',
     instructor: 'Dr. Ramgopal Rao, Director of Academic Affairs',
+    category: 'Bioprocess & Fermentation',
     location: 'Biocon Academy Pilot Bioreactor Facility, Electronic City Phase 1, Bengaluru 560100',
     venue: 'Biocon Academy Pilot Bioreactor Facility, Electronic City Phase 1, Bengaluru 560100',
     workMode: 'Offline',
@@ -295,14 +318,16 @@ export const SERVERLESS_WORKSHOPS: ServerlessWorkshopRecord[] = [
     featured: true,
     skillsCovered: ['Bioreactor Setup', 'Fed-Batch Fermentation', 'Downstream Processing', 'CIP / SIP Protocols'],
     status: 'upcoming',
+    approvalStatus: 'approved',
     isApproved: true,
   },
   {
     id: 'opp-work-6',
     title: 'Multicolor Flow Cytometry & High-Speed Cell Sorting Masterclass',
     name: 'Multicolor Flow Cytometry & High-Speed Cell Sorting Masterclass',
-    organizer: 'NCBS Central Flow Cytometry Core Facility',
+    organizer: 'National Centre for Biological Sciences (NCBS-TIFR)',
     instructor: 'NCBS Central Flow Cytometry Core Facility',
+    category: 'Cell Biology & Immunology',
     location: 'National Centre for Biological Sciences (NCBS-TIFR), Bellary Road, Bengaluru 560065',
     venue: 'National Centre for Biological Sciences (NCBS-TIFR), Bellary Road, Bengaluru 560065',
     workMode: 'Hybrid',
@@ -324,6 +349,7 @@ export const SERVERLESS_WORKSHOPS: ServerlessWorkshopRecord[] = [
     featured: false,
     skillsCovered: ['Multicolor FlowJo', 'Antibody Conjugation', 'Cell Sorting', 'Gating Analysis'],
     status: 'upcoming',
+    approvalStatus: 'approved',
     isApproved: true,
   },
 ];
@@ -643,13 +669,16 @@ export function formatServerlessJobForAdmin(j: ServerlessJobRecord) {
 }
 
 export const SERVERLESS_COURSES: ServerlessCourseRecord[] = SERVERLESS_COURSES_RAW.map((c) => {
-  const status = normalizeCourseStatus(c.status, c.availability);
+  const expired = isCourseExpired({ registrationDeadline: c.registrationDeadline });
+  const status = expired ? 'closed' : normalizeCourseStatus(c.status, c.availability);
   const category = normalizeCourseCategory(c.category);
+  const pricingType = classifyCoursePricing(c.fees);
   return {
     id: c.id,
     title: c.name,
     name: c.name,
     provider: c.provider,
+    providerType: 'third_party',
     instructor: c.instructor,
     category,
     duration: c.duration,
@@ -657,6 +686,7 @@ export const SERVERLESS_COURSES: ServerlessCourseRecord[] = SERVERLESS_COURSES_R
     deliveryMode: c.deliveryMode,
     fees: c.fees,
     price: c.fees,
+    pricingType,
     eligibility: c.eligibility,
     description: c.description,
     curriculum: c.curriculum,
@@ -668,7 +698,10 @@ export const SERVERLESS_COURSES: ServerlessCourseRecord[] = SERVERLESS_COURSES_R
     registrationLink: c.registrationLink,
     imageUrl: c.imageUrl,
     status,
-    availability: status === 'closed' ? 'Closed' : 'Available',
+    availability: expired ? 'Expired' : status === 'closed' ? 'Closed' : 'Available',
+    approvalStatus: 'approved',
+    isApproved: true,
+    isExpired: expired,
     featured: c.featured,
     createdAt: '2026-11-01T08:00:00.000Z',
     updatedAt: '2026-11-07T08:00:00.000Z',

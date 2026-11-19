@@ -42,10 +42,18 @@ import {
   AdminExportDataset,
 } from './src/services/admin/adminHelpers.js';
 import {
+  COURSE_CATEGORIES,
+  classifyCoursePricing,
+  isCourseExpired,
+  normalizeCourseApprovalStatus,
   normalizeCourseCategory,
+  normalizeCourseProviderType,
   normalizeCourseStatus,
   normalizeDeliveryMode,
-  parseCurriculumInput
+  parseCurriculumInput,
+  resolveCourseCategory,
+  validateCourseRegistrationUrl,
+  validateCourseSubmissionPayload
 } from './src/services/courses/courseHelpers.js';
 import {
   normalizeComplianceRequestType,
@@ -64,11 +72,63 @@ import {
   validateApplicationUrl,
   isJobExpiredByDeadline,
 } from './src/services/jobs/jobVerification.js';
+import {
+  classifyInternshipCompensation,
+  isInternshipDeadlineExpired,
+  validateInternshipApplicationUrl,
+  validateInternshipSubmissionPayload,
+} from './src/services/internships/internshipHelpers.js';
+import {
+  isWorkshopExpired,
+  normalizeWorkshopApprovalStatus,
+  validateWorkshopRegistrationUrl,
+  validateWorkshopSubmissionPayload,
+} from './src/services/workshops/workshopHelpers.js';
 
 import {
   getRuntimeEnvironmentConfig,
   resolveCorsOrigin,
 } from './src/config/environment.js';
+import {
+  STUDENT_SESSION_COOKIE,
+  STUDENT_SESSION_DURATION_MS,
+  StudentAuthRateLimiter,
+  createEmailVerificationToken,
+  createStudentPasswordResetToken,
+  createStudentSessionToken,
+  hasStudentPermission,
+  hashStudentPassword,
+  maskIpAddress,
+  normalizeStudentEmail,
+  toSafeStudentProfile,
+  validateDeletionRequestInput,
+  validateStudentPasswordStrength,
+  validateStudentProfileUpdateInput,
+  validateStudentRegistrationInput,
+  verifyStudentPassword,
+  type StudentPermission,
+} from './src/services/student/studentAuthService.js';
+import {
+  COMPANY_RESET_TOKEN_TTL_MS,
+  COMPANY_SESSION_COOKIE,
+  COMPANY_SESSION_TTL_MS,
+  COMPANY_VERIFY_TOKEN_TTL_MS,
+  CompanyAuthRateLimiter,
+  evaluatePasswordStrength as evaluateCompanyPasswordStrength,
+  generateOpaqueToken as generateCompanyOpaqueToken,
+  hasCompanyPermission,
+  hashCompanyPassword,
+  hashOpaqueToken as hashCompanyOpaqueToken,
+  normalizeCompanyEmail,
+  resolveEmployerJobSubmissionPolicy,
+  toSafeCompanyProfile,
+  validateCompanyJobInput,
+  validateCompanyProfileUpdateInput,
+  validateCompanyRegistrationInput,
+  validateEmployerVerificationSubmission,
+  verifyCompanyPassword,
+  type CompanyPermission,
+} from './src/services/company/companyAuthService.js';
 
 import crypto from 'node:crypto';
 
@@ -342,6 +402,26 @@ function requireAdminPermission(permission?: AdminPermission) {
 
     const token = extractSessionToken(req);
     if (!token) {
+      if (req.cookies?.[STUDENT_SESSION_COOKIE]) {
+        sendApiError(
+          res,
+          403,
+          'Forbidden',
+          'ROLE_FORBIDDEN',
+          'Student accounts are not permitted to access administrator APIs.'
+        );
+        return;
+      }
+      if (req.cookies?.[COMPANY_SESSION_COOKIE]) {
+        sendApiError(
+          res,
+          403,
+          'Forbidden',
+          'ROLE_FORBIDDEN',
+          'Company accounts are not permitted to access administrator APIs.'
+        );
+        return;
+      }
       res.status(401).json({
         error: 'Authentication Required',
         code: 'AUTH_REQUIRED',
@@ -623,15 +703,31 @@ app.post('/api/compliance/request', (req: Request, res: Response) => {
   }
 });
 
-// GET /api/internships (public verified & active internships from DB)
+// GET /api/internships (public verified & active internships from DB with full Phase 11 filtering)
 app.get('/api/internships', (req: Request, res: Response) => {
   try {
-    const { search, category, mode } = req.query;
+    // Keep past-deadline internships accurately marked Expired without deleting records
+    bionexaDb.expirePastDeadlineInternships();
+
+    const { search, category, location, mode, compensation, paid, includeExpired } = req.query;
+    const compParam =
+      typeof compensation === 'string' && compensation !== 'all'
+        ? compensation
+        : paid === 'true'
+        ? 'paid'
+        : paid === 'false'
+        ? 'unpaid'
+        : undefined;
+    const showExpired = includeExpired === 'true' || includeExpired === '1';
+
     const rows = bionexaDb.getInternships({
       search: typeof search === 'string' ? search : undefined,
       category: typeof category === 'string' && category !== 'all' ? category : undefined,
+      location: typeof location === 'string' && location !== 'all' ? location : undefined,
       mode: typeof mode === 'string' && mode !== 'all' ? mode : undefined,
-      onlyActive: true,
+      compensation: compParam,
+      includeExpired: showExpired,
+      onlyActive: !showExpired,
       onlyApproved: true,
     });
     const formatted = rows.map(formatInternshipForPublic);
@@ -652,11 +748,60 @@ app.get('/api/internships', (req: Request, res: Response) => {
   }
 });
 
+// POST /api/internships/submit (Public internship submission -> strictly Pending Verification in DB)
+app.post('/api/internships/submit', (req: Request, res: Response) => {
+  try {
+    const validation = validateInternshipSubmissionPayload(req.body || {});
+    if (!validation.valid || !validation.sanitized) {
+      res.status(400).json({
+        error: 'Validation Error',
+        code: 'INVALID_INTERNSHIP_SUBMISSION',
+        message: validation.errors.join(' '),
+        errors: validation.errors,
+      });
+      return;
+    }
+
+    const s = validation.sanitized;
+    const created = bionexaDb.createInternship({
+      title: sanitizeString(s.title),
+      organization: sanitizeString(s.organization),
+      location: sanitizeString(s.location),
+      workMode: s.workMode,
+      stipend: sanitizeString(s.stipend),
+      duration: sanitizeString(s.duration),
+      deadline: sanitizeString(s.deadline),
+      category: s.category,
+      eligibility: sanitizeString(s.eligibility),
+      description: sanitizeString(s.description),
+      learningOutcomes: s.learningOutcomes.map((o) => sanitizeString(o)),
+      skillsRequired: s.skillsRequired.map((k) => sanitizeString(k)),
+      sourceName: sanitizeString(s.sourceName),
+      sourceUrl: s.sourceUrl,
+      applicationUrl: s.applicationUrl,
+      verificationStatus: 'Pending Verification',
+      verificationNotes: 'Submitted via public Internship Portal — awaiting administrator URL & institution audit.',
+      lastVerificationDate: '',
+      isApproved: false,
+      isActive: true,
+      featured: false,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Internship submitted for administrator verification. It will appear publicly only after official URL and eligibility review.',
+      internship: formatInternshipForPublic(created),
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Internal Server Error', 'INTERNSHIP_SUBMIT_FAILED', err.message || 'Failed to submit internship.');
+  }
+});
+
 // GET /api/internships/:id
 app.get('/api/internships/:id', (req: Request, res: Response) => {
   try {
     const row = bionexaDb.getInternshipById(req.params.id);
-    if (!row || !row.isApproved || !row.isActive) {
+    if (!row || !row.isApproved) {
       sendApiError(res, 404, 'Not Found', 'INTERNSHIP_NOT_FOUND', 'Internship listing not found.');
       return;
     }
@@ -666,15 +811,19 @@ app.get('/api/internships/:id', (req: Request, res: Response) => {
   }
 });
 
-// GET /api/workshops (supports status, format, featured, search, page, limit)
+// GET /api/workshops (supports status, format, category, featured, search, includeExpired, page, limit)
 app.get('/api/workshops', (req: Request, res: Response) => {
   try {
-    const { status, format, featured, search } = req.query;
+    bionexaDb.expirePastWorkshops();
+    const { status, format, category, featured, search, includeExpired } = req.query;
     const allWorkshops = bionexaDb.getWorkshops({
+      onlyApproved: true,
       status: typeof status === 'string' && status !== 'all' ? status : undefined,
       format: typeof format === 'string' && format !== 'all' ? format : undefined,
+      category: typeof category === 'string' && category !== 'all' ? category : undefined,
       featured: featured === 'true' ? true : featured === 'false' ? false : undefined,
       search: typeof search === 'string' ? search : undefined,
+      includeExpired: includeExpired === 'false' ? false : true,
     });
     const formatted = allWorkshops.map(formatWorkshopForAdmin);
     const { page, limit } = parsePaginationParams(req.query as Record<string, unknown>, {
@@ -695,11 +844,63 @@ app.get('/api/workshops', (req: Request, res: Response) => {
   }
 });
 
+// POST /api/workshops/submit (Public workshop submission — queued as pending for admin approval)
+app.post('/api/workshops/submit', (req: Request, res: Response) => {
+  try {
+    const validation = validateWorkshopSubmissionPayload(req.body || {});
+    if (!validation.valid || !validation.sanitized) {
+      sendApiError(
+        res,
+        400,
+        'Validation Error',
+        'INVALID_WORKSHOP_SUBMISSION',
+        validation.errors.join(' ')
+      );
+      return;
+    }
+
+    const s = validation.sanitized;
+    const created = bionexaDb.createWorkshop({
+      name: s.title,
+      description: s.description,
+      organizer: s.organizer,
+      instructor: s.instructor,
+      category: s.category,
+      date: s.date,
+      time: s.time,
+      duration: s.duration,
+      format: s.format,
+      venue: s.venue,
+      registrationDeadline: s.registrationDeadline,
+      registrationLink: s.registrationUrl,
+      availability: 'Open',
+      status: 'upcoming',
+      fees: s.fees,
+      capacity: s.capacity ?? 0,
+      imageUrl: s.imageUrl,
+      featured: false,
+      skillsCovered: s.skillsCovered,
+      approvalStatus: 'pending',
+      isApproved: false,
+    });
+
+    res.status(201).json({
+      success: true,
+      status: 'pending',
+      message: 'Workshop submitted for editorial review. It will appear publicly only after administrator approval.',
+      workshop: formatWorkshopForAdmin(created),
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Database Error', 'WORKSHOP_SUBMIT_FAILED', err.message || 'Failed to submit workshop.');
+  }
+});
+
 // GET /api/workshops/:id
 app.get('/api/workshops/:id', (req: Request, res: Response) => {
   try {
+    bionexaDb.expirePastWorkshops();
     const workshop = bionexaDb.getWorkshopById(req.params.id);
-    if (!workshop) {
+    if (!workshop || !workshop.isApproved) {
       sendApiError(res, 404, 'Not Found', 'WORKSHOP_NOT_FOUND', 'Workshop not found.');
       return;
     }
@@ -709,14 +910,85 @@ app.get('/api/workshops/:id', (req: Request, res: Response) => {
   }
 });
 
-// GET /api/courses (supports category, status, featured, search, onlyAvailable, page, limit)
+// GET /api/courses/categories
+app.get('/api/courses/categories', (_req: Request, res: Response) => {
+  try {
+    res.json({
+      success: true,
+      categories: bionexaDb.getCourseCategories()
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Internal Server Error', 'COURSE_CATEGORIES_FETCH_FAILED', err.message || 'Failed to retrieve course categories.');
+  }
+});
+
+// POST /api/courses/submit (Public third-party course submission -> pending administrator approval)
+app.post('/api/courses/submit', (req: Request, res: Response) => {
+  try {
+    const validation = validateCourseSubmissionPayload(req.body || {});
+    if (!validation.valid || !validation.sanitized) {
+      sendApiError(
+        res,
+        400,
+        'Validation Error',
+        'INVALID_COURSE_SUBMISSION',
+        validation.errors.join(' ')
+      );
+      return;
+    }
+
+    const s = validation.sanitized;
+    const managedCategories = bionexaDb.getCourseCategories();
+    const created = bionexaDb.createCourse({
+      name: s.name,
+      provider: s.provider,
+      providerType: 'third_party',
+      instructor: s.instructor,
+      category: resolveCourseCategory(s.category, managedCategories),
+      description: s.description,
+      duration: s.duration,
+      eligibility: s.eligibility,
+      curriculum: s.curriculum,
+      deliveryMode: s.deliveryMode,
+      fees: s.fees,
+      pricingType: s.pricingType,
+      certificateInfo: s.certificateInfo,
+      registrationDeadline: s.registrationDeadline,
+      registrationLink: s.registrationLink,
+      availability: 'Available',
+      status: 'available',
+      approvalStatus: 'pending',
+      isApproved: false,
+      level: s.level,
+      imageUrl: s.imageUrl,
+      isCertificateAvailable: s.isCertificateAvailable,
+      featured: false
+    });
+
+    res.status(201).json({
+      success: true,
+      status: 'pending',
+      message: 'Course submitted for editorial review. It will appear publicly only after administrator approval.',
+      course: formatCourseForAdmin(created)
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Internal Server Error', 'COURSE_SUBMIT_FAILED', err.message || 'Failed to submit course.');
+  }
+});
+
+// GET /api/courses (supports category, status, pricingType, providerType, includeExpired, featured, search, onlyAvailable, page, limit)
 app.get('/api/courses', (req: Request, res: Response) => {
   try {
-    const { category, status, featured, search, onlyAvailable } = req.query;
+    bionexaDb.expirePastCourses();
+    const { category, status, pricingType, providerType, includeExpired, featured, search, onlyAvailable } = req.query;
     const allCourses = bionexaDb.getCourses({
+      onlyApproved: true,
       onlyAvailable: onlyAvailable === 'true',
       category: typeof category === 'string' && category !== 'all' ? category : undefined,
       status: typeof status === 'string' && status !== 'all' ? status : undefined,
+      pricingType: typeof pricingType === 'string' && pricingType !== 'all' ? pricingType : undefined,
+      providerType: typeof providerType === 'string' && providerType !== 'all' ? providerType : undefined,
+      includeExpired: includeExpired === 'false' ? false : true,
       featured: featured === 'true' ? true : featured === 'false' ? false : undefined,
       search: typeof search === 'string' ? search : undefined
     });
@@ -732,6 +1004,7 @@ app.get('/api/courses', (req: Request, res: Response) => {
       count: paginated.items.length,
       total: paginated.pagination.total,
       pagination: paginated.pagination,
+      categories: bionexaDb.getCourseCategories(),
       courses: paginated.items
     });
   } catch (err: any) {
@@ -742,8 +1015,9 @@ app.get('/api/courses', (req: Request, res: Response) => {
 // GET /api/courses/:id
 app.get('/api/courses/:id', (req: Request, res: Response) => {
   try {
+    bionexaDb.expirePastCourses();
     const course = bionexaDb.getCourseById(req.params.id);
-    if (!course) {
+    if (!course || !course.isApproved || course.approvalStatus !== 'approved') {
       sendApiError(res, 404, 'Not Found', 'COURSE_NOT_FOUND', 'Course not found.');
       return;
     }
@@ -808,37 +1082,44 @@ app.get('/api/opportunities', (req: Request, res: Response) => {
       };
     });
 
-    // 2. DB Workshops
-    const dbWorkshops = bionexaDb.getWorkshops().map((w) => {
-      const isClosed = (w.status || '').toLowerCase() === 'completed' || (w.availability || '').toLowerCase() === 'closed';
+    // 2. Approved DB Workshops
+    bionexaDb.expirePastWorkshops();
+    const dbWorkshops = bionexaDb.getWorkshops({ onlyApproved: true }).map((w) => {
+      const isClosed = isWorkshopExpired({
+        status: w.status,
+        availability: w.availability,
+        date: w.date,
+        registrationDeadline: w.registrationDeadline,
+      });
       const branches = matchBranchesForOpportunity({
         title: w.name,
-        description: w.description,
+        description: `${w.description} ${w.category || ''}`,
         skills: w.skillsCovered
       });
+      const hostName = w.organizer || w.instructor || '';
       return {
         id: w.id,
         title: w.name,
-        organization: w.instructor || 'BIO-INEXA Training Partner',
+        organization: hostName,
         type: 'workshop',
-        subCategory: 'Biotechnology workshops',
+        subCategory: w.category || 'Biotechnology Workshops',
         branches: branches.length > 0 ? branches : ['biotech'],
         qualifications: ['Life Sciences Students & Researchers'],
         skills: w.skillsCovered || [],
         experience: 'Open to All',
-        salaryOrStipend: w.fees || 'Free',
+        salaryOrStipend: w.fees || '',
         salaryTier: 'not_disclosed',
         location: w.venue,
         workMode: w.format === 'Offline' ? 'On-site' : w.format,
         deadline: w.registrationDeadline || w.date,
         postedDate: w.createdAt.split('T')[0],
-        sourceName: w.instructor || 'Official Training Portal',
+        sourceName: hostName || 'Official Workshop Portal',
         sourceUrl: w.registrationLink,
         sourceId: 'bionexa-db-workshops',
         lastVerifiedDate: w.updatedAt.split('T')[0],
         status: isClosed ? 'Closed' : 'Active',
-        isApproved: true,
-        isVerified: true,
+        isApproved: w.isApproved,
+        isVerified: w.isApproved,
         dataCollectionTimestamp: w.updatedAt,
         attributionRequirements: 'Official Workshop Registration Portal',
         description: w.description,
@@ -847,18 +1128,20 @@ app.get('/api/opportunities', (req: Request, res: Response) => {
         createdAt: w.createdAt,
         workshopDetails: {
           mode: w.format.toLowerCase(),
-          registrationFee: w.fees,
-          fees: w.fees,
-          dates: w.date,
-          certificateProvided: true,
-          certificateAvailable: true,
-          speakerOrTrainer: w.instructor
+          registrationFee: w.fees || '',
+          fees: w.fees || '',
+          dates: w.date || '',
+          certificateProvided: false,
+          certificateAvailable: false,
+          speakerOrTrainer: w.instructor || ''
         }
       };
     });
 
-    // 3. DB Courses
-    const dbCourses = bionexaDb.getCourses().map((c) => {
+    // 3. Approved DB Courses
+    bionexaDb.expirePastCourses();
+    const dbCourses = bionexaDb.getCourses({ onlyApproved: true }).map((c) => {
+      const expired = isCourseExpired({ registrationDeadline: c.registrationDeadline });
       const branches = matchBranchesForOpportunity({
         title: c.name,
         description: `${c.description} ${c.category}`,
@@ -867,43 +1150,46 @@ app.get('/api/opportunities', (req: Request, res: Response) => {
       return {
         id: c.id,
         title: c.name,
-        organization: c.provider || c.instructor || 'BIO-INEXA Academy Partner',
+        organization: c.provider || '',
         type: 'course',
         subCategory: c.category || 'Biotechnology',
         category: c.category,
         branches: branches.length > 0 ? branches : ['biotech'],
-        qualifications: [c.eligibility || 'Science Students'],
-        eligibility: c.eligibility,
+        qualifications: c.eligibility ? [c.eligibility] : [],
+        eligibility: c.eligibility || '',
         skills: c.curriculum || [],
-        experience: c.level || 'Intermediate',
-        salaryOrStipend: c.fees || 'Free',
-        fees: c.fees,
-        duration: c.duration,
-        salaryTier: 'not_disclosed',
+        experience: c.level || '',
+        salaryOrStipend: c.fees || '',
+        fees: c.fees || '',
+        duration: c.duration || '',
+        salaryTier: c.pricingType === 'free' ? 'free' : 'paid',
         location: c.deliveryMode || 'Online (Self-Paced)',
         workMode: (c.deliveryMode || '').toLowerCase().includes('hybrid') ? 'Hybrid' : 'Online',
-        deadline: c.registrationDeadline || 'Open / Rolling',
+        deadline: c.registrationDeadline || '',
         postedDate: c.createdAt.split('T')[0],
-        sourceName: c.provider || 'Official Course Provider',
+        sourceName: c.providerType === 'bionexa' ? (c.provider || 'BIO-INEXA') : (c.provider || 'Third-Party Course Provider'),
         sourceUrl: c.registrationLink,
         sourceId: 'bionexa-db-courses',
         lastVerifiedDate: c.updatedAt.split('T')[0],
-        status: c.status === 'closed' ? 'Closed' : 'Active',
-        isApproved: true,
-        isVerified: true,
+        status: expired ? 'Expired' : c.status === 'closed' ? 'Closed' : 'Active',
+        isApproved: c.isApproved,
+        isVerified: c.isApproved,
         dataCollectionTimestamp: c.updatedAt,
-        attributionRequirements: 'Official Course Provider Portal',
+        attributionRequirements: c.providerType === 'bionexa' ? 'BIO-INEXA Course Portal' : 'Official Third-Party Course Provider Portal',
         description: c.description,
         applicationUrl: c.registrationLink,
         featured: c.featured,
         createdAt: c.createdAt,
         courseDetails: {
           provider: c.provider,
+          providerType: c.providerType,
+          pricingType: c.pricingType,
           duration: c.duration,
           deliveryMode: c.deliveryMode,
           fees: c.fees,
           eligibility: c.eligibility,
           registrationDeadline: c.registrationDeadline,
+          certificateAvailable: Boolean(c.certificateInfo),
           certificateInfo: c.certificateInfo,
           syllabus: c.curriculum
         }
@@ -1944,63 +2230,83 @@ function formatJobForAdmin(j: DbJob) {
 }
 
 function formatWorkshopForAdmin(w: DbWorkshop) {
+  const approvalStatus = normalizeWorkshopApprovalStatus(w.approvalStatus, w.isApproved);
+  const expired = isWorkshopExpired({
+    status: w.status,
+    availability: w.availability,
+    date: w.date,
+    registrationDeadline: w.registrationDeadline,
+  });
   return {
     id: w.id,
     title: w.name,
     name: w.name,
-    organizer: w.instructor,
-    instructor: w.instructor,
-    location: w.venue,
-    venue: w.venue,
+    organizer: w.organizer || '',
+    instructor: w.instructor || '',
+    category: w.category || '',
+    location: w.venue || '',
+    venue: w.venue || '',
     workMode: w.format,
     format: w.format,
-    startDate: w.date,
-    endDate: w.date,
-    date: w.date,
-    time: w.time || '09:30 AM - 04:30 PM IST',
-    duration: w.duration || '1 Day',
-    fees: w.fees || 'Free',
-    capacity: w.capacity || 50,
+    startDate: w.date || '',
+    endDate: w.date || '',
+    date: w.date || '',
+    time: w.time || '',
+    duration: w.duration || '',
+    fees: w.fees || '',
+    capacity: typeof w.capacity === 'number' && w.capacity > 0 ? w.capacity : null,
     registrationUrl: w.registrationLink,
     registrationLink: w.registrationLink,
     registrationDeadline: w.registrationDeadline || '',
-    availability: w.availability || 'Open',
-    description: w.description,
+    availability: w.availability || (expired ? 'Closed' : 'Open'),
+    description: w.description || '',
     imageUrl: w.imageUrl || '',
     featured: Boolean(w.featured),
     skillsCovered: w.skillsCovered || [],
-    status: w.status || 'upcoming',
-    isApproved: true
+    status: expired ? 'completed' : (w.status || 'upcoming'),
+    approvalStatus,
+    isApproved: approvalStatus === 'approved',
+    isExpired: expired,
   };
 }
 
 function formatCourseForAdmin(c: DbCourse) {
-  const status = normalizeCourseStatus(c.status, c.availability);
-  const category = normalizeCourseCategory(c.category);
+  const expired = isCourseExpired({ registrationDeadline: c.registrationDeadline });
+  const status = expired ? 'closed' : normalizeCourseStatus(c.status, c.availability);
+  const category = (c.category || '').trim() || normalizeCourseCategory(c.category);
+  const pricingType = classifyCoursePricing(c.fees, c.pricingType);
+  const providerType = normalizeCourseProviderType(c.providerType);
+  const approvalStatus = normalizeCourseApprovalStatus(c.approvalStatus, c.isApproved);
+  const certInfo = (c.certificateInfo || '').trim();
   return {
     id: c.id,
     title: c.name,
     name: c.name,
-    provider: c.provider || c.instructor || 'Institutional Training Partner',
-    instructor: c.instructor || c.provider || '',
+    provider: c.provider || '',
+    providerType,
+    instructor: c.instructor || '',
     category,
-    duration: c.duration,
-    level: c.level || 'Intermediate',
+    duration: c.duration || '',
+    level: c.level || '',
     deliveryMode: c.deliveryMode || 'Online (Self-Paced)',
-    fees: c.fees || 'Free',
-    price: c.fees || 'Free',
-    eligibility: c.eligibility || 'Open to Science Students',
-    description: c.description,
+    fees: c.fees || '',
+    price: c.fees || '',
+    pricingType,
+    eligibility: c.eligibility || '',
+    description: c.description || '',
     curriculum: c.curriculum || [],
     syllabus: c.curriculum || [],
-    certificateInfo: c.certificateInfo || '',
-    isCertificateAvailable: Boolean(c.certificateInfo) || Boolean(c.isCertificateAvailable),
-    registrationDeadline: c.registrationDeadline || 'Open / Rolling',
+    certificateInfo: certInfo,
+    isCertificateAvailable: Boolean(certInfo),
+    registrationDeadline: c.registrationDeadline || '',
     registrationUrl: c.registrationLink || '',
     registrationLink: c.registrationLink || '',
     imageUrl: c.imageUrl || '',
     status,
-    availability: status === 'closed' ? 'Closed' : 'Available',
+    availability: expired ? 'Expired' : status === 'closed' ? 'Closed' : 'Available',
+    approvalStatus,
+    isApproved: approvalStatus === 'approved',
+    isExpired: expired,
     featured: Boolean(c.featured),
     createdAt: c.createdAt,
     updatedAt: c.updatedAt
@@ -2008,6 +2314,11 @@ function formatCourseForAdmin(c: DbCourse) {
 }
 
 function formatInternshipForPublic(intern: DbInternship) {
+  const compensationType = classifyInternshipCompensation(intern.stipend);
+  const expired =
+    intern.verificationStatus === 'Expired' ||
+    !intern.isActive ||
+    isInternshipDeadlineExpired(intern.deadline);
   return {
     id: intern.id,
     slug: intern.slug || intern.id,
@@ -2017,6 +2328,8 @@ function formatInternshipForPublic(intern: DbInternship) {
     mode: intern.workMode,
     workMode: intern.workMode,
     stipend: intern.stipend,
+    compensationType,
+    isPaid: compensationType === 'paid',
     duration: intern.duration,
     deadline: intern.deadline,
     category: intern.category,
@@ -2032,12 +2345,13 @@ function formatInternshipForPublic(intern: DbInternship) {
     sourceName: intern.sourceName,
     sourceUrl: intern.sourceUrl,
     applicationUrl: intern.applicationUrl,
-    verificationStatus: intern.verificationStatus,
+    verificationStatus: expired && intern.verificationStatus !== 'Rejected' ? 'Expired' : intern.verificationStatus,
     verificationNotes: intern.verificationNotes,
     lastVerificationDate: intern.lastVerificationDate,
-    isVerified: intern.isVerified,
+    isVerified: intern.isVerified && !expired,
     isApproved: intern.isApproved,
-    isActive: intern.isActive,
+    isActive: intern.isActive && !expired,
+    isExpired: expired,
     featured: intern.featured,
     createdAt: intern.createdAt,
     updatedAt: intern.updatedAt,
@@ -2083,10 +2397,13 @@ function buildAdminWebsiteContent() {
 // GET /api/admin/data
 app.get('/api/admin/data', requireAdminPermission('dashboard:read'), (_req: Request, res: Response) => {
   try {
+    bionexaDb.expirePastWorkshops();
+    bionexaDb.expirePastCourses();
     const rawJobs = bionexaDb.getAllJobsAdmin();
     const rawInternships = bionexaDb.getAllInternshipsAdmin();
     const rawWorkshops = bionexaDb.getWorkshops(false);
     const rawCourses = bionexaDb.getCourses(false);
+    const courseCategories = bionexaDb.getCourseCategories();
     const submittedOpportunities = bionexaDb.getSubmittedOpportunities();
     const contactMessages = bionexaDb.getContactMessages();
     const complianceRequests = bionexaDb.getComplianceRequests();
@@ -2101,6 +2418,7 @@ app.get('/api/admin/data', requireAdminPermission('dashboard:read'), (_req: Requ
       internships: rawInternships.map(formatInternshipForAdmin),
       workshops: rawWorkshops.map(formatWorkshopForAdmin),
       courses: rawCourses.map(formatCourseForAdmin),
+      courseCategories,
       submittedOpportunities,
       contactMessages,
       complianceRequests,
@@ -2401,12 +2719,14 @@ app.post('/api/admin/internships', requireAdminPermission('jobs:write'), (req: R
       res.status(400).json({ error: 'Validation Error', message: 'Title, organization, and applicationUrl are required.' });
       return;
     }
-    if (!isValidHttpUrl(applicationUrl)) {
-      res.status(400).json({ error: 'Validation Error', message: 'Application URL must start with http:// or https://' });
+    const urlCheck = validateInternshipApplicationUrl(applicationUrl);
+    if (!urlCheck.valid) {
+      res.status(400).json({ error: 'Validation Error', message: urlCheck.reason || 'Application URL must be a valid http:// or https:// official link.' });
       return;
     }
 
-    const verificationStatus = body.verificationStatus || 'Verified';
+    // Do not mark internships as verified automatically unless explicitly verified by admin
+    const verificationStatus = body.verificationStatus || 'Pending Verification';
     const isApproved = verificationStatus === 'Verified' || verificationStatus === 'Link Unavailable' ? true : Boolean(body.isApproved);
     const isActive = verificationStatus !== 'Expired' && verificationStatus !== 'Rejected';
 
@@ -2424,8 +2744,8 @@ app.post('/api/admin/internships', requireAdminPermission('jobs:write'), (req: R
       learningOutcomes: Array.isArray(body.learningOutcomes) ? body.learningOutcomes : [],
       skillsRequired: Array.isArray(body.skillsRequired) ? body.skillsRequired : [],
       sourceName: sanitizeString(body.sourceName || 'BIO-INEXA Admin Portal'),
-      sourceUrl: sanitizeString(body.sourceUrl || applicationUrl),
-      applicationUrl,
+      sourceUrl: sanitizeString(body.sourceUrl || urlCheck.normalizedUrl),
+      applicationUrl: urlCheck.normalizedUrl,
       verificationStatus,
       verificationNotes: sanitizeString(body.verificationNotes || 'Added via BIO-INEXA Admin Portal.'),
       lastVerificationDate: sanitizeString(body.lastVerificationDate || (verificationStatus === 'Verified' ? new Date().toISOString().split('T')[0] : '')),
@@ -2434,8 +2754,25 @@ app.post('/api/admin/internships', requireAdminPermission('jobs:write'), (req: R
       featured: Boolean(body.featured),
     });
 
-    auditAdminAction(req, 'ADMIN_INTERNSHIP_CREATED', 'internship', created.id, { title: created.title, organization: created.organization });
+    auditAdminAction(req, 'ADMIN_INTERNSHIP_CREATED', 'internship', created.id, { title: created.title, organization: created.organization, verificationStatus: created.verificationStatus });
     res.status(201).json({ success: true, internship: formatInternshipForAdmin(created) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
+app.post('/api/admin/internships/expire-scan', requireAdminPermission('jobs:write'), (req: Request, res: Response) => {
+  try {
+    const result = bionexaDb.expirePastDeadlineInternships();
+    auditAdminAction(req, 'ADMIN_INTERNSHIP_EXPIRE_SCAN', 'internship', undefined, result);
+    res.json({
+      success: true,
+      ...result,
+      message:
+        result.expiredCount > 0
+          ? `Marked ${result.expiredCount} past-deadline internship(s) as Expired.`
+          : 'All active internships have valid upcoming or rolling deadlines.',
+    });
   } catch (err: any) {
     res.status(500).json({ error: 'Database Error', message: err.message });
   }
@@ -2621,8 +2958,10 @@ app.post('/api/admin/workshops/upload-image', requireAdminPermission('workshops:
 // POST /api/admin/workshops (Add Workshop)
 app.post('/api/admin/workshops', requireAdminPermission('workshops:write'), (req: Request, res: Response) => {
   try {
-    const body = req.body;
+    const body = req.body || {};
     const name = sanitizeString(body.title || body.name);
+    const organizer = sanitizeString(body.organizer || '');
+    const instructor = sanitizeString(body.instructor || '');
     const registrationLink = sanitizeString(body.registrationUrl || body.registrationLink);
 
     if (!name || !registrationLink) {
@@ -2630,8 +2969,14 @@ app.post('/api/admin/workshops', requireAdminPermission('workshops:write'), (req
       return;
     }
 
-    if (!isValidHttpUrl(registrationLink)) {
-      res.status(400).json({ error: 'Validation Error', message: 'Registration URL must start with http:// or https://' });
+    if (!organizer && !instructor) {
+      res.status(400).json({ error: 'Validation Error', message: 'Organizer or instructor information is required.' });
+      return;
+    }
+
+    const urlCheck = validateWorkshopRegistrationUrl(registrationLink);
+    if (!urlCheck.valid) {
+      res.status(400).json({ error: 'Validation Error', message: urlCheck.reason || 'Invalid registration URL.' });
       return;
     }
 
@@ -2644,28 +2989,68 @@ app.post('/api/admin/workshops', requireAdminPermission('workshops:write'), (req
       status = body.status;
     }
 
+    let capacity = 0;
+    if (body.capacity !== undefined && body.capacity !== null && body.capacity !== '') {
+      const parsedCap = Number(body.capacity);
+      if (!Number.isFinite(parsedCap) || parsedCap < 0) {
+        res.status(400).json({ error: 'Validation Error', message: 'Capacity must be a positive number when provided.' });
+        return;
+      }
+      capacity = Math.floor(parsedCap);
+    }
+
+    const approvalStatus = body.approvalStatus !== undefined
+      ? normalizeWorkshopApprovalStatus(body.approvalStatus, body.isApproved)
+      : 'approved';
+
     const ws = bionexaDb.createWorkshop({
       name,
-      description: sanitizeString(body.description || 'Hands-on scientific workshop.'),
-      instructor: sanitizeString(body.instructor || body.organizer || 'BIO-INEXA Faculty'),
-      date: sanitizeString(body.startDate || body.date || '2026-12-01'),
-      time: sanitizeString(body.time || '09:30 AM - 04:30 PM IST'),
-      duration: sanitizeString(body.duration || '2 Days Intensive'),
+      description: sanitizeString(body.description || ''),
+      organizer,
+      instructor,
+      category: sanitizeString(body.category || ''),
+      date: sanitizeString(body.startDate || body.date || ''),
+      time: sanitizeString(body.time || ''),
+      duration: sanitizeString(body.duration || ''),
       format,
-      venue: sanitizeString(body.venue || body.location || (format === 'Online' ? 'Online Live Portal' : 'Main Biotechnology Lab')),
+      venue: sanitizeString(body.venue || body.location || ''),
       registrationDeadline: sanitizeString(body.registrationDeadline || body.deadline || ''),
-      registrationLink,
+      registrationLink: urlCheck.normalizedUrl || registrationLink,
       availability: sanitizeString(body.availability || 'Open'),
       status,
-      fees: sanitizeString(body.fees || 'Free / Subsidized'),
-      capacity: Number(body.capacity) || 50,
+      fees: sanitizeString(body.fees || ''),
+      capacity,
       imageUrl: sanitizeString(body.imageUrl || ''),
-      featured: Boolean(body.featured),
-      skillsCovered: Array.isArray(body.skillsCovered) ? body.skillsCovered : []
+      featured: approvalStatus === 'approved' ? Boolean(body.featured) : false,
+      skillsCovered: Array.isArray(body.skillsCovered) ? body.skillsCovered : [],
+      approvalStatus,
+      isApproved: approvalStatus === 'approved',
     });
 
-    auditAdminAction(req, 'ADMIN_WORKSHOP_CREATED', 'workshop', ws.id, { name: ws.name });
+    auditAdminAction(req, 'ADMIN_WORKSHOP_CREATED', 'workshop', ws.id, { name: ws.name, approvalStatus });
     res.status(201).json({ success: true, workshop: formatWorkshopForAdmin(ws) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
+// POST /api/admin/workshops/expire-scan (Automatically identify & mark expired workshops)
+app.post('/api/admin/workshops/expire-scan', requireAdminPermission('workshops:write'), (req: Request, res: Response) => {
+  try {
+    const result = bionexaDb.expirePastWorkshops();
+    auditAdminAction(req, 'ADMIN_WORKSHOPS_EXPIRE_SCAN', 'workshop', 'batch', {
+      expiredCount: result.expiredCount,
+      expiredIds: result.expiredIds,
+    });
+    res.json({
+      success: true,
+      expiredCount: result.expiredCount,
+      expiredIds: result.expiredIds,
+      message:
+        result.expiredCount > 0
+          ? `Marked ${result.expiredCount} past-date or past-deadline workshop(s) as expired/completed.`
+          : 'All workshops are already up to date; no newly expired workshops found.',
+    });
   } catch (err: any) {
     res.status(500).json({ error: 'Database Error', message: err.message });
   }
@@ -2675,15 +3060,17 @@ app.post('/api/admin/workshops', requireAdminPermission('workshops:write'), (req
 app.put('/api/admin/workshops/:id', requireAdminPermission('workshops:write'), (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const body = req.body;
+    const body = req.body || {};
 
     const updates: Partial<DbWorkshop> = {};
-    if (body.title || body.name) updates.name = sanitizeString(body.title || body.name);
-    if (body.description) updates.description = sanitizeString(body.description);
-    if (body.organizer || body.instructor) updates.instructor = sanitizeString(body.instructor || body.organizer);
-    if (body.startDate || body.date) updates.date = sanitizeString(body.startDate || body.date);
-    if (body.time) updates.time = sanitizeString(body.time);
-    if (body.location || body.venue) updates.venue = sanitizeString(body.venue || body.location);
+    if (body.title !== undefined || body.name !== undefined) updates.name = sanitizeString(body.title ?? body.name);
+    if (body.description !== undefined) updates.description = sanitizeString(body.description);
+    if (body.organizer !== undefined) updates.organizer = sanitizeString(body.organizer);
+    if (body.instructor !== undefined) updates.instructor = sanitizeString(body.instructor);
+    if (body.category !== undefined) updates.category = sanitizeString(body.category);
+    if (body.startDate !== undefined || body.date !== undefined) updates.date = sanitizeString(body.startDate ?? body.date);
+    if (body.time !== undefined) updates.time = sanitizeString(body.time);
+    if (body.location !== undefined || body.venue !== undefined) updates.venue = sanitizeString(body.venue ?? body.location);
     if (body.format || body.workMode) {
       const mode = body.format || body.workMode;
       if (mode === 'Offline' || mode === 'In-Person') updates.format = 'Offline';
@@ -2691,22 +3078,40 @@ app.put('/api/admin/workshops/:id', requireAdminPermission('workshops:write'), (
       else updates.format = 'Online';
     }
     if (body.registrationDeadline !== undefined) updates.registrationDeadline = sanitizeString(body.registrationDeadline);
-    if (body.registrationUrl || body.registrationLink) {
-      const url = sanitizeString(body.registrationUrl || body.registrationLink);
-      if (!isValidHttpUrl(url)) {
-        res.status(400).json({ error: 'Validation Error', message: 'Registration URL must start with http:// or https://' });
+    if (body.registrationUrl !== undefined || body.registrationLink !== undefined) {
+      const url = sanitizeString(body.registrationUrl ?? body.registrationLink);
+      const urlCheck = validateWorkshopRegistrationUrl(url);
+      if (!urlCheck.valid) {
+        res.status(400).json({ error: 'Validation Error', message: urlCheck.reason || 'Invalid registration URL.' });
         return;
       }
-      updates.registrationLink = url;
+      updates.registrationLink = urlCheck.normalizedUrl || url;
     }
-    if (body.duration) updates.duration = sanitizeString(body.duration);
-    if (body.fees) updates.fees = sanitizeString(body.fees);
-    if (body.capacity !== undefined) updates.capacity = Number(body.capacity);
+    if (body.duration !== undefined) updates.duration = sanitizeString(body.duration);
+    if (body.fees !== undefined) updates.fees = sanitizeString(body.fees);
+    if (body.capacity !== undefined) {
+      if (body.capacity === null || body.capacity === '') {
+        updates.capacity = 0;
+      } else {
+        const parsedCap = Number(body.capacity);
+        if (!Number.isFinite(parsedCap) || parsedCap < 0) {
+          res.status(400).json({ error: 'Validation Error', message: 'Capacity must be a positive number when provided.' });
+          return;
+        }
+        updates.capacity = Math.floor(parsedCap);
+      }
+    }
     if (Array.isArray(body.skillsCovered)) updates.skillsCovered = body.skillsCovered;
     if (body.status) updates.status = body.status;
-    if (body.availability) updates.availability = sanitizeString(body.availability);
+    if (body.availability !== undefined) updates.availability = sanitizeString(body.availability);
     if (body.imageUrl !== undefined) updates.imageUrl = sanitizeString(body.imageUrl);
     if (body.featured !== undefined) updates.featured = Boolean(body.featured);
+    if (body.approvalStatus !== undefined) {
+      const nextStatus = normalizeWorkshopApprovalStatus(body.approvalStatus);
+      updates.approvalStatus = nextStatus;
+      updates.isApproved = nextStatus === 'approved';
+      if (nextStatus !== 'approved') updates.featured = false;
+    }
 
     const updated = bionexaDb.updateWorkshop(id, updates);
     if (!updated) {
@@ -2721,11 +3126,45 @@ app.put('/api/admin/workshops/:id', requireAdminPermission('workshops:write'), (
   }
 });
 
+// PATCH /api/admin/workshops/:id/status (Approve or Reject workshop submission)
+app.patch('/api/admin/workshops/:id/status', requireAdminPermission('workshops:write'), (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const rawStatus = sanitizeString(req.body?.approvalStatus || req.body?.status).toLowerCase();
+    if (rawStatus !== 'approved' && rawStatus !== 'rejected' && rawStatus !== 'pending') {
+      res.status(400).json({
+        error: 'Validation Error',
+        message: 'approvalStatus must be one of: approved, rejected, pending.',
+      });
+      return;
+    }
+
+    const updates: Partial<DbWorkshop> = {
+      approvalStatus: rawStatus,
+      isApproved: rawStatus === 'approved',
+    };
+    if (rawStatus !== 'approved') {
+      updates.featured = false;
+    }
+
+    const updated = bionexaDb.updateWorkshop(id, updates);
+    if (!updated) {
+      res.status(404).json({ error: 'Not Found', message: 'Workshop not found.' });
+      return;
+    }
+
+    auditAdminAction(req, 'ADMIN_WORKSHOP_APPROVAL_UPDATED', 'workshop', id, { approvalStatus: rawStatus });
+    res.json({ success: true, workshop: formatWorkshopForAdmin(updated) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
 // PATCH /api/admin/workshops/:id/quick (Quick Toggle Featured / Status / Availability)
 app.patch('/api/admin/workshops/:id/quick', requireAdminPermission('workshops:write'), (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const body = req.body;
+    const body = req.body || {};
     const updates: Partial<DbWorkshop> = {};
     if (body.status !== undefined) updates.status = body.status;
     if (body.availability !== undefined) updates.availability = body.availability;
@@ -2808,57 +3247,171 @@ app.post('/api/admin/courses/upload-image', requireAdminPermission('courses:writ
   }
 });
 
+// GET /api/admin/courses/categories
+app.get('/api/admin/courses/categories', requireAdminPermission('dashboard:read'), (_req: Request, res: Response) => {
+  try {
+    const categories = bionexaDb.getCourseCategories();
+    const coreSet = new Set<string>(COURSE_CATEGORIES as readonly string[]);
+    const customCategories = categories.filter((c) => !coreSet.has(c));
+    res.json({
+      success: true,
+      categories,
+      coreCategories: [...COURSE_CATEGORIES],
+      customCategories
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
+// POST /api/admin/courses/categories (Add Custom Course Category)
+app.post('/api/admin/courses/categories', requireAdminPermission('courses:write'), (req: Request, res: Response) => {
+  try {
+    const name = sanitizeString(req.body?.name || req.body?.category);
+    if (name.length < 2 || name.length > 64) {
+      res.status(400).json({
+        error: 'Validation Error',
+        message: 'Category name must be between 2 and 64 characters.'
+      });
+      return;
+    }
+    const actor = (req as any).adminUser?.username || 'admin';
+    const categories = bionexaDb.addCourseCategory(name, actor);
+    const coreSet = new Set<string>(COURSE_CATEGORIES as readonly string[]);
+    const customCategories = categories.filter((c) => !coreSet.has(c));
+    auditAdminAction(req, 'ADMIN_COURSE_CATEGORY_ADDED', 'course_category', name);
+    res.status(201).json({
+      success: true,
+      categories,
+      coreCategories: [...COURSE_CATEGORIES],
+      customCategories,
+      message: `Added course category "${name}".`
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: 'Validation Error', message: err.message });
+  }
+});
+
+// DELETE /api/admin/courses/categories/:name (Remove Custom Course Category)
+app.delete('/api/admin/courses/categories/:name', requireAdminPermission('courses:write'), (req: Request, res: Response) => {
+  try {
+    const name = sanitizeString(decodeURIComponent(req.params.name || ''));
+    const actor = (req as any).adminUser?.username || 'admin';
+    const result = bionexaDb.removeCourseCategory(name, actor);
+    if (!result.removed) {
+      res.status(400).json({
+        error: 'Validation Error',
+        message: 'Core default course categories cannot be removed, or the category was not found.'
+      });
+      return;
+    }
+    const coreSet = new Set<string>(COURSE_CATEGORIES as readonly string[]);
+    const customCategories = result.categories.filter((c) => !coreSet.has(c));
+    auditAdminAction(req, 'ADMIN_COURSE_CATEGORY_REMOVED', 'course_category', name);
+    res.json({
+      success: true,
+      categories: result.categories,
+      coreCategories: [...COURSE_CATEGORIES],
+      customCategories,
+      message: `Removed custom course category "${name}".`
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
+// POST /api/admin/courses/expire-scan (Scan and Close Expired Courses)
+app.post('/api/admin/courses/expire-scan', requireAdminPermission('courses:write'), (req: Request, res: Response) => {
+  try {
+    const result = bionexaDb.expirePastCourses();
+    auditAdminAction(req, 'ADMIN_COURSE_EXPIRE_SCAN', 'course', 'batch', {
+      expiredCount: result.expiredCount,
+      expiredIds: result.expiredIds
+    });
+    res.json({
+      success: true,
+      expiredCount: result.expiredCount,
+      expiredIds: result.expiredIds,
+      message:
+        result.expiredCount > 0
+          ? `Marked ${result.expiredCount} expired course${result.expiredCount === 1 ? '' : 's'} as closed.`
+          : 'All open courses have valid or rolling deadlines.'
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
 // POST /api/admin/courses (Add Course)
 app.post('/api/admin/courses', requireAdminPermission('courses:write'), (req: Request, res: Response) => {
   try {
     const body = req.body;
     const name = sanitizeString(body.title || body.name);
-    const provider = sanitizeString(body.provider || body.instructor);
+    const provider = sanitizeString(body.provider);
+    const description = sanitizeString(body.description);
+    const duration = sanitizeString(body.duration);
+    const fees = sanitizeString(body.fees ?? body.price);
     const registrationLink = sanitizeString(body.registrationUrl || body.registrationLink);
 
-    if (!name || !provider || !registrationLink) {
+    if (!name || !provider || !description || !duration || !fees || !registrationLink) {
       res.status(400).json({
         error: 'Validation Error',
-        message: 'Course title, provider/institution, and official registration URL are required.'
+        message: 'Course title, provider/institution, description, duration, fees, and official enrollment URL are required.'
       });
       return;
     }
 
-    if (!isValidHttpUrl(registrationLink)) {
+    const urlCheck = validateCourseRegistrationUrl(registrationLink);
+    if (!urlCheck.valid) {
       res.status(400).json({
         error: 'Validation Error',
-        message: 'Official registration URL must start with http:// or https://'
+        message: urlCheck.reason || 'Official registration URL must start with http:// or https://'
       });
       return;
     }
 
+    const managedCategories = bionexaDb.getCourseCategories();
+    const category = resolveCourseCategory(body.category, managedCategories);
     const status = normalizeCourseStatus(body.status, body.availability);
+    const providerType = normalizeCourseProviderType(body.providerType);
+    const pricingType = classifyCoursePricing(fees, body.pricingType);
+    const approvalStatus = normalizeCourseApprovalStatus(body.approvalStatus || 'approved', body.isApproved);
+    const isApproved = approvalStatus === 'approved';
     const certificateInfo = sanitizeString(body.certificateInfo || '');
     const curriculum = parseCurriculumInput(body.curriculum || body.syllabus);
 
     const course = bionexaDb.createCourse({
       name,
       provider,
-      instructor: sanitizeString(body.instructor || provider),
-      category: normalizeCourseCategory(body.category),
-      description: sanitizeString(body.description || 'Structured biotechnology and life sciences curriculum.'),
-      duration: sanitizeString(body.duration || 'Self-Paced'),
-      eligibility: sanitizeString(body.eligibility || 'Life Sciences & Biotechnology Students'),
-      curriculum: curriculum.length > 0 ? curriculum : ['Module 1: Core Foundations', 'Module 2: Applied Protocols'],
+      providerType,
+      instructor: sanitizeString(body.instructor || ''),
+      category,
+      description,
+      duration,
+      eligibility: sanitizeString(body.eligibility || ''),
+      curriculum,
       deliveryMode: normalizeDeliveryMode(body.deliveryMode),
-      fees: sanitizeString(body.fees || body.price || 'See Provider Portal'),
+      fees,
+      pricingType,
       certificateInfo,
-      registrationDeadline: sanitizeString(body.registrationDeadline || 'Open / Rolling'),
-      registrationLink,
+      registrationDeadline: sanitizeString(body.registrationDeadline || ''),
+      registrationLink: urlCheck.normalizedUrl,
       availability: status === 'closed' ? 'Closed' : 'Available',
       status,
+      approvalStatus,
+      isApproved,
       level: sanitizeString(body.level || 'Intermediate'),
       imageUrl: sanitizeString(body.imageUrl || ''),
       isCertificateAvailable: Boolean(certificateInfo),
-      featured: Boolean(body.featured)
+      featured: isApproved && Boolean(body.featured)
     });
 
-    auditAdminAction(req, 'ADMIN_COURSE_CREATED', 'course', course.id, { name: course.name });
+    auditAdminAction(req, 'ADMIN_COURSE_CREATED', 'course', course.id, {
+      name: course.name,
+      providerType: course.providerType,
+      pricingType: course.pricingType,
+      approvalStatus: course.approvalStatus
+    });
     res.status(201).json({ success: true, course: formatCourseForAdmin(course) });
   } catch (err: any) {
     res.status(500).json({ error: 'Database Error', message: err.message });
@@ -2870,18 +3423,39 @@ app.put('/api/admin/courses/:id', requireAdminPermission('courses:write'), (req:
   try {
     const { id } = req.params;
     const body = req.body;
+    const managedCategories = bionexaDb.getCourseCategories();
 
     const updates: Partial<DbCourse> = {};
-    if (body.title || body.name) updates.name = sanitizeString(body.title || body.name);
-    if (body.provider) updates.provider = sanitizeString(body.provider);
+    if (body.title !== undefined || body.name !== undefined) {
+      const nextName = sanitizeString(body.title ?? body.name);
+      if (!nextName) {
+        res.status(400).json({ error: 'Validation Error', message: 'Course title cannot be empty.' });
+        return;
+      }
+      updates.name = nextName;
+    }
+    if (body.provider !== undefined) {
+      const nextProvider = sanitizeString(body.provider);
+      if (!nextProvider) {
+        res.status(400).json({ error: 'Validation Error', message: 'Course provider cannot be empty.' });
+        return;
+      }
+      updates.provider = nextProvider;
+    }
+    if (body.providerType !== undefined) {
+      updates.providerType = normalizeCourseProviderType(body.providerType);
+    }
     if (body.instructor !== undefined) updates.instructor = sanitizeString(body.instructor);
-    if (body.category) updates.category = normalizeCourseCategory(body.category);
-    if (body.duration) updates.duration = sanitizeString(body.duration);
-    if (body.level) updates.level = sanitizeString(body.level);
-    if (body.deliveryMode) updates.deliveryMode = normalizeDeliveryMode(body.deliveryMode);
+    if (body.category !== undefined) updates.category = resolveCourseCategory(body.category, managedCategories);
+    if (body.duration !== undefined) updates.duration = sanitizeString(body.duration);
+    if (body.level !== undefined) updates.level = sanitizeString(body.level);
+    if (body.deliveryMode !== undefined) updates.deliveryMode = normalizeDeliveryMode(body.deliveryMode);
     if (body.eligibility !== undefined) updates.eligibility = sanitizeString(body.eligibility);
     if (body.price !== undefined || body.fees !== undefined) {
       updates.fees = sanitizeString(body.fees !== undefined ? body.fees : body.price);
+    }
+    if (body.pricingType !== undefined) {
+      updates.pricingType = classifyCoursePricing(updates.fees ?? body.fees, body.pricingType);
     }
     if (body.description !== undefined) updates.description = sanitizeString(body.description);
     if (body.curriculum !== undefined || body.syllabus !== undefined) {
@@ -2895,21 +3469,27 @@ app.put('/api/admin/courses/:id', requireAdminPermission('courses:write'), (req:
       updates.registrationDeadline = sanitizeString(body.registrationDeadline);
     }
     if (body.registrationUrl !== undefined || body.registrationLink !== undefined) {
-      const regUrl = sanitizeString(body.registrationUrl || body.registrationLink);
-      if (!isValidHttpUrl(regUrl)) {
+      const regUrl = sanitizeString(body.registrationUrl ?? body.registrationLink);
+      const urlCheck = validateCourseRegistrationUrl(regUrl);
+      if (!urlCheck.valid) {
         res.status(400).json({
           error: 'Validation Error',
-          message: 'Official registration URL must start with http:// or https://'
+          message: urlCheck.reason || 'Official registration URL must start with http:// or https://'
         });
         return;
       }
-      updates.registrationLink = regUrl;
+      updates.registrationLink = urlCheck.normalizedUrl;
     }
     if (body.imageUrl !== undefined) updates.imageUrl = sanitizeString(body.imageUrl);
     if (body.status !== undefined || body.availability !== undefined) {
       const nextStatus = normalizeCourseStatus(body.status, body.availability);
       updates.status = nextStatus;
       updates.availability = nextStatus === 'closed' ? 'Closed' : 'Available';
+    }
+    if (body.approvalStatus !== undefined || body.isApproved !== undefined) {
+      const nextApproval = normalizeCourseApprovalStatus(body.approvalStatus, body.isApproved);
+      updates.approvalStatus = nextApproval;
+      updates.isApproved = nextApproval === 'approved';
     }
     if (body.featured !== undefined) updates.featured = Boolean(body.featured);
 
@@ -2920,6 +3500,40 @@ app.put('/api/admin/courses/:id', requireAdminPermission('courses:write'), (req:
     }
 
     auditAdminAction(req, 'ADMIN_COURSE_UPDATED', 'course', id);
+    res.json({ success: true, course: formatCourseForAdmin(updated) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Database Error', message: err.message });
+  }
+});
+
+// PATCH /api/admin/courses/:id/status (Approve or Reject Course Submission)
+app.patch('/api/admin/courses/:id/status', requireAdminPermission('courses:write'), (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const rawStatus = sanitizeString(req.body?.approvalStatus || req.body?.status).toLowerCase();
+    if (!['approved', 'rejected', 'pending'].includes(rawStatus)) {
+      res.status(400).json({
+        error: 'Validation Error',
+        message: 'approvalStatus must be one of: approved, rejected, pending.'
+      });
+      return;
+    }
+
+    const nextApproval = normalizeCourseApprovalStatus(rawStatus);
+    const updated = bionexaDb.updateCourse(id, {
+      approvalStatus: nextApproval,
+      isApproved: nextApproval === 'approved',
+      ...(nextApproval !== 'approved' ? { featured: false } : {})
+    });
+
+    if (!updated) {
+      res.status(404).json({ error: 'Not Found', message: 'Course not found.' });
+      return;
+    }
+
+    auditAdminAction(req, 'ADMIN_COURSE_APPROVAL_UPDATED', 'course', id, {
+      approvalStatus: nextApproval
+    });
     res.json({ success: true, course: formatCourseForAdmin(updated) });
   } catch (err: any) {
     res.status(500).json({ error: 'Database Error', message: err.message });
@@ -2938,16 +3552,25 @@ app.patch('/api/admin/courses/:id/quick', requireAdminPermission('courses:write'
       updates.status = nextStatus;
       updates.availability = nextStatus === 'closed' ? 'Closed' : 'Available';
     }
+    if (body.approvalStatus !== undefined) {
+      const nextApproval = normalizeCourseApprovalStatus(body.approvalStatus);
+      updates.approvalStatus = nextApproval;
+      updates.isApproved = nextApproval === 'approved';
+    }
     if (body.featured !== undefined) {
       updates.featured = Boolean(body.featured);
     }
     if (body.registrationUrl !== undefined || body.registrationLink !== undefined) {
       const url = sanitizeString(body.registrationUrl || body.registrationLink);
-      if (!isValidHttpUrl(url)) {
-        res.status(400).json({ error: 'Validation Error', message: 'Registration URL must start with http:// or https://' });
+      const urlCheck = validateCourseRegistrationUrl(url);
+      if (!urlCheck.valid) {
+        res.status(400).json({
+          error: 'Validation Error',
+          message: urlCheck.reason || 'Registration URL must start with http:// or https://'
+        });
         return;
       }
-      updates.registrationLink = url;
+      updates.registrationLink = urlCheck.normalizedUrl;
     }
 
     const updated = bionexaDb.updateCourse(id, updates);
@@ -3663,6 +4286,1887 @@ app.get('/api/admin/export', requireAdminPermission('dashboard:read'), (req: Req
     res.send(csvContent);
   } catch (err: any) {
     sendApiError(res, 500, 'Export Error', 'ADMIN_EXPORT_FAILED', err.message || 'Failed to export records.');
+  }
+});
+
+// =============================================================
+// PHASE 14: STUDENT AUTHENTICATION, PROFILES, SESSIONS & PRIVACY
+// =============================================================
+
+const studentLoginRateLimiter = new StudentAuthRateLimiter(5, 15 * 60 * 1000, 15 * 60 * 1000);
+const studentRegisterRateLimiter = new StudentAuthRateLimiter(8, 15 * 60 * 1000, 15 * 60 * 1000);
+const studentResetRateLimiter = new StudentAuthRateLimiter(5, 15 * 60 * 1000, 15 * 60 * 1000);
+const studentVerifyResendLimiter = new StudentAuthRateLimiter(5, 15 * 60 * 1000, 15 * 60 * 1000);
+
+function extractStudentSessionToken(req: Request): string {
+  const cookieToken = req.cookies?.[STUDENT_SESSION_COOKIE];
+  if (typeof cookieToken === 'string' && cookieToken.trim().length >= 16) {
+    return cookieToken.trim();
+  }
+  return '';
+}
+
+function setStudentSessionCookie(res: Response, rawToken: string): void {
+  res.cookie(STUDENT_SESSION_COOKIE, rawToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+    maxAge: STUDENT_SESSION_DURATION_MS,
+  });
+}
+
+function clearStudentSessionCookie(res: Response): void {
+  res.clearCookie(STUDENT_SESSION_COOKIE, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+  });
+}
+
+function requireStudentPermission(permission?: StudentPermission) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!isAdminCsrfOriginValid(req)) {
+      sendApiError(
+        res,
+        403,
+        'Forbidden',
+        'CSRF_ORIGIN_DENIED',
+        'Cross-origin state-changing request rejected by CSRF protection.'
+      );
+      return;
+    }
+
+    const rawToken = extractStudentSessionToken(req);
+    if (!rawToken) {
+      sendApiError(
+        res,
+        401,
+        'Authentication Required',
+        'STUDENT_AUTH_REQUIRED',
+        'Please sign in with your student account to continue.'
+      );
+      return;
+    }
+
+    const validated = bionexaDb.validateStudentSessionToken(rawToken);
+    if (!validated) {
+      clearStudentSessionCookie(res);
+      sendApiError(
+        res,
+        401,
+        'Session Expired',
+        'STUDENT_SESSION_INVALID',
+        'Your student session has expired or been revoked. Please sign in again.'
+      );
+      return;
+    }
+
+    const safeProfile = toSafeStudentProfile(validated.student);
+    if (permission && !hasStudentPermission(safeProfile, permission)) {
+      sendApiError(
+        res,
+        403,
+        'Forbidden',
+        'STUDENT_PERMISSION_DENIED',
+        'Your account does not have permission to perform this action.'
+      );
+      return;
+    }
+
+    (req as any).studentAccount = validated.student;
+    (req as any).studentProfile = safeProfile;
+    (req as any).studentSession = validated.session;
+    next();
+  };
+}
+
+// POST /api/student/register
+app.post('/api/student/register', (req: Request, res: Response) => {
+  try {
+    if (!isAdminCsrfOriginValid(req)) {
+      sendApiError(res, 403, 'Forbidden', 'CSRF_ORIGIN_DENIED', 'Cross-origin request rejected.');
+      return;
+    }
+
+    const ip = getClientIp(req);
+    const rateKey = `register:${ip}`;
+    const rateCheck = studentRegisterRateLimiter.check(rateKey);
+    if (!rateCheck.allowed) {
+      res.status(429).json({
+        success: false,
+        error: 'Too Many Requests',
+        code: 'RATE_LIMITED',
+        message: 'Too many registration attempts. Please try again shortly.',
+        retryAfterSec: rateCheck.retryAfterSec,
+      });
+      return;
+    }
+
+    const validation = validateStudentRegistrationInput(req.body || {});
+    if (!validation.valid || !validation.data) {
+      studentRegisterRateLimiter.consume(rateKey);
+      sendApiError(res, 400, 'Validation Error', 'INVALID_REGISTRATION', validation.error || 'Invalid registration data.');
+      return;
+    }
+
+    const existing = bionexaDb.getStudentByEmail(validation.data.email);
+    if (existing) {
+      studentRegisterRateLimiter.consume(rateKey);
+      sendApiError(
+        res,
+        409,
+        'Account Exists',
+        'EMAIL_ALREADY_REGISTERED',
+        'An account with this email address already exists. Please sign in or reset your password.'
+      );
+      return;
+    }
+
+    const passwordHash = hashStudentPassword(validation.data.password);
+    const verification = createEmailVerificationToken();
+
+    const account = bionexaDb.createStudentAccount({
+      email: validation.data.email,
+      passwordHash,
+      fullName: validation.data.fullName,
+      degreeTitle: validation.data.degreeTitle,
+      institution: validation.data.institution,
+      specialization: validation.data.specialization,
+      graduationYear: validation.data.graduationYear,
+      verificationTokenHash: verification.tokenHash,
+      verificationExpiresAt: verification.expiresAtIso,
+      privacyConsentAt: new Date().toISOString(),
+    });
+
+    const sessionToken = createStudentSessionToken();
+    bionexaDb.createStudentSession({
+      jti: sessionToken.jti,
+      studentId: account.id,
+      tokenHash: sessionToken.tokenHash,
+      userAgent: String(req.headers['user-agent'] || 'Web Browser'),
+      ipAddressMasked: maskIpAddress(ip),
+      expiresAt: sessionToken.expiresAtIso,
+    });
+    bionexaDb.updateStudentLastLogin(account.id);
+    setStudentSessionCookie(res, sessionToken.rawToken);
+
+    const isProd = process.env.NODE_ENV === 'production';
+    const updatedAccount = bionexaDb.getStudentById(account.id) || account;
+
+    res.status(201).json({
+      success: true,
+      student: toSafeStudentProfile(updatedAccount),
+      verificationRequired: true,
+      message: 'Student account created. Please verify your email address to complete setup.',
+      ...(!isProd
+        ? {
+            devVerificationToken: verification.rawToken,
+            devVerificationUrl: `/student/verify-email?token=${encodeURIComponent(verification.rawToken)}`,
+          }
+        : {}),
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Registration Error', 'STUDENT_REGISTER_FAILED', err.message || 'Unable to register student account.');
+  }
+});
+
+// POST /api/student/login
+app.post('/api/student/login', (req: Request, res: Response) => {
+  try {
+    if (!isAdminCsrfOriginValid(req)) {
+      sendApiError(res, 403, 'Forbidden', 'CSRF_ORIGIN_DENIED', 'Cross-origin request rejected.');
+      return;
+    }
+
+    const email = normalizeStudentEmail(req.body?.email);
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const ip = getClientIp(req);
+    const rateKey = `login:${ip}:${email || 'unknown'}`;
+
+    const rateCheck = studentLoginRateLimiter.check(rateKey);
+    if (!rateCheck.allowed) {
+      res.status(429).json({
+        success: false,
+        error: 'Too Many Requests',
+        code: 'RATE_LIMITED',
+        message: 'Too many failed login attempts. Please wait before trying again.',
+        remainingAttempts: 0,
+        retryAfterSec: rateCheck.retryAfterSec,
+      });
+      return;
+    }
+
+    if (!email || !password) {
+      sendApiError(res, 400, 'Validation Error', 'MISSING_CREDENTIALS', 'Email address and password are required.');
+      return;
+    }
+
+    const account = bionexaDb.getStudentByEmail(email);
+    const valid = account ? verifyStudentPassword(password, account.passwordHash) : false;
+
+    if (!account || !valid) {
+      const consumed = studentLoginRateLimiter.consume(rateKey);
+      res.status(consumed.isLocked ? 429 : 401).json({
+        success: false,
+        error: consumed.isLocked ? 'Account Temporarily Locked' : 'Invalid Credentials',
+        code: consumed.isLocked ? 'RATE_LIMITED' : 'INVALID_CREDENTIALS',
+        message: consumed.isLocked
+          ? 'Too many failed attempts. Login temporarily locked for 15 minutes.'
+          : 'Invalid email address or password.',
+        remainingAttempts: consumed.remainingAttempts,
+        ...(consumed.retryAfterSec ? { retryAfterSec: consumed.retryAfterSec } : {}),
+      });
+      return;
+    }
+
+    if (account.accountStatus === 'suspended') {
+      sendApiError(
+        res,
+        403,
+        'Account Suspended',
+        'ACCOUNT_SUSPENDED',
+        'This student account is currently suspended. Contact grievance support if you believe this is an error.'
+      );
+      return;
+    }
+
+    studentLoginRateLimiter.reset(rateKey);
+    const sessionToken = createStudentSessionToken();
+    bionexaDb.createStudentSession({
+      jti: sessionToken.jti,
+      studentId: account.id,
+      tokenHash: sessionToken.tokenHash,
+      userAgent: String(req.headers['user-agent'] || 'Web Browser'),
+      ipAddressMasked: maskIpAddress(ip),
+      expiresAt: sessionToken.expiresAtIso,
+    });
+    bionexaDb.updateStudentLastLogin(account.id);
+    setStudentSessionCookie(res, sessionToken.rawToken);
+
+    const freshAccount = bionexaDb.getStudentById(account.id) || account;
+    res.json({
+      success: true,
+      student: toSafeStudentProfile(freshAccount),
+      message: `Signed in as ${freshAccount.fullName}.`,
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Login Error', 'STUDENT_LOGIN_FAILED', err.message || 'Unable to sign in.');
+  }
+});
+
+// POST /api/student/logout
+app.post('/api/student/logout', (req: Request, res: Response) => {
+  try {
+    const rawToken = extractStudentSessionToken(req);
+    if (rawToken) {
+      const validated = bionexaDb.validateStudentSessionToken(rawToken);
+      if (validated) {
+        bionexaDb.revokeStudentSessionByJti(validated.session.jti, validated.student.id);
+      }
+    }
+    clearStudentSessionCookie(res);
+    res.json({ success: true, message: 'Signed out cleanly.' });
+  } catch (err: any) {
+    clearStudentSessionCookie(res);
+    sendApiError(res, 500, 'Logout Error', 'STUDENT_LOGOUT_FAILED', err.message || 'Unable to sign out.');
+  }
+});
+
+// GET /api/student/me
+app.get('/api/student/me', (req: Request, res: Response) => {
+  const rawToken = extractStudentSessionToken(req);
+  if (!rawToken) {
+    res.json({ authenticated: false, student: null, session: null });
+    return;
+  }
+  const validated = bionexaDb.validateStudentSessionToken(rawToken);
+  if (!validated) {
+    clearStudentSessionCookie(res);
+    res.json({ authenticated: false, student: null, session: null });
+    return;
+  }
+  res.json({
+    authenticated: true,
+    student: toSafeStudentProfile(validated.student),
+    session: {
+      jti: validated.session.jti,
+      expiresAt: validated.session.expiresAt,
+    },
+  });
+});
+
+// POST /api/student/verify-email
+app.post('/api/student/verify-email', (req: Request, res: Response) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    if (!token || token.length < 16) {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_TOKEN', 'A valid verification token is required.');
+      return;
+    }
+
+    const verified = bionexaDb.verifyStudentEmailByToken(token);
+    if (!verified) {
+      sendApiError(
+        res,
+        400,
+        'Verification Failed',
+        'EXPIRED_OR_INVALID_TOKEN',
+        'This verification link or token is invalid or has expired. Please request a new one.'
+      );
+      return;
+    }
+
+    res.json({
+      success: true,
+      student: toSafeStudentProfile(verified),
+      message: 'Your email address has been verified.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Verification Error', 'VERIFY_EMAIL_FAILED', err.message || 'Unable to verify email.');
+  }
+});
+
+// POST /api/student/resend-verification
+app.post('/api/student/resend-verification', requireStudentPermission('student:profile:read'), (req: Request, res: Response) => {
+  try {
+    const account = (req as any).studentAccount;
+    if (account.emailVerified) {
+      res.json({ success: true, message: 'Your email address is already verified.' });
+      return;
+    }
+
+    const rateKey = `verify:${account.id}:${getClientIp(req)}`;
+    const rate = studentVerifyResendLimiter.consume(rateKey);
+    if (!rate.allowed) {
+      res.status(429).json({
+        success: false,
+        error: 'Too Many Requests',
+        code: 'RATE_LIMITED',
+        message: 'Too many verification requests. Please wait before trying again.',
+        retryAfterSec: rate.retryAfterSec,
+      });
+      return;
+    }
+
+    const verification = createEmailVerificationToken();
+    bionexaDb.setStudentVerificationToken(account.id, verification.tokenHash, verification.expiresAtIso);
+
+    const isProd = process.env.NODE_ENV === 'production';
+    res.json({
+      success: true,
+      message: 'A new email verification token has been generated.',
+      ...(!isProd
+        ? {
+            devVerificationToken: verification.rawToken,
+            devVerificationUrl: `/student/verify-email?token=${encodeURIComponent(verification.rawToken)}`,
+          }
+        : {}),
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Verification Error', 'RESEND_VERIFICATION_FAILED', err.message || 'Unable to resend verification.');
+  }
+});
+
+// POST /api/student/password-reset/request
+app.post('/api/student/password-reset/request', (req: Request, res: Response) => {
+  try {
+    const email = normalizeStudentEmail(req.body?.email);
+    const ip = getClientIp(req);
+    const rateKey = `reset:${ip}:${email || 'unknown'}`;
+    const rate = studentResetRateLimiter.consume(rateKey);
+    if (!rate.allowed) {
+      res.status(429).json({
+        success: false,
+        error: 'Too Many Requests',
+        code: 'RATE_LIMITED',
+        message: 'Too many password reset requests. Please wait before trying again.',
+        retryAfterSec: rate.retryAfterSec,
+      });
+      return;
+    }
+
+    const account = email ? bionexaDb.getStudentByEmail(email) : null;
+    const isProd = process.env.NODE_ENV === 'production';
+    let devExtras: Record<string, string> = {};
+
+    if (account && account.accountStatus !== 'suspended') {
+      const reset = createStudentPasswordResetToken();
+      bionexaDb.setStudentPasswordResetToken(account.id, reset.tokenHash, reset.expiresAtIso);
+      if (!isProd) {
+        devExtras = {
+          devResetToken: reset.rawToken,
+          devResetUrl: `/student/reset-password?token=${encodeURIComponent(reset.rawToken)}`,
+        };
+      }
+    }
+
+    // Generic anti-enumeration message
+    res.json({
+      success: true,
+      message: 'If an active student account exists for that email, password reset instructions have been issued.',
+      ...devExtras,
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Reset Error', 'RESET_REQUEST_FAILED', err.message || 'Unable to process password reset request.');
+  }
+});
+
+// POST /api/student/password-reset/confirm
+app.post('/api/student/password-reset/confirm', (req: Request, res: Response) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+
+    if (!token || token.length < 16) {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_TOKEN', 'A valid password reset token is required.');
+      return;
+    }
+
+    const pwCheck = validateStudentPasswordStrength(newPassword);
+    if (!pwCheck.valid) {
+      sendApiError(res, 400, 'Validation Error', 'WEAK_PASSWORD', pwCheck.error || 'Password does not meet security requirements.');
+      return;
+    }
+
+    const newHash = hashStudentPassword(newPassword);
+    const updated = bionexaDb.consumeStudentPasswordResetToken(token, newHash);
+    if (!updated) {
+      sendApiError(
+        res,
+        400,
+        'Reset Failed',
+        'EXPIRED_OR_INVALID_TOKEN',
+        'This password reset token is invalid or has expired. Please request a new reset link.'
+      );
+      return;
+    }
+
+    clearStudentSessionCookie(res);
+    res.json({
+      success: true,
+      message: 'Your password has been reset and all prior sessions have been signed out. Please log in with your new password.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Reset Error', 'RESET_CONFIRM_FAILED', err.message || 'Unable to reset password.');
+  }
+});
+
+// PATCH /api/student/profile
+app.patch('/api/student/profile', requireStudentPermission('student:profile:write'), (req: Request, res: Response) => {
+  try {
+    const account = (req as any).studentAccount;
+    const validation = validateStudentProfileUpdateInput(req.body || {});
+    if (!validation.valid || !validation.data) {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_PROFILE_DATA', validation.error || 'Invalid profile fields.');
+      return;
+    }
+
+    // Strictly update ONLY the authenticated student's own ID from verified session (prevents IDOR)
+    const updated = bionexaDb.updateStudentProfile(account.id, validation.data);
+    if (!updated) {
+      sendApiError(res, 404, 'Not Found', 'STUDENT_NOT_FOUND', 'Student account could not be found.');
+      return;
+    }
+
+    res.json({
+      success: true,
+      student: toSafeStudentProfile(updated),
+      message: 'Student profile updated in database.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Profile Error', 'PROFILE_UPDATE_FAILED', err.message || 'Unable to update student profile.');
+  }
+});
+
+// POST /api/student/change-password
+app.post('/api/student/change-password', requireStudentPermission('student:profile:write'), (req: Request, res: Response) => {
+  try {
+    const account = (req as any).studentAccount;
+    const session = (req as any).studentSession;
+    const currentPassword = typeof req.body?.currentPassword === 'string' ? req.body.currentPassword : '';
+    const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
+
+    if (!verifyStudentPassword(currentPassword, account.passwordHash)) {
+      sendApiError(res, 401, 'Invalid Password', 'CURRENT_PASSWORD_INCORRECT', 'Current password is incorrect.');
+      return;
+    }
+
+    const pwCheck = validateStudentPasswordStrength(newPassword, account.email);
+    if (!pwCheck.valid) {
+      sendApiError(res, 400, 'Validation Error', 'WEAK_PASSWORD', pwCheck.error || 'New password is too weak.');
+      return;
+    }
+
+    const newHash = hashStudentPassword(newPassword);
+    bionexaDb.updateStudentPasswordHash(account.id, newHash);
+    bionexaDb.revokeAllStudentSessions(account.id, session.jti);
+
+    res.json({
+      success: true,
+      message: 'Password updated successfully. Other active sessions were signed out.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Security Error', 'CHANGE_PASSWORD_FAILED', err.message || 'Unable to change password.');
+  }
+});
+
+// GET /api/student/sessions
+app.get('/api/student/sessions', requireStudentPermission('student:sessions:manage'), (req: Request, res: Response) => {
+  try {
+    const account = (req as any).studentAccount;
+    const session = (req as any).studentSession;
+    const sessions = bionexaDb.listStudentSessions(account.id, session.jti);
+    res.json({ success: true, sessions });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Session Error', 'LIST_SESSIONS_FAILED', err.message || 'Unable to load active sessions.');
+  }
+});
+
+// DELETE /api/student/sessions/:jti
+app.delete('/api/student/sessions/:jti', requireStudentPermission('student:sessions:manage'), (req: Request, res: Response) => {
+  try {
+    const account = (req as any).studentAccount;
+    const currentSession = (req as any).studentSession;
+    const targetJti = String(req.params.jti || '').trim();
+    if (!targetJti) {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_SESSION_ID', 'Session ID is required.');
+      return;
+    }
+
+    const revoked = bionexaDb.revokeStudentSessionByJti(targetJti, account.id);
+    if (!revoked) {
+      sendApiError(res, 404, 'Not Found', 'SESSION_NOT_FOUND', 'Active session not found for your account.');
+      return;
+    }
+
+    const revokedCurrent = targetJti === currentSession.jti;
+    if (revokedCurrent) {
+      clearStudentSessionCookie(res);
+    }
+
+    res.json({
+      success: true,
+      revokedCurrent,
+      message: revokedCurrent ? 'Current session revoked. You have been signed out.' : 'Session revoked successfully.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Session Error', 'REVOKE_SESSION_FAILED', err.message || 'Unable to revoke session.');
+  }
+});
+
+// POST /api/student/sessions/revoke-others
+app.post('/api/student/sessions/revoke-others', requireStudentPermission('student:sessions:manage'), (req: Request, res: Response) => {
+  try {
+    const account = (req as any).studentAccount;
+    const currentSession = (req as any).studentSession;
+    const revokedCount = bionexaDb.revokeAllStudentSessions(account.id, currentSession.jti);
+    res.json({
+      success: true,
+      revokedCount,
+      message:
+        revokedCount > 0
+          ? `Signed out ${revokedCount} other active session${revokedCount === 1 ? '' : 's'}.`
+          : 'No other active sessions were found.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Session Error', 'REVOKE_OTHERS_FAILED', err.message || 'Unable to revoke other sessions.');
+  }
+});
+
+// POST /api/student/deletion-request
+app.post('/api/student/deletion-request', requireStudentPermission('student:account:delete_request'), (req: Request, res: Response) => {
+  try {
+    const account = (req as any).studentAccount;
+    const validation = validateDeletionRequestInput(req.body || {});
+    if (!validation.valid || !validation.data) {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_DELETION_REQUEST', validation.error || 'Invalid deletion request.');
+      return;
+    }
+
+    if (!verifyStudentPassword(validation.data.password, account.passwordHash)) {
+      sendApiError(res, 401, 'Invalid Password', 'CURRENT_PASSWORD_INCORRECT', 'Current password verification failed.');
+      return;
+    }
+
+    const result = bionexaDb.createStudentDeletionRequest(
+      account.id,
+      validation.data.reason,
+      validation.data.mode
+    );
+
+    // Also record privacy compliance reference for DPDP auditability (without exposing password/private data)
+    try {
+      bionexaDb.createComplianceRequest({
+        requestType: 'privacy_request',
+        subCategory: result.deletedImmediately
+          ? `Self-Service Student Account Erasure (${result.request.id})`
+          : `Student Account Deletion Request (${result.request.id})`,
+        requesterName: result.deletedImmediately ? 'Erased Student Account' : account.fullName,
+        requesterEmail: result.deletedImmediately ? `erased+${result.request.id}@redacted.local` : account.email,
+        details: validation.data.reason || 'Student submitted an account deletion request under DPDP data erasure rights.',
+        consentAccepted: true,
+      });
+    } catch {
+      // Do not fail student deletion if optional compliance mirror fails
+    }
+
+    if (result.deletedImmediately) {
+      clearStudentSessionCookie(res);
+      res.json({
+        success: true,
+        deletedImmediately: true,
+        requestId: result.request.id,
+        student: null,
+        message: 'Your student account and active sessions have been permanently deleted.',
+      });
+      return;
+    }
+
+    const updated = bionexaDb.getStudentById(account.id);
+    res.json({
+      success: true,
+      deletedImmediately: false,
+      requestId: result.request.id,
+      student: updated ? toSafeStudentProfile(updated) : null,
+      message: 'Account deletion request recorded. You may cancel this request before final processing or delete immediately.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Deletion Error', 'DELETION_REQUEST_FAILED', err.message || 'Unable to submit deletion request.');
+  }
+});
+
+// DELETE /api/student/deletion-request (Cancel pending deletion)
+app.delete('/api/student/deletion-request', requireStudentPermission('student:account:delete_request'), (req: Request, res: Response) => {
+  try {
+    const account = (req as any).studentAccount;
+    const updated = bionexaDb.cancelStudentDeletionRequest(account.id);
+    if (!updated) {
+      sendApiError(res, 404, 'Not Found', 'STUDENT_NOT_FOUND', 'Student account not found.');
+      return;
+    }
+    res.json({
+      success: true,
+      student: toSafeStudentProfile(updated),
+      message: 'Pending account deletion request has been cancelled.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Deletion Error', 'CANCEL_DELETION_FAILED', err.message || 'Unable to cancel deletion request.');
+  }
+});
+
+// =========================================================================
+// PHASE 15: COMPANY & EMPLOYER AUTHENTICATION, VERIFICATION & JOB WORKFLOW
+// =========================================================================
+
+const companyLoginRateLimiter = new CompanyAuthRateLimiter(8, 15 * 60 * 1000, 15 * 60 * 1000);
+const companyRegisterRateLimiter = new CompanyAuthRateLimiter(10, 60 * 60 * 1000, 30 * 60 * 1000);
+const companyResetRateLimiter = new CompanyAuthRateLimiter(6, 30 * 60 * 1000, 30 * 60 * 1000);
+
+function setCompanySessionCookie(res: Response, rawToken: string): void {
+  res.cookie(COMPANY_SESSION_COOKIE, rawToken, {
+    httpOnly: true,
+    secure: runtimeEnv.cookieSecure,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: COMPANY_SESSION_TTL_MS,
+  });
+}
+
+function clearCompanySessionCookie(res: Response): void {
+  res.clearCookie(COMPANY_SESSION_COOKIE, {
+    httpOnly: true,
+    secure: runtimeEnv.cookieSecure,
+    sameSite: 'lax',
+    path: '/',
+  });
+}
+
+function formatCompanyJob(job: any) {
+  const today = new Date().toISOString().split('T')[0];
+  const isExpired =
+    job.verificationStatus === 'Expired' ||
+    (Boolean(job.expiryDate) && job.expiryDate < today);
+  let status = 'Pending Review';
+  if (job.verificationStatus === 'Rejected') {
+    status = 'Rejected';
+  } else if (isExpired) {
+    status = 'Expired';
+  } else if (!job.isActive) {
+    status = 'Closed';
+  } else if (job.isApproved && job.verificationStatus === 'Verified') {
+    status = 'Published';
+  } else if (job.isApproved) {
+    status = 'Published';
+  }
+
+  return {
+    id: job.id,
+    slug: job.id,
+    title: job.title,
+    company: job.employer,
+    companyAccountId: job.companyAccountId || '',
+    sector: job.sector || 'Private Biopharma',
+    location: job.location,
+    type: job.employmentType || 'Full-time',
+    salary: job.salary || 'Competitive',
+    qualification: job.qualification || '',
+    experienceLevel: 'All Experience Levels',
+    description: job.description,
+    responsibilities: job.responsibilities || [],
+    requirements: job.requirements || [],
+    skills: job.skills || [],
+    deadline: job.expiryDate || '',
+    postedDate: job.publicationDate || '',
+    applicationDestinationType: job.applicationDestinationType || 'external_url',
+    applicationUrl: job.applicationUrl || '',
+    applicationEmail: job.applicationEmail || '',
+    applicationInstructions: job.applicationInstructions || '',
+    status,
+    isApproved: Boolean(job.isApproved),
+    isExpired,
+    featured: Boolean(job.featured),
+    verificationStatus: job.verificationStatus || 'Pending Verification',
+    verificationNotes: job.verificationNotes || '',
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  };
+}
+
+function isCompanyCsrfOriginValid(req: Request): boolean {
+  const method = (req.method || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  if (!req.cookies?.[COMPANY_SESSION_COOKIE]) return true;
+  const originHeader = req.get('origin') || req.get('referer');
+  if (!originHeader) return true;
+  try {
+    const parsedOrigin = new URL(originHeader).origin;
+    const hostHeader = req.get('host');
+    if (hostHeader && parsedOrigin.endsWith(`://${hostHeader}`)) return true;
+    return resolveCorsOrigin(parsedOrigin, runtimeEnv) === parsedOrigin;
+  } catch {
+    return false;
+  }
+}
+
+function requireCompanyPermission(permission?: CompanyPermission) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!isCompanyCsrfOriginValid(req)) {
+      sendApiError(res, 403, 'Forbidden', 'CSRF_ORIGIN_DENIED', 'Cross-origin state-changing request rejected.');
+      return;
+    }
+
+    const rawToken = req.cookies?.[COMPANY_SESSION_COOKIE];
+    if (!rawToken || typeof rawToken !== 'string') {
+      sendApiError(res, 401, 'Authentication Required', 'COMPANY_AUTH_REQUIRED', 'Please sign in with your company account.');
+      return;
+    }
+
+    const verified = bionexaDb.validateCompanySessionToken(rawToken);
+    if (!verified) {
+      clearCompanySessionCookie(res);
+      sendApiError(res, 401, 'Session Expired', 'INVALID_COMPANY_SESSION', 'Your company session has expired or been revoked. Please sign in again.');
+      return;
+    }
+
+    if (verified.company.accountStatus === 'suspended') {
+      clearCompanySessionCookie(res);
+      sendApiError(
+        res,
+        403,
+        'Account Suspended',
+        'ACCOUNT_SUSPENDED',
+        verified.company.suspensionReason
+          ? `Your employer account has been suspended: ${verified.company.suspensionReason}`
+          : 'Your employer account has been suspended by an administrator.'
+      );
+      return;
+    }
+
+    if (permission && !hasCompanyPermission(verified.company, permission)) {
+      const reasonMsg = !verified.company.emailVerified && permission.startsWith('company:jobs:')
+        ? 'Please verify your work email address before submitting or editing job openings.'
+        : `Permission '${permission}' is not granted for this company account.`;
+      sendApiError(res, 403, 'Forbidden', 'INSUFFICIENT_PERMISSIONS', reasonMsg);
+      return;
+    }
+
+    (req as any).companyAccount = verified.company;
+    (req as any).companySession = verified.session;
+    next();
+  };
+}
+
+// POST /api/company/register
+app.post('/api/company/register', (req: Request, res: Response) => {
+  try {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const maskedIp = maskIpAddress(clientIp);
+    const rateCheck = companyRegisterRateLimiter.consume(`register:${clientIp}`);
+    if (!rateCheck.allowed) {
+      sendApiError(res, 429, 'Too Many Requests', 'RATE_LIMITED', `Too many registration attempts. Please try again in ${rateCheck.retryAfterSec || 1800}s.`);
+      return;
+    }
+
+    const validated = validateCompanyRegistrationInput(req.body || {});
+    if (!validated.valid || !validated.value) {
+      res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        code: 'VALIDATION_ERROR',
+        field: validated.field,
+        message: validated.error,
+      });
+      return;
+    }
+
+    const input = validated.value;
+    const existing = bionexaDb.getCompanyByEmail(input.email);
+    if (existing) {
+      sendApiError(res, 409, 'Conflict', 'EMAIL_ALREADY_REGISTERED', 'An employer account with this work email already exists. Please sign in instead.');
+      return;
+    }
+
+    const passwordHash = hashCompanyPassword(input.password);
+    const rawVerifyToken = generateCompanyOpaqueToken(32);
+    const verifyTokenHash = hashCompanyOpaqueToken(rawVerifyToken);
+    const verifyExpiresAt = new Date(Date.now() + COMPANY_VERIFY_TOKEN_TTL_MS).toISOString();
+
+    const company = bionexaDb.createCompanyAccount({
+      email: input.email,
+      passwordHash,
+      contactName: input.contactName,
+      contactTitle: input.contactTitle,
+      contactPhone: input.contactPhone,
+      organizationName: input.organizationName,
+      organizationType: input.organizationType,
+      officialWebsite: input.officialWebsite,
+      headquartersLocation: input.headquartersLocation,
+      organizationSize: input.organizationSize,
+      foundedYear: input.foundedYear,
+      industryFocus: input.industryFocus,
+      description: input.description,
+      registrationIdentifier: input.registrationIdentifier,
+      verificationTokenHash: verifyTokenHash,
+      verificationTokenExpiresAt: verifyExpiresAt,
+    });
+
+    const rawSessionToken = generateCompanyOpaqueToken(32);
+    const jti = `csess-${crypto.randomBytes(8).toString('hex')}`;
+    const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_MS).toISOString();
+    bionexaDb.createCompanySession({
+      jti,
+      companyId: company.id,
+      rawToken: rawSessionToken,
+      userAgent: req.get('user-agent') || 'Browser',
+      ipMasked: maskedIp,
+      expiresAt,
+    });
+    bionexaDb.updateCompanyLastLogin(company.id);
+    setCompanySessionCookie(res, rawSessionToken);
+
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: 'COMPANY_REGISTERED',
+      targetType: 'company',
+      targetId: company.id,
+      status: 'success',
+      ipMasked: maskedIp,
+      details: `Registered organization '${company.organizationName}' (unverified pending email & employer review).`,
+    });
+
+    const payload: Record<string, any> = {
+      success: true,
+      company: toSafeCompanyProfile(company),
+      verificationRequired: true,
+      message: 'Company account registered. Verify your work email and complete employer verification before publishing verified openings.',
+    };
+    if (process.env.NODE_ENV !== 'production') {
+      payload.devVerificationToken = rawVerifyToken;
+    }
+    res.status(201).json(payload);
+  } catch (err: any) {
+    sendApiError(res, 500, 'Registration Error', 'COMPANY_REGISTER_FAILED', err.message || 'Unable to register company account.');
+  }
+});
+
+// POST /api/company/login
+app.post('/api/company/login', (req: Request, res: Response) => {
+  try {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const maskedIp = maskIpAddress(clientIp);
+    const email = normalizeCompanyEmail(req.body?.email || '');
+    const password = String(req.body?.password || '');
+
+    const rateKey = `login:${clientIp}:${email || 'anon'}`;
+    const rateCheck = companyLoginRateLimiter.check(rateKey);
+    if (!rateCheck.allowed) {
+      sendApiError(res, 429, 'Too Many Requests', 'RATE_LIMITED', `Too many login attempts. Try again in ${rateCheck.retryAfterSec || 900}s.`);
+      return;
+    }
+
+    if (!email || !password) {
+      sendApiError(res, 400, 'Validation Error', 'MISSING_CREDENTIALS', 'Work email and password are required.');
+      return;
+    }
+
+    const company = bionexaDb.getCompanyByEmail(email);
+    if (!company || !verifyCompanyPassword(password, company.passwordHash)) {
+      companyLoginRateLimiter.consume(rateKey);
+      if (company) {
+        bionexaDb.createCompanyAuditLog({
+          companyId: company.id,
+          actorType: 'company',
+          actorId: company.id,
+          actorEmail: company.email,
+          action: 'COMPANY_LOGIN_FAILED',
+          targetType: 'session',
+          targetId: company.id,
+          status: 'failure',
+          ipMasked: maskedIp,
+          details: 'Invalid password attempt.',
+        });
+      }
+      sendApiError(res, 401, 'Authentication Failed', 'INVALID_CREDENTIALS', 'Invalid work email or password.');
+      return;
+    }
+
+    if (company.accountStatus === 'suspended') {
+      bionexaDb.createCompanyAuditLog({
+        companyId: company.id,
+        actorType: 'company',
+        actorId: company.id,
+        actorEmail: company.email,
+        action: 'COMPANY_LOGIN_BLOCKED_SUSPENDED',
+        targetType: 'session',
+        targetId: company.id,
+        status: 'denied',
+        ipMasked: maskedIp,
+        details: company.suspensionReason || 'Account suspended by administrator.',
+      });
+      sendApiError(
+        res,
+        403,
+        'Account Suspended',
+        'ACCOUNT_SUSPENDED',
+        company.suspensionReason
+          ? `This employer account is suspended: ${company.suspensionReason}`
+          : 'This employer account has been suspended by an administrator.'
+      );
+      return;
+    }
+
+    companyLoginRateLimiter.reset(rateKey);
+
+    const rawSessionToken = generateCompanyOpaqueToken(32);
+    const jti = `csess-${crypto.randomBytes(8).toString('hex')}`;
+    const expiresAt = new Date(Date.now() + COMPANY_SESSION_TTL_MS).toISOString();
+    bionexaDb.createCompanySession({
+      jti,
+      companyId: company.id,
+      rawToken: rawSessionToken,
+      userAgent: req.get('user-agent') || 'Browser',
+      ipMasked: maskedIp,
+      expiresAt,
+    });
+    bionexaDb.updateCompanyLastLogin(company.id);
+    setCompanySessionCookie(res, rawSessionToken);
+
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: 'COMPANY_LOGIN_SUCCESS',
+      targetType: 'session',
+      targetId: jti,
+      status: 'success',
+      ipMasked: maskedIp,
+      details: 'Employer signed in.',
+    });
+
+    const refreshed = bionexaDb.getCompanyById(company.id) || company;
+    res.json({
+      success: true,
+      company: toSafeCompanyProfile(refreshed),
+      message: `Signed in to ${refreshed.organizationName}.`,
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Login Error', 'COMPANY_LOGIN_FAILED', err.message || 'Unable to sign in.');
+  }
+});
+
+// POST /api/company/logout
+app.post('/api/company/logout', (req: Request, res: Response) => {
+  try {
+    const rawToken = req.cookies?.[COMPANY_SESSION_COOKIE];
+    if (rawToken && typeof rawToken === 'string') {
+      const verified = bionexaDb.validateCompanySessionToken(rawToken);
+      if (verified) {
+        bionexaDb.revokeCompanySessionByJti(verified.session.jti, verified.company.id);
+        bionexaDb.createCompanyAuditLog({
+          companyId: verified.company.id,
+          actorType: 'company',
+          actorId: verified.company.id,
+          actorEmail: verified.company.email,
+          action: 'COMPANY_LOGOUT',
+          targetType: 'session',
+          targetId: verified.session.jti,
+          status: 'success',
+          ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+          details: 'Signed out current session.',
+        });
+      }
+    }
+    clearCompanySessionCookie(res);
+    res.json({ success: true, message: 'Signed out successfully.' });
+  } catch (err: any) {
+    clearCompanySessionCookie(res);
+    sendApiError(res, 500, 'Logout Error', 'COMPANY_LOGOUT_FAILED', err.message || 'Unable to sign out.');
+  }
+});
+
+// GET /api/company/me
+app.get('/api/company/me', (req: Request, res: Response) => {
+  try {
+    const rawToken = req.cookies?.[COMPANY_SESSION_COOKIE];
+    if (!rawToken || typeof rawToken !== 'string') {
+      res.json({ authenticated: false, company: null });
+      return;
+    }
+    const verified = bionexaDb.validateCompanySessionToken(rawToken);
+    if (!verified || verified.company.accountStatus === 'suspended') {
+      clearCompanySessionCookie(res);
+      res.json({ authenticated: false, company: null });
+      return;
+    }
+    res.json({
+      authenticated: true,
+      company: toSafeCompanyProfile(verified.company),
+    });
+  } catch {
+    res.json({ authenticated: false, company: null });
+  }
+});
+
+// POST /api/company/verify-email
+app.post('/api/company/verify-email', (req: Request, res: Response) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    if (!token || token.length < 16) {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_TOKEN', 'A valid verification token is required.');
+      return;
+    }
+    const verified = bionexaDb.verifyCompanyEmailByToken(token);
+    if (!verified) {
+      sendApiError(res, 400, 'Verification Failed', 'EXPIRED_OR_INVALID_TOKEN', 'This verification token is invalid or has expired.');
+      return;
+    }
+    bionexaDb.createCompanyAuditLog({
+      companyId: verified.id,
+      actorType: 'company',
+      actorId: verified.id,
+      actorEmail: verified.email,
+      action: 'COMPANY_EMAIL_VERIFIED',
+      targetType: 'company',
+      targetId: verified.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: 'Company work email verified.',
+    });
+    res.json({
+      success: true,
+      company: toSafeCompanyProfile(verified),
+      message: 'Company work email verified. You can now submit openings and request employer verification.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Verification Error', 'COMPANY_VERIFY_EMAIL_FAILED', err.message || 'Unable to verify company email.');
+  }
+});
+
+// POST /api/company/resend-verification
+app.post('/api/company/resend-verification', requireCompanyPermission('company:profile:read'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    if (company.emailVerified) {
+      res.json({ success: true, message: 'Your company work email is already verified.' });
+      return;
+    }
+    const rawVerifyToken = generateCompanyOpaqueToken(32);
+    const verifyTokenHash = hashCompanyOpaqueToken(rawVerifyToken);
+    const expiresAt = new Date(Date.now() + COMPANY_VERIFY_TOKEN_TTL_MS).toISOString();
+    bionexaDb.setCompanyVerificationToken(company.id, verifyTokenHash, expiresAt);
+
+    const payload: Record<string, any> = {
+      success: true,
+      message: 'A new company email verification token has been generated.',
+    };
+    if (process.env.NODE_ENV !== 'production') {
+      payload.devVerificationToken = rawVerifyToken;
+    }
+    res.json(payload);
+  } catch (err: any) {
+    sendApiError(res, 500, 'Verification Error', 'RESEND_VERIFICATION_FAILED', err.message || 'Unable to resend verification token.');
+  }
+});
+
+// POST /api/company/password-reset/request
+app.post('/api/company/password-reset/request', (req: Request, res: Response) => {
+  try {
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const rateCheck = companyResetRateLimiter.consume(`reset:${clientIp}`);
+    if (!rateCheck.allowed) {
+      sendApiError(res, 429, 'Too Many Requests', 'RATE_LIMITED', `Too many password reset requests. Try again in ${rateCheck.retryAfterSec || 1800}s.`);
+      return;
+    }
+
+    const email = normalizeCompanyEmail(req.body?.email || '');
+    if (!email || !email.includes('@')) {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_EMAIL', 'Please enter a valid work email address.');
+      return;
+    }
+
+    const company = bionexaDb.getCompanyByEmail(email);
+    const payload: Record<string, any> = {
+      success: true,
+      message: 'If an employer account exists for that email, a password reset token has been issued.',
+    };
+    if (company && company.accountStatus !== 'suspended') {
+      const rawResetToken = generateCompanyOpaqueToken(32);
+      const resetTokenHash = hashCompanyOpaqueToken(rawResetToken);
+      const expiresAt = new Date(Date.now() + COMPANY_RESET_TOKEN_TTL_MS).toISOString();
+      bionexaDb.setCompanyPasswordResetToken(company.id, resetTokenHash, expiresAt);
+      bionexaDb.createCompanyAuditLog({
+        companyId: company.id,
+        actorType: 'company',
+        actorId: company.id,
+        actorEmail: company.email,
+        action: 'COMPANY_PASSWORD_RESET_REQUESTED',
+        targetType: 'company',
+        targetId: company.id,
+        status: 'success',
+        ipMasked: maskIpAddress(clientIp),
+        details: 'Password reset token generated.',
+      });
+      if (process.env.NODE_ENV !== 'production') {
+        payload.devResetToken = rawResetToken;
+      }
+    }
+    res.json(payload);
+  } catch (err: any) {
+    sendApiError(res, 500, 'Reset Error', 'PASSWORD_RESET_REQUEST_FAILED', err.message || 'Unable to process reset request.');
+  }
+});
+
+// POST /api/company/password-reset/confirm
+app.post('/api/company/password-reset/confirm', (req: Request, res: Response) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    const newPassword = String(req.body?.newPassword || '');
+    if (!token || token.length < 16) {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_TOKEN', 'A valid password reset token is required.');
+      return;
+    }
+    const strength = evaluateCompanyPasswordStrength(newPassword);
+    if (!strength.valid) {
+      sendApiError(res, 400, 'Validation Error', 'WEAK_PASSWORD', strength.errors[0] || 'Password does not meet security requirements.');
+      return;
+    }
+
+    const updated = bionexaDb.consumeCompanyPasswordResetToken(token, hashCompanyPassword(newPassword));
+    if (!updated) {
+      sendApiError(res, 400, 'Reset Failed', 'EXPIRED_OR_INVALID_TOKEN', 'Reset token is invalid or has expired.');
+      return;
+    }
+    clearCompanySessionCookie(res);
+    bionexaDb.createCompanyAuditLog({
+      companyId: updated.id,
+      actorType: 'company',
+      actorId: updated.id,
+      actorEmail: updated.email,
+      action: 'COMPANY_PASSWORD_RESET_COMPLETED',
+      targetType: 'company',
+      targetId: updated.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: 'Password reset completed and all existing sessions revoked.',
+    });
+    res.json({
+      success: true,
+      message: 'Your employer password has been updated. All prior sessions were signed out.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Reset Error', 'PASSWORD_RESET_CONFIRM_FAILED', err.message || 'Unable to confirm password reset.');
+  }
+});
+
+// PATCH /api/company/profile
+app.patch('/api/company/profile', requireCompanyPermission('company:profile:write'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const validated = validateCompanyProfileUpdateInput(req.body || {});
+    if (!validated.valid || !validated.value) {
+      res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        code: 'VALIDATION_ERROR',
+        field: validated.field,
+        message: validated.error,
+      });
+      return;
+    }
+
+    const updated = bionexaDb.updateCompanyProfile(company.id, validated.value);
+    if (!updated) {
+      sendApiError(res, 404, 'Not Found', 'COMPANY_NOT_FOUND', 'Company account not found.');
+      return;
+    }
+
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: 'COMPANY_PROFILE_UPDATED',
+      targetType: 'company',
+      targetId: company.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: `Updated organization profile fields: ${Object.keys(validated.value).join(', ') || 'none'}.`,
+    });
+
+    res.json({
+      success: true,
+      company: toSafeCompanyProfile(updated),
+      message: 'Organization profile and default application settings updated.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Profile Update Error', 'COMPANY_PROFILE_UPDATE_FAILED', err.message || 'Unable to update company profile.');
+  }
+});
+
+// POST /api/company/change-password
+app.post('/api/company/change-password', requireCompanyPermission('company:profile:write'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const session = (req as any).companySession;
+    const currentPassword = String(req.body?.currentPassword || '');
+    const newPassword = String(req.body?.newPassword || '');
+
+    if (!verifyCompanyPassword(currentPassword, company.passwordHash)) {
+      sendApiError(res, 401, 'Invalid Password', 'INVALID_CURRENT_PASSWORD', 'Current password is incorrect.');
+      return;
+    }
+    const strength = evaluateCompanyPasswordStrength(newPassword, company.email);
+    if (!strength.valid) {
+      sendApiError(res, 400, 'Weak Password', 'WEAK_PASSWORD', strength.errors[0] || 'New password is too weak.');
+      return;
+    }
+
+    bionexaDb.updateCompanyPassword(company.id, hashCompanyPassword(newPassword));
+    const revokedOtherSessions = bionexaDb.revokeAllCompanySessions(company.id, session?.jti);
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: 'COMPANY_PASSWORD_CHANGED',
+      targetType: 'company',
+      targetId: company.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: `Password rotated; revoked ${revokedOtherSessions} other active session(s).`,
+    });
+
+    res.json({
+      success: true,
+      revokedOtherSessions,
+      message: 'Password updated successfully.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Password Error', 'COMPANY_CHANGE_PASSWORD_FAILED', err.message || 'Unable to change password.');
+  }
+});
+
+// POST /api/company/verification/submit
+app.post('/api/company/verification/submit', requireCompanyPermission('company:verification:submit'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    if (!company.emailVerified) {
+      sendApiError(
+        res,
+        403,
+        'Email Verification Required',
+        'EMAIL_NOT_VERIFIED',
+        'Please verify your company work email before submitting an employer verification request.'
+      );
+      return;
+    }
+
+    if (company.verificationStatus === 'verified') {
+      res.json({
+        success: true,
+        company: toSafeCompanyProfile(company),
+        message: 'Your organization is already a verified BIO-INEXA employer.',
+      });
+      return;
+    }
+
+    const validated = validateEmployerVerificationSubmission(req.body || {}, company.officialWebsite);
+    if (!validated.valid || !validated.value) {
+      res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        code: 'VALIDATION_ERROR',
+        field: validated.field,
+        message: validated.error,
+      });
+      return;
+    }
+
+    const updated = bionexaDb.submitCompanyEmployerVerification(company.id, validated.value);
+    if (!updated) {
+      sendApiError(res, 404, 'Not Found', 'COMPANY_NOT_FOUND', 'Company account not found.');
+      return;
+    }
+
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: 'EMPLOYER_VERIFICATION_SUBMITTED',
+      targetType: 'verification',
+      targetId: company.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: `Submitted employer verification for '${updated.organizationName}' (${validated.value.officialWebsite}).`,
+    });
+
+    res.json({
+      success: true,
+      company: toSafeCompanyProfile(updated),
+      message: 'Employer verification dossier submitted for administrator review.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Verification Error', 'VERIFICATION_SUBMIT_FAILED', err.message || 'Unable to submit employer verification.');
+  }
+});
+
+// GET /api/company/jobs
+app.get('/api/company/jobs', requireCompanyPermission('company:jobs:read'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const jobs = bionexaDb.getJobsByCompanyAccountId(company.id).map(formatCompanyJob);
+    const summary = {
+      total: jobs.length,
+      published: jobs.filter((j) => j.status === 'Published').length,
+      pendingReview: jobs.filter((j) => j.status === 'Pending Review').length,
+      rejected: jobs.filter((j) => j.status === 'Rejected').length,
+      expired: jobs.filter((j) => j.status === 'Expired').length,
+      closed: jobs.filter((j) => j.status === 'Closed').length,
+    };
+    res.json({ success: true, jobs, summary });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Jobs Error', 'COMPANY_JOBS_LIST_FAILED', err.message || 'Unable to load company jobs.');
+  }
+});
+
+// POST /api/company/jobs
+app.post('/api/company/jobs', requireCompanyPermission('company:jobs:submit'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const validated = validateCompanyJobInput(req.body || {});
+    if (!validated.valid || !validated.value) {
+      res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        code: 'VALIDATION_ERROR',
+        field: validated.field,
+        message: validated.error,
+      });
+      return;
+    }
+
+    const input = validated.value;
+    const policy = resolveEmployerJobSubmissionPolicy(company);
+    const nowDate = new Date().toISOString().split('T')[0];
+
+    const created = bionexaDb.createJob({
+      title: input.title,
+      employer: company.organizationName,
+      description: input.description,
+      location: input.location,
+      qualification: input.qualification,
+      skills: input.skills,
+      employmentType: input.type,
+      salary: input.salary,
+      applicationUrl: input.applicationUrl || company.officialWebsite,
+      source: policy.publishedAsVerified
+        ? `${company.organizationName} (Verified Employer Portal)`
+        : `${company.organizationName} (Employer Submission — Pending Verification)`,
+      originalJobUrl: input.applicationUrl || company.officialWebsite,
+      publicationDate: nowDate,
+      expiryDate: input.deadline,
+      lastVerificationDate: policy.publishedAsVerified ? nowDate : '',
+      verificationStatus: policy.publishedAsVerified ? 'Verified' : 'Pending Verification',
+      verificationNotes: policy.verificationNotes,
+      isActive: true,
+      isApproved: policy.isApproved,
+      featured: false,
+      responsibilities: input.responsibilities,
+      requirements: input.requirements,
+      sector: input.sector,
+      companyAccountId: company.id,
+      applicationDestinationType: input.applicationDestinationType,
+      applicationEmail: input.applicationEmail,
+      applicationInstructions: input.applicationInstructions,
+    });
+
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: policy.publishedAsVerified ? 'JOB_PUBLISHED_VERIFIED' : 'JOB_SUBMITTED_PENDING_REVIEW',
+      targetType: 'job',
+      targetId: created.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: `Submitted '${created.title}' (${input.applicationDestinationType}) — ${policy.status}.`,
+    });
+
+    res.status(201).json({
+      success: true,
+      job: formatCompanyJob(created),
+      publishedAsVerified: policy.publishedAsVerified,
+      message: policy.publishedAsVerified
+        ? 'Opening published as a verified employer listing.'
+        : 'Opening submitted for administrator review. Unverified employers cannot publish verified listings until employer verification is approved.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Job Submission Error', 'COMPANY_JOB_SUBMIT_FAILED', err.message || 'Unable to submit job opening.');
+  }
+});
+
+// PUT /api/company/jobs/:id
+app.put('/api/company/jobs/:id', requireCompanyPermission('company:jobs:edit'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const existing = bionexaDb.getJobById(req.params.id);
+    if (!existing || existing.companyAccountId !== company.id) {
+      sendApiError(res, 404, 'Not Found', 'JOB_NOT_FOUND', 'Job opening not found under your organization account.');
+      return;
+    }
+
+    const validated = validateCompanyJobInput(req.body || {});
+    if (!validated.valid || !validated.value) {
+      res.status(400).json({
+        success: false,
+        error: 'Validation Error',
+        code: 'VALIDATION_ERROR',
+        field: validated.field,
+        message: validated.error,
+      });
+      return;
+    }
+
+    const input = validated.value;
+    const policy = resolveEmployerJobSubmissionPolicy(company);
+    const nowDate = new Date().toISOString().split('T')[0];
+
+    // Unverified employers can never self-approve or become Verified by editing
+    const updated = bionexaDb.updateJob(existing.id, {
+      title: input.title,
+      employer: company.organizationName,
+      description: input.description,
+      location: input.location,
+      qualification: input.qualification,
+      skills: input.skills,
+      employmentType: input.type,
+      salary: input.salary,
+      applicationUrl: input.applicationUrl || company.officialWebsite,
+      originalJobUrl: input.applicationUrl || company.officialWebsite,
+      expiryDate: input.deadline,
+      responsibilities: input.responsibilities,
+      requirements: input.requirements,
+      sector: input.sector,
+      applicationDestinationType: input.applicationDestinationType,
+      applicationEmail: input.applicationEmail,
+      applicationInstructions: input.applicationInstructions,
+      isApproved: policy.publishedAsVerified ? existing.isApproved : false,
+      verificationStatus: policy.publishedAsVerified ? existing.verificationStatus : 'Pending Verification',
+      lastVerificationDate: policy.publishedAsVerified ? (existing.lastVerificationDate || nowDate) : '',
+      verificationNotes: policy.publishedAsVerified ? existing.verificationNotes : policy.verificationNotes,
+    });
+
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: 'JOB_EDITED',
+      targetType: 'job',
+      targetId: existing.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: `Updated opening '${input.title}' (destination: ${input.applicationDestinationType}).`,
+    });
+
+    res.json({
+      success: true,
+      job: formatCompanyJob(updated),
+      message: 'Job opening updated successfully.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Job Edit Error', 'COMPANY_JOB_UPDATE_FAILED', err.message || 'Unable to update job opening.');
+  }
+});
+
+// PATCH /api/company/jobs/:id/status (Close or reopen own job; never self-verify)
+app.patch('/api/company/jobs/:id/status', requireCompanyPermission('company:jobs:edit'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const existing = bionexaDb.getJobById(req.params.id);
+    if (!existing || existing.companyAccountId !== company.id) {
+      sendApiError(res, 404, 'Not Found', 'JOB_NOT_FOUND', 'Job opening not found under your organization account.');
+      return;
+    }
+
+    const action = String(req.body?.action || '').trim().toLowerCase();
+    if (action !== 'close' && action !== 'reopen') {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_ACTION', 'Action must be either "close" or "reopen".');
+      return;
+    }
+
+    const isActive = action === 'reopen';
+    const updated = bionexaDb.updateJob(existing.id, { isActive });
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: isActive ? 'JOB_REOPENED' : 'JOB_CLOSED',
+      targetType: 'job',
+      targetId: existing.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: `${isActive ? 'Reopened' : 'Closed'} '${existing.title}'.`,
+    });
+
+    res.json({
+      success: true,
+      job: formatCompanyJob(updated),
+      message: isActive ? 'Job opening reopened.' : 'Job opening closed.',
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Job Status Error', 'COMPANY_JOB_STATUS_FAILED', err.message || 'Unable to update job status.');
+  }
+});
+
+// DELETE /api/company/jobs/:id
+app.delete('/api/company/jobs/:id', requireCompanyPermission('company:jobs:delete'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const existing = bionexaDb.getJobById(req.params.id);
+    if (!existing || existing.companyAccountId !== company.id) {
+      sendApiError(res, 404, 'Not Found', 'JOB_NOT_FOUND', 'Job opening not found under your organization account.');
+      return;
+    }
+
+    bionexaDb.deleteJob(existing.id);
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: 'JOB_DELETED',
+      targetType: 'job',
+      targetId: existing.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: `Deleted opening '${existing.title}'.`,
+    });
+
+    res.json({ success: true, message: 'Job opening deleted.' });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Job Delete Error', 'COMPANY_JOB_DELETE_FAILED', err.message || 'Unable to delete job opening.');
+  }
+});
+
+// GET /api/company/sessions
+app.get('/api/company/sessions', requireCompanyPermission('company:sessions:manage'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const currentSession = (req as any).companySession;
+    const sessions = bionexaDb.listActiveCompanySessions(company.id, currentSession?.jti);
+    res.json({ success: true, sessions });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Session Error', 'COMPANY_SESSIONS_FAILED', err.message || 'Unable to load active sessions.');
+  }
+});
+
+// DELETE /api/company/sessions/:jti
+app.delete('/api/company/sessions/:jti', requireCompanyPermission('company:sessions:manage'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const currentSession = (req as any).companySession;
+    const targetJti = req.params.jti;
+    const revoked = bionexaDb.revokeCompanySessionByJti(targetJti, company.id);
+    if (!revoked) {
+      sendApiError(res, 404, 'Not Found', 'SESSION_NOT_FOUND', 'Session not found.');
+      return;
+    }
+    if (currentSession?.jti === targetJti) {
+      clearCompanySessionCookie(res);
+    }
+    res.json({ success: true, message: 'Session revoked successfully.' });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Session Error', 'COMPANY_SESSION_REVOKE_FAILED', err.message || 'Unable to revoke session.');
+  }
+});
+
+// POST /api/company/sessions/revoke-others
+app.post('/api/company/sessions/revoke-others', requireCompanyPermission('company:sessions:manage'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const currentSession = (req as any).companySession;
+    const revokedCount = bionexaDb.revokeAllCompanySessions(company.id, currentSession?.jti);
+    bionexaDb.createCompanyAuditLog({
+      companyId: company.id,
+      actorType: 'company',
+      actorId: company.id,
+      actorEmail: company.email,
+      action: 'COMPANY_SESSIONS_REVOKED_OTHERS',
+      targetType: 'session',
+      targetId: company.id,
+      status: 'success',
+      ipMasked: maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown'),
+      details: `Signed out ${revokedCount} other active device session(s).`,
+    });
+    res.json({
+      success: true,
+      revokedCount,
+      message: `Signed out ${revokedCount} other active device(s).`,
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Session Error', 'COMPANY_REVOKE_OTHERS_FAILED', err.message || 'Unable to revoke other sessions.');
+  }
+});
+
+// GET /api/company/audit-logs
+app.get('/api/company/audit-logs', requireCompanyPermission('company:audit:read'), (req: Request, res: Response) => {
+  try {
+    const company = (req as any).companyAccount;
+    const logs = bionexaDb.getCompanyAuditLogs(company.id, 100);
+    res.json({ success: true, logs });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Audit Log Error', 'COMPANY_AUDIT_LOGS_FAILED', err.message || 'Unable to load company audit logs.');
+  }
+});
+
+// =========================================================================
+// PHASE 15: ADMIN EMPLOYER APPROVAL, SUSPENSION & AUDIT ENDPOINTS
+// =========================================================================
+
+// GET /api/admin/companies
+app.get('/api/admin/companies', requireAdminPermission('dashboard:read'), (_req: Request, res: Response) => {
+  try {
+    const rows = bionexaDb.listAllCompaniesAdmin();
+    const companies = rows.map((row) => ({
+      ...toSafeCompanyProfile(row),
+      jobCount: row.jobCount,
+    }));
+    const summary = {
+      total: companies.length,
+      verified: companies.filter((c) => c.verificationStatus === 'verified').length,
+      pendingReview: companies.filter((c) => c.verificationStatus === 'pending_review').length,
+      unverified: companies.filter((c) => c.verificationStatus === 'unverified').length,
+      rejected: companies.filter((c) => c.verificationStatus === 'rejected').length,
+      suspended: companies.filter((c) => c.accountStatus === 'suspended').length,
+    };
+    res.json({ success: true, companies, summary });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Admin Companies Error', 'ADMIN_COMPANIES_LIST_FAILED', err.message || 'Unable to load registered employers.');
+  }
+});
+
+// GET /api/admin/companies/audit-logs
+app.get('/api/admin/companies/audit-logs', requireAdminPermission('audit:read'), (req: Request, res: Response) => {
+  try {
+    const companyId = typeof req.query.companyId === 'string' && req.query.companyId.trim()
+      ? req.query.companyId.trim()
+      : undefined;
+    const logs = bionexaDb.getCompanyAuditLogs(companyId, 150);
+    res.json({ success: true, logs });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Admin Audit Error', 'ADMIN_COMPANY_AUDIT_FAILED', err.message || 'Unable to load employer audit logs.');
+  }
+});
+
+// POST /api/admin/companies/:id/verify (Approve / Reject / Revoke Verification)
+app.post('/api/admin/companies/:id/verify', requireAdminPermission('jobs:verify'), (req: Request, res: Response) => {
+  try {
+    const adminUser = (req as any).adminUser;
+    const decisionRaw = String(req.body?.decision || '').trim().toLowerCase();
+    const notesOrReason = String(req.body?.notes || req.body?.reason || '').trim().slice(0, 500);
+    if (decisionRaw !== 'verified' && decisionRaw !== 'rejected' && decisionRaw !== 'unverified') {
+      sendApiError(res, 400, 'Validation Error', 'INVALID_DECISION', 'Decision must be "verified", "rejected", or "unverified".');
+      return;
+    }
+
+    const updated = bionexaDb.setCompanyVerificationDecisionAdmin(
+      req.params.id,
+      decisionRaw,
+      adminUser?.username || adminUser?.email || 'admin',
+      notesOrReason
+    );
+    if (!updated) {
+      sendApiError(res, 404, 'Not Found', 'COMPANY_NOT_FOUND', 'Company account not found.');
+      return;
+    }
+
+    const maskedIp = maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown');
+    const actionName =
+      decisionRaw === 'verified'
+        ? 'ADMIN_EMPLOYER_APPROVED'
+        : decisionRaw === 'rejected'
+        ? 'ADMIN_EMPLOYER_REJECTED'
+        : 'ADMIN_EMPLOYER_VERIFICATION_REVOKED';
+
+    bionexaDb.createCompanyAuditLog({
+      companyId: updated.id,
+      actorType: 'admin',
+      actorId: adminUser?.id || 'admin',
+      actorEmail: adminUser?.email || adminUser?.username || 'admin',
+      action: actionName,
+      targetType: 'verification',
+      targetId: updated.id,
+      status: 'success',
+      ipMasked: maskedIp,
+      details: notesOrReason || `Verification status set to '${decisionRaw}' for ${updated.organizationName}.`,
+    });
+
+    auditAdminAction(req, actionName, 'company_accounts', updated.id, {
+      organizationName: updated.organizationName,
+      decision: decisionRaw,
+      notes: notesOrReason || undefined,
+    });
+
+    res.json({
+      success: true,
+      company: toSafeCompanyProfile(updated),
+      message:
+        decisionRaw === 'verified'
+          ? `${updated.organizationName} is now a Verified Employer.`
+          : decisionRaw === 'rejected'
+          ? `Employer verification rejected for ${updated.organizationName}.`
+          : `Employer verification status reset to Unverified for ${updated.organizationName}.`,
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Admin Verify Error', 'ADMIN_COMPANY_VERIFY_FAILED', err.message || 'Unable to update employer verification.');
+  }
+});
+
+// POST /api/admin/companies/:id/suspend
+app.post('/api/admin/companies/:id/suspend', requireAdminPermission('jobs:verify'), (req: Request, res: Response) => {
+  try {
+    const adminUser = (req as any).adminUser;
+    const reason = String(req.body?.reason || '').trim().slice(0, 500);
+    if (reason.length < 5) {
+      sendApiError(res, 400, 'Validation Error', 'REASON_REQUIRED', 'Please provide a suspension reason (at least 5 characters).');
+      return;
+    }
+
+    const result = bionexaDb.setCompanyAccountStatusAdmin(
+      req.params.id,
+      'suspended',
+      adminUser?.username || adminUser?.email || 'admin',
+      reason
+    );
+    if (!result.company) {
+      sendApiError(res, 404, 'Not Found', 'COMPANY_NOT_FOUND', 'Company account not found.');
+      return;
+    }
+
+    const maskedIp = maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown');
+    bionexaDb.createCompanyAuditLog({
+      companyId: result.company.id,
+      actorType: 'admin',
+      actorId: adminUser?.id || 'admin',
+      actorEmail: adminUser?.email || adminUser?.username || 'admin',
+      action: 'ADMIN_COMPANY_SUSPENDED',
+      targetType: 'company',
+      targetId: result.company.id,
+      status: 'success',
+      ipMasked: maskedIp,
+      details: `Suspended account (${result.revokedSessions} session(s) revoked). Reason: ${reason}`,
+    });
+
+    auditAdminAction(req, 'ADMIN_COMPANY_SUSPENDED', 'company_accounts', result.company.id, {
+      organizationName: result.company.organizationName,
+      reason,
+      revokedSessions: result.revokedSessions,
+    });
+
+    res.json({
+      success: true,
+      company: toSafeCompanyProfile(result.company),
+      revokedSessions: result.revokedSessions,
+      message: `${result.company.organizationName} has been suspended and ${result.revokedSessions} active session(s) were revoked.`,
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Admin Suspend Error', 'ADMIN_COMPANY_SUSPEND_FAILED', err.message || 'Unable to suspend company account.');
+  }
+});
+
+// POST /api/admin/companies/:id/reinstate
+app.post('/api/admin/companies/:id/reinstate', requireAdminPermission('jobs:verify'), (req: Request, res: Response) => {
+  try {
+    const adminUser = (req as any).adminUser;
+    const notes = String(req.body?.notes || '').trim().slice(0, 500);
+
+    const result = bionexaDb.setCompanyAccountStatusAdmin(
+      req.params.id,
+      'active',
+      adminUser?.username || adminUser?.email || 'admin',
+      ''
+    );
+    if (!result.company) {
+      sendApiError(res, 404, 'Not Found', 'COMPANY_NOT_FOUND', 'Company account not found.');
+      return;
+    }
+
+    const maskedIp = maskIpAddress(req.ip || req.socket.remoteAddress || 'unknown');
+    bionexaDb.createCompanyAuditLog({
+      companyId: result.company.id,
+      actorType: 'admin',
+      actorId: adminUser?.id || 'admin',
+      actorEmail: adminUser?.email || adminUser?.username || 'admin',
+      action: 'ADMIN_COMPANY_REINSTATED',
+      targetType: 'company',
+      targetId: result.company.id,
+      status: 'success',
+      ipMasked: maskedIp,
+      details: notes || `Reinstated employer account for ${result.company.organizationName}.`,
+    });
+
+    auditAdminAction(req, 'ADMIN_COMPANY_REINSTATED', 'company_accounts', result.company.id, {
+      organizationName: result.company.organizationName,
+      notes: notes || undefined,
+    });
+
+    res.json({
+      success: true,
+      company: toSafeCompanyProfile(result.company),
+      message: `${result.company.organizationName} account has been reinstated.`,
+    });
+  } catch (err: any) {
+    sendApiError(res, 500, 'Admin Reinstate Error', 'ADMIN_COMPANY_REINSTATE_FAILED', err.message || 'Unable to reinstate company account.');
   }
 });
 

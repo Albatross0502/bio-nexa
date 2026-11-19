@@ -5,6 +5,7 @@
  */
 
 import { computeAdminDashboardStats } from '../../src/services/admin/adminHelpers';
+import { COURSE_CATEGORIES } from '../../src/services/courses/courseHelpers';
 import {
   handleCorsPreflight,
   jsonResponse,
@@ -53,6 +54,7 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       complianceRequests,
       contactMessages,
       syncHistory,
+      courseCategories,
     ] = await Promise.all([
       repo.getAllJobsAdmin(),
       repo.getAllInternshipsAdmin(),
@@ -64,6 +66,7 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       repo.getComplianceRequests(),
       repo.getContactMessages(),
       repo.getSyncLogs(50),
+      repo.getCourseCategories(),
     ]);
 
     const jobs = jobsRaw.map(formatAdminJob);
@@ -92,6 +95,7 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
         internships,
         workshops,
         courses,
+        courseCategories,
         submittedOpportunities,
         complianceRequests,
         contactMessages,
@@ -147,6 +151,7 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       internships,
       workshops: SERVERLESS_WORKSHOPS,
       courses: SERVERLESS_COURSES,
+      courseCategories: [...COURSE_CATEGORIES],
       submittedOpportunities: [],
       complianceRequests: [],
       contactMessages: [],

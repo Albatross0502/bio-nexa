@@ -5,6 +5,8 @@
  * respecting their terms of service without unpermitted web scraping.
  */
 
+import { buildGoogleJobsUrl } from '../jobs/googleJobsSearch';
+
 export interface ExternalSearchPortal {
   id: string;
   name: string;
@@ -51,12 +53,15 @@ export const EXTERNAL_SEARCH_PORTALS: ExternalSearchPortal[] = [
   },
   {
     id: 'google_jobs',
-    name: 'Google Jobs Hub',
+    name: 'Google Jobs Search',
     badgeColor: '#4285F4',
-    description: 'Aggregated Google Search indexing public research and industrial career pages.',
+    description: 'External Google Search redirect indexing public research and industrial career pages (not an API).',
     generateUrl: (keyword: string, location: string, branchName?: string) => {
-      const q = encodeURIComponent(`${branchName || 'Biotechnology'} ${keyword} jobs in ${location || 'India'}`.trim());
-      return `https://www.google.com/search?q=${q}&ibp=htl;jobs`;
+      return buildGoogleJobsUrl({
+        discipline: branchName || 'Biotechnology',
+        additionalKeywords: keyword,
+        location: location === 'all' || !location ? 'India' : location
+      });
     }
   }
 ];

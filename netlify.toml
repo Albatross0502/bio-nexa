@@ -280,6 +280,26 @@
   to = "/.netlify/functions/community/discussions/:splat"
   status = 200
 
+[[redirects]]
+  from = "/api/student/*"
+  to = "/.netlify/functions/student-auth/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/companies"
+  to = "/.netlify/functions/admin-companies"
+  status = 200
+
+[[redirects]]
+  from = "/api/admin/companies/*"
+  to = "/.netlify/functions/admin-companies/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api/company/*"
+  to = "/.netlify/functions/company-auth/:splat"
+  status = 200
+
 # Catch unknown /api/* routes with structured JSON 404 instead of SPA HTML
 [[redirects]]
   from = "/api/*"

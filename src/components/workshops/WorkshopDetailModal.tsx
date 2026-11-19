@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import {
   Building,
-  Calendar,
-  Clock,
   ExternalLink,
   Globe,
   Sparkles,
   User,
+  Users,
+  Tag,
   X,
   AlertCircle,
   ShieldCheck
@@ -14,10 +14,10 @@ import {
 import type { UnifiedWorkshop } from './WorkshopCard';
 import {
   getDefaultWorkshopImageForTitle,
-  isValidWorkshopRegistrationUrl,
   isWorkshopRegistrationClosed,
   normalizeWorkshopFormat,
-  normalizeWorkshopStatus
+  normalizeWorkshopStatus,
+  validateWorkshopRegistrationUrl
 } from '../../services/workshops/workshopHelpers';
 
 interface WorkshopDetailModalProps {
@@ -30,14 +30,25 @@ export const WorkshopDetailModal: React.FC<WorkshopDetailModalProps> = ({ worksh
 
   if (!workshop) return null;
 
-  const title = workshop.title || workshop.name || 'Biotechnology Workshop';
+  const title = workshop.title || workshop.name || '';
+  const organizer = (workshop.organizer || '').trim();
+  const instructor = (workshop.instructor || '').trim();
   const format = normalizeWorkshopFormat(workshop.format || workshop.workMode);
-  const status = normalizeWorkshopStatus(workshop.status);
   const isClosed = isWorkshopRegistrationClosed(workshop);
+  const status = isClosed ? 'completed' : normalizeWorkshopStatus(workshop.status);
   const destinationUrl = workshop.registrationUrl || workshop.registrationLink || '';
-  const hasValidUrl = isValidWorkshopRegistrationUrl(destinationUrl);
+  const urlCheck = validateWorkshopRegistrationUrl(destinationUrl);
+  const capacity = typeof workshop.capacity === 'number' && workshop.capacity > 0 ? workshop.capacity : null;
   const displayImage =
     imgError || !workshop.imageUrl ? getDefaultWorkshopImageForTitle(title) : workshop.imageUrl;
+
+  const highlightItems = [
+    workshop.date ? { label: 'Workshop Date', value: workshop.date, accent: false } : null,
+    workshop.time ? { label: 'Session Time', value: workshop.time, accent: false } : null,
+    workshop.duration ? { label: 'Duration', value: workshop.duration, accent: false } : null,
+    workshop.fees ? { label: 'Registration Fee', value: workshop.fees, accent: true } : null,
+    capacity !== null ? { label: 'Seat Capacity', value: `${capacity} Seats`, accent: false } : null
+  ].filter(Boolean) as Array<{ label: string; value: string; accent: boolean }>;
 
   return (
     <div
@@ -89,10 +100,17 @@ export const WorkshopDetailModal: React.FC<WorkshopDetailModalProps> = ({ worksh
                   : 'bg-sky-500/90 text-white'
               }`}
             >
-              <span>{status}</span>
+              <span>{isClosed ? 'Expired' : status}</span>
             </span>
 
-            {workshop.featured && (
+            {workshop.category && (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-900/80 text-sky-200 border border-white/15">
+                <Tag className="w-3 h-3" />
+                <span>{workshop.category}</span>
+              </span>
+            )}
+
+            {workshop.featured && !isClosed && (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-500/90 text-white">
                 <Sparkles className="w-3 h-3" />
                 <span>Featured</span>
@@ -104,69 +122,87 @@ export const WorkshopDetailModal: React.FC<WorkshopDetailModalProps> = ({ worksh
         {/* Scrollable Body */}
         <div className="p-6 sm:p-7 space-y-5 overflow-y-auto">
           <div>
-            <span className="text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 block mb-1">
-              {workshop.organizer || workshop.instructor || 'BIO-INEXA Academy'}
-            </span>
+            {(organizer || instructor) && (
+              <span className="text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 block mb-1">
+                {organizer || instructor}
+              </span>
+            )}
             <h2 id="workshop-modal-title" className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white leading-snug">
               {title}
             </h2>
           </div>
 
-          {/* Key Highlights Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
-              <span className="text-[10px] text-slate-400 block">Date</span>
-              <span className="font-bold text-slate-900 dark:text-white mt-0.5 block">{workshop.date}</span>
+          {/* Key Highlights Grid (only saved values) */}
+          {highlightItems.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {highlightItems.map((item) => (
+                <div key={item.label} className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
+                  <span className="text-[10px] text-slate-400 block">{item.label}</span>
+                  <span
+                    className={`font-bold mt-0.5 block ${
+                      item.accent ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'
+                    }`}
+                  >
+                    {item.value}
+                  </span>
+                </div>
+              ))}
             </div>
-            <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
-              <span className="text-[10px] text-slate-400 block">Session Time</span>
-              <span className="font-bold text-slate-900 dark:text-white mt-0.5 block">
-                {workshop.time || '09:30 AM - 04:30 PM IST'}
-              </span>
-            </div>
-            <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
-              <span className="text-[10px] text-slate-400 block">Duration</span>
-              <span className="font-bold text-slate-900 dark:text-white mt-0.5 block">
-                {workshop.duration || '2 Days'}
-              </span>
-            </div>
-            <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
-              <span className="text-[10px] text-slate-400 block">Registration Fee</span>
-              <span className="font-bold text-emerald-600 dark:text-emerald-400 mt-0.5 block">
-                {workshop.fees || 'Free'}
-              </span>
-            </div>
-          </div>
+          )}
 
           {/* Description */}
-          <div className="space-y-2">
-            <h4 className="text-sm font-bold text-slate-900 dark:text-white">Curriculum &amp; Program Scope</h4>
-            <p className="text-slate-600 dark:text-slate-300 leading-relaxed text-xs">
-              {workshop.description}
-            </p>
-          </div>
+          {workshop.description && (
+            <div className="space-y-2">
+              <h4 className="text-sm font-bold text-slate-900 dark:text-white">Curriculum &amp; Program Scope</h4>
+              <p className="text-slate-600 dark:text-slate-300 leading-relaxed text-xs">
+                {workshop.description}
+              </p>
+            </div>
+          )}
 
-          {/* Instructor & Venue */}
+          {/* Organizer, Instructor & Venue */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-            <div className="space-y-1">
-              <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-[#14A3A0]" />
-                <span>Lead Instructor / Faculty</span>
-              </h4>
-              <p className="text-slate-600 dark:text-slate-300 text-xs">
-                {workshop.instructor || workshop.organizer}
-              </p>
-            </div>
+            {organizer && (
+              <div className="space-y-1">
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Building className="w-3.5 h-3.5 text-[#0B2A5B] dark:text-sky-400" />
+                  <span>Host Organizer</span>
+                </h4>
+                <p className="text-slate-600 dark:text-slate-300 text-xs">{organizer}</p>
+              </div>
+            )}
 
-            <div className="space-y-1">
-              <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                <Building className="w-3.5 h-3.5 text-rose-500" />
-                <span>Venue &amp; Meeting Logistics</span>
-              </h4>
-              <p className="text-slate-600 dark:text-slate-300 text-xs">
-                {workshop.venue || workshop.location}
-              </p>
-            </div>
+            {instructor && instructor !== organizer && (
+              <div className="space-y-1">
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-[#14A3A0]" />
+                  <span>Lead Instructor / Faculty</span>
+                </h4>
+                <p className="text-slate-600 dark:text-slate-300 text-xs">{instructor}</p>
+              </div>
+            )}
+
+            {(workshop.venue || workshop.location) && (
+              <div className="space-y-1">
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-rose-500" />
+                  <span>Venue &amp; Meeting Logistics</span>
+                </h4>
+                <p className="text-slate-600 dark:text-slate-300 text-xs">
+                  {workshop.venue || workshop.location}
+                </p>
+              </div>
+            )}
+
+            {capacity !== null && (
+              <div className="space-y-1">
+                <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <Users className="w-3.5 h-3.5 text-[#14A3A0]" />
+                  <span>Seat Capacity</span>
+                </h4>
+                <p className="text-slate-600 dark:text-slate-300 text-xs">{capacity} participants</p>
+              </div>
+            )}
           </div>
 
           {/* Skills Covered */}
@@ -186,19 +222,25 @@ export const WorkshopDetailModal: React.FC<WorkshopDetailModalProps> = ({ worksh
             </div>
           )}
 
-          {/* Registration Deadline & Availability Notice */}
+          {/* Registration Deadline & Official Destination Audit */}
           <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 flex items-start gap-3">
             <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
             <div className="space-y-1">
               <div className="font-bold text-amber-900 dark:text-amber-200 flex flex-wrap items-center gap-2">
-                <span>Registration Deadline: {workshop.registrationDeadline || 'Open until batch filled'}</span>
+                <span>
+                  Registration Deadline: {workshop.registrationDeadline || 'See organizer portal'}
+                </span>
                 <span className="px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/80 text-[10px] text-amber-900 dark:text-amber-200 border border-amber-300 dark:border-amber-700">
-                  {isClosed ? 'Closed' : workshop.availability || 'Open'}
+                  {isClosed ? 'Closed / Expired' : workshop.availability || 'Open'}
                 </span>
               </div>
-              <div className="text-[11px] text-amber-700 dark:text-amber-300 flex items-center gap-1.5">
+              <div className="text-[11px] text-amber-800 dark:text-amber-200 flex flex-wrap items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                <span>Registrations are handled directly by the hosting institution. No intermediary fees.</span>
+                <span>
+                  {urlCheck.valid && urlCheck.domain
+                    ? `Verified destination domain: ${urlCheck.domain}. Registrations are completed directly on the organizer's official portal.`
+                    : 'No verified external registration URL is currently published for this workshop.'}
+                </span>
               </div>
             </div>
           </div>
@@ -220,17 +262,17 @@ export const WorkshopDetailModal: React.FC<WorkshopDetailModalProps> = ({ worksh
               >
                 Registration Closed
               </button>
-            ) : !hasValidUrl ? (
+            ) : !urlCheck.valid ? (
               <button
                 type="button"
                 disabled
                 className="px-6 py-2.5 bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold rounded-xl cursor-not-allowed"
               >
-                Registration Link Pending
+                Registration Link Unavailable
               </button>
             ) : (
               <a
-                href={destinationUrl}
+                href={urlCheck.normalizedUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="px-6 py-2.5 bg-gradient-to-r from-[#0B2A5B] to-[#1F6FB2] hover:from-blue-900 hover:to-blue-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2"

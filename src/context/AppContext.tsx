@@ -16,10 +16,19 @@ import {
   SEED_COURSES,
   SEED_DISCUSSIONS,
   SEED_SYNC_LOGS,
-  SEED_REPORTS,
-  SEED_CERTIFICATE
+  SEED_REPORTS
 } from '../data/seedData';
 import { bionexaApi } from '../services/api/bionexaApiClient';
+import {
+  studentApi,
+  StudentProfile,
+  StudentProfileUpdatePayload
+} from '../services/student/studentApiClient';
+import {
+  companyApi,
+  CompanyProfile,
+  CompanyProfileUpdatePayload
+} from '../services/company/companyApiClient';
 import { opportunityStore } from '../services/opportunities/opportunityStore';
 import { googleSheetsSync } from '../services/opportunities/googleSheetsSync';
 
@@ -37,8 +46,22 @@ interface ContactResult {
 
 interface AppContextType {
   currentUser: User;
+  studentUser: StudentProfile | null;
+  isStudentAuthenticated: boolean;
+  studentAuthLoading: boolean;
+  refreshStudentSession: () => Promise<void>;
+  setStudentSessionUser: (student: StudentProfile | null) => void;
+  logoutStudent: () => Promise<void>;
+  updateStudentProfile: (payload: StudentProfileUpdatePayload) => Promise<StudentProfile>;
+  companyUser: CompanyProfile | null;
+  isCompanyAuthenticated: boolean;
+  companyAuthLoading: boolean;
+  refreshCompanySession: () => Promise<void>;
+  setCompanySessionUser: (company: CompanyProfile | null) => void;
+  logoutCompany: () => Promise<void>;
+  updateCompanyProfile: (payload: CompanyProfileUpdatePayload) => Promise<CompanyProfile>;
   switchRole: (role: 'student' | 'company' | 'admin') => void;
-  updateUserProfile: (profile: Partial<User>) => void;
+  updateUserProfile: (profile: Partial<User>) => Promise<void>;
   currentPath: string;
   navigate: (path: string) => void;
   savedItemIds: string[];
@@ -85,40 +108,35 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-const DEMO_USERS: Record<'student' | 'company' | 'admin', User> = {
-  student: {
-    id: 'user-stu-1',
-    name: 'Aarav Gautam',
-    email: 'aarav.biotech@university.edu',
-    role: 'student',
-    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&h=120&q=80',
-    title: 'M.Sc Biotechnology Scholar (Final Year)',
-    institution: 'Department of Biotechnology, Pune University',
-    skills: ['CRISPR sgRNA Design', 'RT-qPCR', 'SDS-PAGE', 'Python for Bioinformatics', 'Bacterial Transformation'],
-    bio: 'Aspiring molecular biologist focused on genome editing therapeutics and bioprocess fermentation.'
-  },
-  company: {
-    id: 'user-comp-1',
-    name: 'Dr. Nalini Parthasarathy',
-    email: 'nalini.p@biocon.com',
-    role: 'company',
-    avatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=120&h=120&q=80',
-    title: 'Talent Acquisition & University Relations Lead',
-    institution: 'Biocon Biologics Ltd.',
-    skills: ['Bioprocess Scale-Up', 'Monoclonal Antibodies', 'cGMP Hiring'],
-    bio: 'Recruiting exceptional scientific talent for discovery, fermentation, and regulatory operations.'
-  },
-  admin: {
-    id: 'user-adm-1',
-    name: 'BIO-INEXA Admin Team',
-    email: 'admin@bionexa.org',
-    role: 'admin',
-    avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=120&h=120&q=80',
-    title: 'Platform System Administrator & Moderator',
-    institution: 'BIO-INEXA National Council',
-    bio: 'Managing data feeds, compliance verification, moderation, and institutional partnerships.'
-  }
+const GUEST_USER: User = {
+  id: 'guest',
+  name: '',
+  email: '',
+  role: 'guest',
+  title: '',
+  institution: '',
+  skills: [],
+  bio: ''
 };
+
+function mapStudentToUser(student: StudentProfile): User {
+  return {
+    id: student.id,
+    name: student.fullName,
+    email: student.email,
+    role: 'student',
+    title: student.degreeTitle || 'Biotechnology Student',
+    institution: student.institution || '',
+    specialization: student.specialization || '',
+    graduationYear: student.graduationYear || '',
+    location: student.location || '',
+    skills: Array.isArray(student.skills) ? student.skills : [],
+    bio: student.bio || '',
+    linkedinUrl: student.linkedinUrl || '',
+    orcidId: student.orcidId || '',
+    emailVerified: Boolean(student.emailVerified),
+  };
+}
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Navigation state synced with window.location
@@ -127,79 +145,109 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return (window.location.pathname + window.location.search) || '/';
   });
 
-  // User state
-  const [currentUser, setCurrentUser] = useState<User>(() => {
-    const saved = localStorage.getItem('bionexa_user');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error(e);
+  // Real database-backed Student & Company Authentication state (HttpOnly cookie sessions)
+  const [studentUser, setStudentUser] = useState<StudentProfile | null>(null);
+  const [studentAuthLoading, setStudentAuthLoading] = useState<boolean>(true);
+  const [companyUser, setCompanyUser] = useState<CompanyProfile | null>(null);
+  const [companyAuthLoading, setCompanyAuthLoading] = useState<boolean>(true);
+  const currentUser: User = studentUser
+    ? mapStudentToUser(studentUser)
+    : companyUser
+    ? {
+        id: companyUser.id,
+        name: companyUser.contactName,
+        email: companyUser.email,
+        role: 'company',
+        title: companyUser.contactTitle || 'Employer Representative',
+        institution: companyUser.organizationName,
+        location: companyUser.headquartersLocation,
+        skills: [],
+        bio: companyUser.description,
+        emailVerified: companyUser.emailVerified,
       }
-    }
-    return DEMO_USERS.student;
-  });
+    : GUEST_USER;
+  const isStudentAuthenticated = Boolean(studentUser);
+  const isCompanyAuthenticated = Boolean(companyUser);
 
-  // Bookmarks
+  // Bookmarks (clean initial state — no hardcoded demo items)
   const [savedItemIds, setSavedItemIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem('bionexa_saved_ids');
-    return saved ? JSON.parse(saved) : ['job-1', 'course-1', 'exam-1', 'sch-1'];
+    try {
+      const saved = localStorage.getItem('bionexa_saved_ids');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
   // Jobs state
   const [jobs, setJobs] = useState<Job[]>(() => {
-    const saved = localStorage.getItem('bionexa_jobs');
-    return saved ? JSON.parse(saved) : SEED_JOBS;
+    try {
+      const saved = localStorage.getItem('bionexa_jobs');
+      return saved ? JSON.parse(saved) : SEED_JOBS;
+    } catch {
+      return SEED_JOBS;
+    }
   });
 
   // Internships state
   const [internships, setInternships] = useState<Internship[]>(() => {
-    const saved = localStorage.getItem('bionexa_internships');
-    return saved ? JSON.parse(saved) : SEED_INTERNSHIPS;
+    try {
+      const saved = localStorage.getItem('bionexa_internships');
+      return saved ? JSON.parse(saved) : SEED_INTERNSHIPS;
+    } catch {
+      return SEED_INTERNSHIPS;
+    }
   });
 
   // Courses state
   const [courses] = useState<Course[]>(() => {
-    const saved = localStorage.getItem('bionexa_courses');
-    return saved ? JSON.parse(saved) : SEED_COURSES;
+    try {
+      const saved = localStorage.getItem('bionexa_courses');
+      return saved ? JSON.parse(saved) : SEED_COURSES;
+    } catch {
+      return SEED_COURSES;
+    }
   });
 
-  // Applications state
+  // Applications state (clean initial state — no hardcoded demo Aarav Gautam applications)
   const [applications, setApplications] = useState<JobApplication[]>(() => {
-    const saved = localStorage.getItem('bionexa_applications');
-    return saved ? JSON.parse(saved) : [
-      {
-        id: 'app-initial-1',
-        jobId: 'job-1',
-        jobTitle: 'Senior Bioprocess Scientist - Upstream Fermentation',
-        company: 'Biocon Biologics',
-        applicantName: 'Aarav Gautam',
-        applicantEmail: 'aarav.biotech@university.edu',
-        phone: '+91 98765 43210',
-        qualification: 'M.Sc / M.Tech',
-        experienceYears: '1 Year Research Project',
-        coverNote: 'Extensive hands-on training with 10L fermenters and DO cascade control.',
-        appliedDate: '2026-11-02',
-        status: 'Under Review'
-      }
-    ];
+    try {
+      const saved = localStorage.getItem('bionexa_applications');
+      const parsed: JobApplication[] = saved ? JSON.parse(saved) : [];
+      return parsed.filter((app) => app.id !== 'app-initial-1');
+    } catch {
+      return [];
+    }
   });
 
-  // Course Enrollments & Progress
+  // Course Enrollments & Progress (clean initial state)
   const [enrolledCourseIds, setEnrolledCourseIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem('bionexa_enrolled_courses');
-    return saved ? JSON.parse(saved) : ['course-1'];
+    try {
+      const saved = localStorage.getItem('bionexa_enrolled_courses');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
   const [completedLessonIds, setCompletedLessonIds] = useState<string[]>(() => {
-    const saved = localStorage.getItem('bionexa_completed_lessons');
-    return saved ? JSON.parse(saved) : ['c1-l1', 'c1-l2'];
+    try {
+      const saved = localStorage.getItem('bionexa_completed_lessons');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
   });
 
-  // Certificates
+  // Certificates (clean initial state — only real earned certificates)
   const [certificates, setCertificates] = useState<Certificate[]>(() => {
-    const saved = localStorage.getItem('bionexa_certificates');
-    return saved ? JSON.parse(saved) : [SEED_CERTIFICATE];
+    try {
+      const saved = localStorage.getItem('bionexa_certificates');
+      const parsed: Certificate[] = saved ? JSON.parse(saved) : [];
+      return parsed.filter((c) => c.recipientName !== 'Aarav Gautam');
+    } catch {
+      return [];
+    }
   });
 
   // Discussions
@@ -249,10 +297,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem('bionexa_dark_mode', String(darkMode));
   }, [darkMode]);
 
-  // Keep state saved to localStorage
+  // Remove legacy demo user key and hydrate real student & company sessions from server cookies
+  const refreshStudentSession = async () => {
+    try {
+      const res = await studentApi.getSession();
+      setStudentUser(res.authenticated && res.student ? res.student : null);
+    } catch {
+      setStudentUser(null);
+    } finally {
+      setStudentAuthLoading(false);
+    }
+  };
+
+  const refreshCompanySession = async () => {
+    try {
+      const res = await companyApi.getSession();
+      setCompanyUser(res.authenticated && res.company ? res.company : null);
+    } catch {
+      setCompanyUser(null);
+    } finally {
+      setCompanyAuthLoading(false);
+    }
+  };
+
   useEffect(() => {
-    localStorage.setItem('bionexa_user', JSON.stringify(currentUser));
-  }, [currentUser]);
+    try {
+      localStorage.removeItem('bionexa_user');
+    } catch {
+      // Ignore storage access restrictions
+    }
+    refreshStudentSession();
+    refreshCompanySession();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('bionexa_saved_ids', JSON.stringify(savedItemIds));
@@ -350,7 +426,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       try {
         const dbInternships = await bionexaApi.getInternships({ limit: 100 });
-        if (isMounted && Array.isArray(dbInternships) && dbInternships.length > 0) {
+        if (isMounted && Array.isArray(dbInternships)) {
           const mappedInternships: Internship[] = dbInternships.map((i: any) => {
             const rawMode = String(i.mode || i.workMode || 'On-site Lab');
             const mode: Internship['mode'] = rawMode.toLowerCase().includes('remote') || rawMode.toLowerCase().includes('dry')
@@ -388,7 +464,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 isExternal: true
               },
               applicationUrl: i.applicationUrl,
-              featured: Boolean(i.featured)
+              featured: Boolean(i.featured),
+              verificationStatus: i.verificationStatus,
+              verificationNotes: i.verificationNotes,
+              lastVerificationDate: i.lastVerificationDate,
+              isVerified: Boolean(i.isVerified),
+              isApproved: i.isApproved !== false,
+              isActive: i.isActive !== false,
+              isExpired: Boolean(i.isExpired),
+              compensationType: i.compensationType
             };
           });
           setInternships(mappedInternships);
@@ -456,21 +540,80 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setDarkMode((prev) => !prev);
   };
 
-  const switchRole = (role: 'student' | 'company' | 'admin') => {
-    setCurrentUser(DEMO_USERS[role]);
-    addToast(`Switched active view to ${role.toUpperCase()}: ${DEMO_USERS[role].name}`, 'info');
-    if (role === 'admin') {
-      navigate('/admin');
-    } else if (role === 'company') {
-      navigate('/dashboard-company');
-    } else {
-      navigate('/dashboard-student');
+  const setStudentSessionUser = (student: StudentProfile | null) => {
+    setStudentUser(student);
+    setStudentAuthLoading(false);
+  };
+
+  const logoutStudent = async () => {
+    try {
+      await studentApi.logout();
+    } catch {
+      // Clear local session state even if network call fails
+    } finally {
+      setStudentUser(null);
+      addToast('Signed out of your student account.', 'info');
     }
   };
 
-  const updateUserProfile = (profile: Partial<User>) => {
-    setCurrentUser((prev) => ({ ...prev, ...profile }));
-    addToast('Profile updated successfully', 'success');
+  const updateStudentProfile = async (payload: StudentProfileUpdatePayload): Promise<StudentProfile> => {
+    const res = await studentApi.updateProfile(payload);
+    setStudentUser(res.student);
+    addToast(res.message || 'Student profile updated successfully.', 'success');
+    return res.student;
+  };
+
+  const setCompanySessionUser = (company: CompanyProfile | null) => {
+    setCompanyUser(company);
+    setCompanyAuthLoading(false);
+  };
+
+  const logoutCompany = async () => {
+    try {
+      await companyApi.logout();
+    } catch {
+      // Clear local session state even if network call fails
+    } finally {
+      setCompanyUser(null);
+      addToast('Signed out of your employer account.', 'info');
+    }
+  };
+
+  const updateCompanyProfile = async (payload: CompanyProfileUpdatePayload): Promise<CompanyProfile> => {
+    const res = await companyApi.updateProfile(payload);
+    setCompanyUser(res.company);
+    addToast(res.message || 'Organization profile updated successfully.', 'success');
+    return res.company;
+  };
+
+  // Navigate to the corresponding portal without injecting any demonstration user account
+  const switchRole = (role: 'student' | 'company' | 'admin') => {
+    if (role === 'admin') {
+      navigate('/admin');
+    } else if (role === 'company') {
+      navigate(companyUser ? '/dashboard-company' : '/company/login');
+    } else {
+      navigate(studentUser ? '/dashboard-student' : '/student/login');
+    }
+  };
+
+  const updateUserProfile = async (profile: Partial<User>) => {
+    if (!studentUser) {
+      addToast('Please sign in to your student account to update your profile.', 'warning');
+      return;
+    }
+    await updateStudentProfile({
+      fullName: profile.name,
+      degreeTitle: profile.title,
+      institution: profile.institution,
+      specialization: profile.specialization,
+      graduationYear: profile.graduationYear,
+      location: profile.location,
+      skills: profile.skills,
+      bio: profile.bio,
+      linkedinUrl: profile.linkedinUrl,
+      orcidId: profile.orcidId,
+    });
   };
 
   const toggleSaveItem = (id: string, title?: string) => {
@@ -591,7 +734,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const awardCertificate = async (course: Course, score: number): Promise<Certificate> => {
     try {
       const issued = await bionexaApi.issueCertificate({
-        recipientName: currentUser.name,
+        recipientName: currentUser.name || 'BIO-INEXA Learner',
         courseTitle: course.title,
         score
       });
@@ -618,8 +761,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const addDiscussionReply = async (topicId: string, replyContent: string) => {
     try {
       const reply = await bionexaApi.addDiscussionReply(topicId, {
-        authorName: currentUser.name,
-        authorRole: currentUser.title || 'BIO-INEXA Member',
+        authorName: currentUser.name || 'BIO-INEXA Researcher',
+        authorRole: currentUser.title || 'Community Member',
         content: replyContent
       });
       setDiscussions((prev) =>
@@ -686,7 +829,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       id: 'rep-' + Date.now(),
       itemType,
       itemTitle,
-      reportedBy: currentUser.email,
+      reportedBy: currentUser.email || 'visitor@bio-inexa.org',
       reason,
       date: new Date().toISOString().split('T')[0],
       status: 'Pending'
@@ -744,6 +887,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     <AppContext.Provider
       value={{
         currentUser,
+        studentUser,
+        isStudentAuthenticated,
+        studentAuthLoading,
+        refreshStudentSession,
+        setStudentSessionUser,
+        logoutStudent,
+        updateStudentProfile,
+        companyUser,
+        isCompanyAuthenticated,
+        companyAuthLoading,
+        refreshCompanySession,
+        setCompanySessionUser,
+        logoutCompany,
+        updateCompanyProfile,
         switchRole,
         updateUserProfile,
         currentPath,

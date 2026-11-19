@@ -12,14 +12,17 @@ import {
   ListChecks,
   ShieldCheck,
   Sparkles,
+  Tag,
   X
 } from 'lucide-react';
 import type { UnifiedCourse } from '../../services/courses/courseHelpers';
 import {
+  classifyCoursePricing,
   getDefaultCourseImageForCategory,
+  isCourseExpired,
   isCourseRegistrationClosed,
-  isValidCourseRegistrationUrl,
-  normalizeCourseCategory
+  normalizeCourseProviderType,
+  validateCourseRegistrationUrl
 } from '../../services/courses/courseHelpers';
 
 interface CourseDetailModalProps {
@@ -33,14 +36,21 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
   if (!course) return null;
 
   const title = course.title || course.name || 'Biotechnology Course';
-  const category = normalizeCourseCategory(course.category);
+  const category = (course.category || '').trim() || 'Biotechnology';
+  const expired = isCourseExpired(course);
   const isClosed = isCourseRegistrationClosed(course);
+  const providerType = normalizeCourseProviderType(course.providerType);
+  const isThirdParty = providerType === 'third_party';
+  const pricingType = classifyCoursePricing(course.fees, course.pricingType);
   const destinationUrl = course.registrationUrl || course.registrationLink || '';
-  const hasValidUrl = isValidCourseRegistrationUrl(destinationUrl);
+  const urlValidation = validateCourseRegistrationUrl(destinationUrl);
+  const hasValidUrl = urlValidation.valid;
   const displayImage =
     imgError || !course.imageUrl ? getDefaultCourseImageForCategory(category) : course.imageUrl;
   const curriculum = course.curriculum || course.syllabus || [];
   const certInfo = (course.certificateInfo || '').trim();
+  const eligibility = (course.eligibility || '').trim();
+  const providerName = (course.provider || '').trim() || (isThirdParty ? 'External Course Provider' : 'BIO-INEXA');
 
   return (
     <div
@@ -81,10 +91,35 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
 
             <span
               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                isClosed ? 'bg-slate-700/90 text-slate-200' : 'bg-emerald-600/90 text-white'
+                isThirdParty
+                  ? 'bg-slate-900/85 text-sky-200 border border-sky-400/30'
+                  : 'bg-[#14A3A0]/95 text-white'
               }`}
             >
-              <span>{isClosed ? 'Closed' : 'Available'}</span>
+              <span>{isThirdParty ? 'Third-Party Course' : 'BIO-INEXA Provided'}</span>
+            </span>
+
+            <span
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                pricingType === 'free'
+                  ? 'bg-emerald-600/90 text-white'
+                  : 'bg-indigo-600/90 text-white'
+              }`}
+            >
+              <Tag className="w-3 h-3" />
+              <span>{pricingType === 'free' ? 'Free' : 'Paid'}</span>
+            </span>
+
+            <span
+              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                expired
+                  ? 'bg-rose-700/90 text-white'
+                  : isClosed
+                  ? 'bg-slate-700/90 text-slate-200'
+                  : 'bg-emerald-600/90 text-white'
+              }`}
+            >
+              <span>{expired ? 'Expired' : isClosed ? 'Closed' : 'Available'}</span>
             </span>
 
             {course.featured && (
@@ -99,9 +134,16 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
         {/* Scrollable Details Body */}
         <div className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1">
           <div>
-            <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 mb-1">
-              <Building2 className="w-3.5 h-3.5" />
-              <span>{course.provider || 'Course Provider'}</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400">
+                <Building2 className="w-3.5 h-3.5" />
+                <span>{providerName}</span>
+              </div>
+              {hasValidUrl && (
+                <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                  Official portal: {urlValidation.domain}
+                </span>
+              )}
             </div>
             <h2 id="course-modal-title" className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white leading-snug">
               {title}
@@ -119,7 +161,7 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
               <span className="text-[10px] text-slate-400 block">Duration</span>
               <span className="font-bold text-slate-900 dark:text-white mt-0.5 flex items-center gap-1">
                 <Clock className="w-3 h-3 text-[#14A3A0] shrink-0" />
-                <span>{course.duration}</span>
+                <span>{course.duration || 'Not specified'}</span>
               </span>
             </div>
 
@@ -127,14 +169,16 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
               <span className="text-[10px] text-slate-400 block">Delivery Mode</span>
               <span className="font-bold text-slate-900 dark:text-white mt-0.5 flex items-center gap-1">
                 <Globe className="w-3 h-3 text-sky-500 shrink-0" />
-                <span>{course.deliveryMode}</span>
+                <span>{course.deliveryMode || 'Not specified'}</span>
               </span>
             </div>
 
             <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
-              <span className="text-[10px] text-slate-400 block">Fees</span>
+              <span className="text-[10px] text-slate-400 block">
+                Fees ({pricingType === 'free' ? 'Free' : 'Paid'})
+              </span>
               <span className="font-bold text-emerald-700 dark:text-emerald-400 mt-0.5 block">
-                {course.fees || 'See Provider Portal'}
+                {course.fees || 'Not specified'}
               </span>
             </div>
 
@@ -142,7 +186,7 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
               <span className="text-[10px] text-slate-400 block">Reg. Deadline</span>
               <span className={`font-bold mt-0.5 flex items-center gap-1 ${isClosed ? 'text-rose-600 dark:text-rose-400' : 'text-slate-900 dark:text-white'}`}>
                 <Calendar className="w-3 h-3 shrink-0" />
-                <span>{course.registrationDeadline || 'Open / Rolling'}</span>
+                <span>{course.registrationDeadline || 'Not specified'}</span>
               </span>
             </div>
           </div>
@@ -155,16 +199,18 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
             </p>
           </div>
 
-          {/* Eligibility */}
-          <div className="p-3.5 rounded-2xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200/80 dark:border-sky-800/60 space-y-1">
-            <div className="font-bold text-sky-900 dark:text-sky-200 flex items-center gap-1.5 text-xs">
-              <GraduationCap className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-              <span>Eligibility</span>
+          {/* Eligibility (only shown if saved) */}
+          {eligibility && (
+            <div className="p-3.5 rounded-2xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200/80 dark:border-sky-800/60 space-y-1">
+              <div className="font-bold text-sky-900 dark:text-sky-200 flex items-center gap-1.5 text-xs">
+                <GraduationCap className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+                <span>Eligibility</span>
+              </div>
+              <p className="text-slate-700 dark:text-slate-300 text-xs leading-relaxed">
+                {eligibility}
+              </p>
             </div>
-            <p className="text-slate-700 dark:text-slate-300 text-xs leading-relaxed">
-              {course.eligibility || 'Open to Life Sciences & Biotechnology learners'}
-            </p>
-          </div>
+          )}
 
           {/* Curriculum */}
           {curriculum.length > 0 && (
@@ -187,12 +233,14 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
             </div>
           )}
 
-          {/* Certificate Info (Only displayed if applicable — never fabricated) */}
+          {/* Certificate Info (Only displayed if saved — never fabricated) */}
           {certInfo && (
             <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 space-y-1">
               <div className="font-bold text-amber-900 dark:text-amber-200 flex items-center gap-1.5 text-xs">
                 <Award className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                <span>Certificate Information</span>
+                <span>
+                  {isThirdParty ? 'Provider Certificate Information' : 'BIO-INEXA Certificate Information'}
+                </span>
               </div>
               <p className="text-amber-900/90 dark:text-amber-200/90 text-xs leading-relaxed">
                 {certInfo}
@@ -200,13 +248,21 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
             </div>
           )}
 
-          {/* Official Source Transparency */}
+          {/* Explicit Provider Provenance Transparency */}
           <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 flex items-start gap-2.5 text-[11px] text-slate-600 dark:text-slate-400">
             <ShieldCheck className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
-            <span>
-              Enrollment and any applicable program credentials are administered directly by{' '}
-              <strong className="text-slate-800 dark:text-slate-200">{course.provider}</strong> on their official portal.
-            </span>
+            {isThirdParty ? (
+              <span>
+                This is a <strong className="text-slate-800 dark:text-slate-200">third-party course</strong> provided and administered by{' '}
+                <strong className="text-slate-800 dark:text-slate-200">{providerName}</strong>
+                {hasValidUrl ? ` (${urlValidation.domain})` : ''}. BIO-INEXA does not provide, conduct, or certify this course.
+              </span>
+            ) : (
+              <span>
+                This course is provided directly by <strong className="text-slate-800 dark:text-slate-200">{providerName}</strong>.
+                {hasValidUrl ? ` Enrollment destination: ${urlValidation.domain}.` : ''}
+              </span>
+            )}
           </div>
         </div>
 
@@ -220,7 +276,15 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
             Close
           </button>
 
-          {isClosed ? (
+          {expired ? (
+            <button
+              type="button"
+              disabled
+              className="px-6 py-2.5 bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-500 font-bold rounded-xl cursor-not-allowed"
+            >
+              Course Expired
+            </button>
+          ) : isClosed ? (
             <button
               type="button"
               disabled
@@ -238,12 +302,12 @@ export const CourseDetailModal: React.FC<CourseDetailModalProps> = ({ course, on
             </button>
           ) : (
             <a
-              href={destinationUrl}
+              href={urlValidation.normalizedUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="px-6 py-2.5 bg-gradient-to-r from-[#0B2A5B] to-[#14A3A0] hover:from-blue-900 hover:to-teal-700 text-white font-bold rounded-xl shadow-md transition-all flex items-center gap-2"
             >
-              <span>Go to Official Registration Portal</span>
+              <span>Enroll on {urlValidation.domain}</span>
               <ExternalLink className="w-4 h-4" />
             </a>
           )}

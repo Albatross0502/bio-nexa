@@ -35,7 +35,8 @@ import {
   Check,
   Inbox,
   MessageSquare,
-  History
+  History,
+  Building2
 } from 'lucide-react';
 import {
   adminApi,
@@ -58,27 +59,38 @@ import { useApp } from '../../context/AppContext';
 import { DATA_SOURCES } from '../../services/opportunities/sourcesRegistry';
 import { AutomatedJobsPanel } from './AutomatedJobsPanel';
 import { GoogleSheetsSyncPanel } from './GoogleSheetsSyncPanel';
+import { AdminCompaniesPanel } from './AdminCompaniesPanel';
 import { validateApplicationUrl } from '../../services/jobs/jobVerification';
 import {
   DEFAULT_WORKSHOP_IMAGE,
+  WORKSHOP_CATEGORIES,
   isValidWorkshopImageUrl,
-  isValidWorkshopRegistrationUrl,
+  isWorkshopExpired,
   normalizeAvailabilityOption,
+  normalizeWorkshopApprovalStatus,
   normalizeWorkshopFormat,
   normalizeWorkshopStatus,
-  toDateInputValue
+  toDateInputValue,
+  validateWorkshopRegistrationUrl
 } from '../../services/workshops/workshopHelpers';
 import {
   COURSE_CATEGORIES,
   COURSE_DELIVERY_MODES,
   DEFAULT_COURSE_IMAGE,
+  classifyCoursePricing,
+  extractCourseCategories,
   getDefaultCourseImageForCategory,
+  isCourseExpired,
   isValidCourseImageUrl,
   isValidCourseRegistrationUrl,
+  normalizeCourseApprovalStatus,
   normalizeCourseCategory,
+  normalizeCourseProviderType,
   normalizeCourseStatus,
   normalizeDeliveryMode,
-  parseCurriculumInput
+  parseCurriculumInput,
+  resolveCourseCategory,
+  validateCourseRegistrationUrl
 } from '../../services/courses/courseHelpers';
 
 interface AdminDashboardProps {
@@ -101,6 +113,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
     | 'sources'
     | 'backups'
     | 'automation'
+    | 'employers'
     | 'audit'
   >('jobs');
   const [jobFilterTab, setJobFilterTab] = useState<'all' | 'pending' | 'verified' | 'unverified' | 'broken' | 'expired'>('all');
@@ -153,6 +166,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   const [workshopImagePreview, setWorkshopImagePreview] = useState<string>('');
   const [workshopRegUrlDraft, setWorkshopRegUrlDraft] = useState<string>('');
   const [isUploadingWorkshopImage, setIsUploadingWorkshopImage] = useState(false);
+  const [isScanningExpiredWorkshops, setIsScanningExpiredWorkshops] = useState(false);
+  const [workshopApprovalFilter, setWorkshopApprovalFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
   const [workshopStatusFilter, setWorkshopStatusFilter] = useState<string>('all');
   const [workshopFormatFilter, setWorkshopFormatFilter] = useState<string>('all');
 
@@ -161,8 +176,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   const [courseImagePreview, setCourseImagePreview] = useState<string>('');
   const [courseRegUrlDraft, setCourseRegUrlDraft] = useState<string>('');
   const [isUploadingCourseImage, setIsUploadingCourseImage] = useState(false);
+  const [isScanningExpiredCourses, setIsScanningExpiredCourses] = useState(false);
+  const [courseCategories, setCourseCategories] = useState<string[]>([...COURSE_CATEGORIES]);
+  const [newCourseCategory, setNewCourseCategory] = useState<string>('');
+  const [isManagingCourseCategory, setIsManagingCourseCategory] = useState(false);
   const [courseCategoryFilter, setCourseCategoryFilter] = useState<string>('all');
   const [courseStatusFilter, setCourseStatusFilter] = useState<'all' | 'available' | 'closed'>('all');
+  const [courseApprovalFilter, setCourseApprovalFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
+  const [coursePricingFilter, setCoursePricingFilter] = useState<'all' | 'free' | 'paid'>('all');
 
   // Submissions & Compliance Management state
   const [submissionFilterTab, setSubmissionFilterTab] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
@@ -207,6 +228,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       setInternships(data.internships || []);
       setWorkshops(data.workshops || []);
       setCourses(data.courses || []);
+      if (Array.isArray(data.courseCategories) && data.courseCategories.length > 0) {
+        setCourseCategories(data.courseCategories);
+      }
       setSubmittedOpportunities(data.submittedOpportunities || []);
       setComplianceRequests(data.complianceRequests || []);
       setContactMessages(data.contactMessages || []);
@@ -441,7 +465,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       sourceName: String(formData.get('sourceName') || 'BIO-INEXA Admin Portal').trim(),
       sourceUrl: String(formData.get('sourceUrl') || formData.get('applicationUrl') || '').trim(),
       applicationUrl: String(formData.get('applicationUrl') || '').trim(),
-      verificationStatus: String(formData.get('verificationStatus') || 'Verified'),
+      verificationStatus: String(formData.get('verificationStatus') || 'Pending Verification'),
       verificationNotes: String(formData.get('verificationNotes') || '').trim(),
       description: String(formData.get('description') || '').trim(),
       learningOutcomes: String(formData.get('learningOutcomes') || '')
@@ -517,6 +541,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       await loadDashboardData(true);
     } catch (err: any) {
       addToast(err.message || 'Failed to update internship status.', 'error');
+    }
+  };
+
+  const handleScanExpiredInternships = async () => {
+    try {
+      const result = await adminApi.scanExpiredInternships();
+      if (result.expiredCount > 0) {
+        addToast(`Marked ${result.expiredCount} past-deadline internship(s) as Expired.`, 'success');
+      } else {
+        addToast('All active internships have valid upcoming or rolling deadlines.', 'info');
+      }
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to scan expired internships.', 'error');
     }
   };
 
@@ -738,13 +776,55 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
     }
   };
 
+  const handleUpdateWorkshopApproval = async (
+    workshop: AdminWorkshop,
+    approvalStatus: 'approved' | 'rejected' | 'pending'
+  ) => {
+    try {
+      const updated = await adminApi.updateWorkshopApproval(workshop.id, approvalStatus);
+      setWorkshops(workshops.map((w) => (w.id === workshop.id ? updated : w)));
+      addToast(
+        approvalStatus === 'approved'
+          ? `Approved workshop "${workshop.title}" for public visibility.`
+          : approvalStatus === 'rejected'
+          ? `Rejected workshop "${workshop.title}".`
+          : `Moved workshop "${workshop.title}" back to pending review.`,
+        approvalStatus === 'rejected' ? 'info' : 'success'
+      );
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Error updating workshop approval status.', 'error');
+    }
+  };
+
+  const handleScanExpiredWorkshops = async () => {
+    setIsScanningExpiredWorkshops(true);
+    try {
+      const result = await adminApi.scanExpiredWorkshops();
+      addToast(result.message, result.expiredCount > 0 ? 'success' : 'info');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to scan expired workshops.', 'error');
+    } finally {
+      setIsScanningExpiredWorkshops(false);
+    }
+  };
+
   const handleSaveWorkshop = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
 
     const registrationUrl = String(formData.get('registrationUrl') || workshopRegUrlDraft || '').trim();
-    if (!isValidWorkshopRegistrationUrl(registrationUrl)) {
-      addToast('Please provide a valid Registration URL starting with http:// or https://.', 'error');
+    const urlCheck = validateWorkshopRegistrationUrl(registrationUrl);
+    if (!urlCheck.valid) {
+      addToast(urlCheck.reason || 'Please provide a valid official registration URL.', 'error');
+      return;
+    }
+
+    const organizer = String(formData.get('organizer') || '').trim();
+    const instructor = String(formData.get('instructor') || '').trim();
+    if (!organizer && !instructor) {
+      addToast('Please provide an organizer institution or lead instructor.', 'error');
       return;
     }
 
@@ -754,6 +834,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       return;
     }
 
+    const capacityRaw = String(formData.get('capacity') || '').trim();
+    let capacity: number | null = null;
+    if (capacityRaw !== '') {
+      const parsedCap = Number(capacityRaw);
+      if (!Number.isFinite(parsedCap) || parsedCap <= 0) {
+        addToast('Capacity must be a positive whole number when specified.', 'error');
+        return;
+      }
+      capacity = Math.floor(parsedCap);
+    }
+
     const format = normalizeWorkshopFormat(String(formData.get('format') || formData.get('workMode') || 'Online'));
     const status = normalizeWorkshopStatus(String(formData.get('status') || 'upcoming'));
     const featured = formData.get('featured') === 'on' || formData.get('featured') === 'true';
@@ -761,20 +852,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
     const workshopPayload: Partial<AdminWorkshop> = {
       title: String(formData.get('title') || '').trim(),
       name: String(formData.get('title') || '').trim(),
-      organizer: String(formData.get('organizer') || '').trim(),
-      instructor: String(formData.get('instructor') || formData.get('organizer') || '').trim(),
+      organizer,
+      instructor,
+      category: String(formData.get('category') || '').trim(),
       location: String(formData.get('venue') || formData.get('location') || '').trim(),
       venue: String(formData.get('venue') || formData.get('location') || '').trim(),
       workMode: format,
       format,
-      startDate: String(formData.get('startDate') || '2026-12-10').trim(),
-      endDate: String(formData.get('endDate') || '2026-12-15').trim(),
-      date: String(formData.get('startDate') || '2026-12-10').trim(),
-      time: String(formData.get('time') || '09:30 AM - 04:30 PM IST').trim(),
-      duration: String(formData.get('duration') || '2 Days Intensive').trim(),
-      fees: String(formData.get('fees') || 'Free').trim(),
-      capacity: Number(formData.get('capacity') || 50),
-      registrationUrl,
+      startDate: String(formData.get('startDate') || '').trim(),
+      endDate: String(formData.get('startDate') || '').trim(),
+      date: String(formData.get('startDate') || '').trim(),
+      time: String(formData.get('time') || '').trim(),
+      duration: String(formData.get('duration') || '').trim(),
+      fees: String(formData.get('fees') || '').trim(),
+      capacity,
+      registrationUrl: urlCheck.normalizedUrl || registrationUrl,
       registrationDeadline: String(formData.get('registrationDeadline') || '').trim(),
       availability: String(formData.get('availability') || 'Open').trim(),
       description: String(formData.get('description') || '').trim(),
@@ -846,12 +938,81 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
     }
   };
 
+  const handleUpdateCourseApproval = async (
+    course: AdminCourse,
+    approvalStatus: 'approved' | 'rejected' | 'pending'
+  ) => {
+    try {
+      const updated = await adminApi.updateCourseApproval(course.id, approvalStatus);
+      setCourses(courses.map((c) => (c.id === course.id ? updated : c)));
+      addToast(
+        `"${updated.title}" ${approvalStatus === 'approved' ? 'approved and published' : approvalStatus === 'rejected' ? 'rejected' : 'moved to pending'}.`,
+        'success'
+      );
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Error updating course approval status.', 'error');
+    }
+  };
+
+  const handleScanExpiredCourses = async () => {
+    setIsScanningExpiredCourses(true);
+    try {
+      const res = await adminApi.scanExpiredCourses();
+      addToast(res.message, res.expiredCount > 0 ? 'success' : 'info');
+      await loadDashboardData(true);
+    } catch (err: any) {
+      addToast(err.message || 'Failed to scan expired courses.', 'error');
+    } finally {
+      setIsScanningExpiredCourses(false);
+    }
+  };
+
+  const handleAddCourseCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newCourseCategory.trim();
+    if (trimmed.length < 2) {
+      addToast('Category name must be at least 2 characters.', 'error');
+      return;
+    }
+    setIsManagingCourseCategory(true);
+    try {
+      const res = await adminApi.addCourseCategory(trimmed);
+      setCourseCategories(res.categories);
+      setNewCourseCategory('');
+      addToast(res.message || `Added course category "${trimmed}".`, 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Failed to add course category.', 'error');
+    } finally {
+      setIsManagingCourseCategory(false);
+    }
+  };
+
+  const handleDeleteCourseCategory = async (catName: string) => {
+    setIsManagingCourseCategory(true);
+    try {
+      const res = await adminApi.deleteCourseCategory(catName);
+      setCourseCategories(res.categories);
+      if (courseCategoryFilter.toLowerCase() === catName.toLowerCase()) {
+        setCourseCategoryFilter('all');
+      }
+      addToast(res.message || `Removed custom category "${catName}".`, 'success');
+    } catch (err: any) {
+      addToast(err.message || 'Failed to remove course category.', 'error');
+    } finally {
+      setIsManagingCourseCategory(false);
+    }
+  };
+
   const handleSaveCourse = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
 
     const title = String(formData.get('title') || '').trim();
     const provider = String(formData.get('provider') || '').trim();
+    const duration = String(formData.get('duration') || '').trim();
+    const fees = String(formData.get('fees') || '').trim();
+    const description = String(formData.get('description') || '').trim();
     const registrationUrl = String(formData.get('registrationUrl') || courseRegUrlDraft || '').trim();
     const imageUrl = (courseImagePreview || String(formData.get('imageUrl') || '').trim()).trim();
 
@@ -863,8 +1024,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       addToast('Provider or institution name is required.', 'error');
       return;
     }
-    if (!isValidCourseRegistrationUrl(registrationUrl)) {
-      addToast('Please provide a valid official registration URL starting with http:// or https://.', 'error');
+    if (!duration) {
+      addToast('Course duration is required.', 'error');
+      return;
+    }
+    if (!fees) {
+      addToast('Course fee information is required (e.g. Free or ₹1,500).', 'error');
+      return;
+    }
+    if (!description) {
+      addToast('Course description is required.', 'error');
+      return;
+    }
+
+    const urlCheck = validateCourseRegistrationUrl(registrationUrl);
+    if (!urlCheck.valid) {
+      addToast(
+        urlCheck.reason || 'Please provide a valid official registration URL starting with http:// or https://.',
+        'error'
+      );
       return;
     }
     if (imageUrl && !isValidCourseImageUrl(imageUrl)) {
@@ -872,37 +1050,46 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       return;
     }
 
-    const category = normalizeCourseCategory(String(formData.get('category') || 'Biotechnology'));
+    const category = resolveCourseCategory(
+      String(formData.get('category') || 'Biotechnology'),
+      courseCategories
+    );
+    const providerType = normalizeCourseProviderType(String(formData.get('providerType') || 'third_party'));
+    const pricingType = classifyCoursePricing(fees, String(formData.get('pricingType') || ''));
     const deliveryMode = normalizeDeliveryMode(String(formData.get('deliveryMode') || 'Online (Self-Paced)'));
     const status = normalizeCourseStatus(String(formData.get('status') || 'available'));
+    const approvalStatus = normalizeCourseApprovalStatus(String(formData.get('approvalStatus') || 'approved'));
     const curriculum = parseCurriculumInput(String(formData.get('curriculum') || ''));
     const certificateInfo = String(formData.get('certificateInfo') || '').trim();
-    const fees = String(formData.get('fees') || 'Free').trim() || 'Free';
     const featured = formData.get('featured') === 'on' || formData.get('featured') === 'true';
 
     const coursePayload: Partial<AdminCourse> = {
       title,
       name: title,
       provider,
-      instructor: String(formData.get('instructor') || provider).trim(),
+      providerType,
+      instructor: String(formData.get('instructor') || '').trim(),
       category,
-      duration: String(formData.get('duration') || '6 Weeks').trim(),
-      level: String(formData.get('level') || 'Intermediate').trim(),
+      duration,
+      level: String(formData.get('level') || '').trim(),
       deliveryMode,
       fees,
       price: fees,
-      eligibility: String(formData.get('eligibility') || 'Life Sciences & Biotechnology Students').trim(),
-      description: String(formData.get('description') || '').trim(),
+      pricingType,
+      eligibility: String(formData.get('eligibility') || '').trim(),
+      description,
       curriculum,
       syllabus: curriculum,
       certificateInfo,
       isCertificateAvailable: Boolean(certificateInfo),
-      registrationDeadline: String(formData.get('registrationDeadline') || 'Open / Rolling').trim(),
-      registrationUrl,
-      registrationLink: registrationUrl,
+      registrationDeadline: String(formData.get('registrationDeadline') || '').trim(),
+      registrationUrl: urlCheck.normalizedUrl,
+      registrationLink: urlCheck.normalizedUrl,
       imageUrl: imageUrl || getDefaultCourseImageForCategory(category),
       status,
       availability: status === 'closed' ? 'Closed' : 'Available',
+      approvalStatus,
+      isApproved: approvalStatus === 'approved',
       featured
     };
 
@@ -1042,6 +1229,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
   });
 
   const filteredWorkshops = workshops.filter((w) => {
+    const approval = normalizeWorkshopApprovalStatus(w.approvalStatus, w.isApproved);
+    if (workshopApprovalFilter !== 'all' && approval !== workshopApprovalFilter) {
+      return false;
+    }
     if (workshopStatusFilter !== 'all') {
       const curStatus = (w.status || 'upcoming').toLowerCase();
       if (curStatus !== workshopStatusFilter.toLowerCase()) return false;
@@ -1056,17 +1247,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
       (w.title || '').toLowerCase().includes(q) ||
       (w.organizer || '').toLowerCase().includes(q) ||
       (w.instructor || '').toLowerCase().includes(q) ||
+      (w.category || '').toLowerCase().includes(q) ||
       (w.location || '').toLowerCase().includes(q) ||
       (w.venue || '').toLowerCase().includes(q)
     );
   });
 
+  const allCourseCategories = extractCourseCategories(courses, courseCategories);
+  const coreCourseCategorySet = new Set(COURSE_CATEGORIES.map((c) => c.toLowerCase()));
+
   const filteredCourses = courses.filter((c) => {
     if (courseCategoryFilter !== 'all') {
-      if (normalizeCourseCategory(c.category) !== courseCategoryFilter) return false;
+      const targetLower = courseCategoryFilter.trim().toLowerCase();
+      const itemLower = (c.category || '').trim().toLowerCase();
+      if (itemLower !== targetLower) {
+        const isCanonical = coreCourseCategorySet.has(targetLower);
+        if (!isCanonical || normalizeCourseCategory(c.category).toLowerCase() !== targetLower) {
+          return false;
+        }
+      }
     }
     if (courseStatusFilter !== 'all') {
-      if (normalizeCourseStatus(c.status, c.availability) !== courseStatusFilter) return false;
+      const effectiveStatus = isCourseExpired(c) ? 'closed' : normalizeCourseStatus(c.status, c.availability);
+      if (effectiveStatus !== courseStatusFilter) return false;
+    }
+    if (courseApprovalFilter !== 'all') {
+      const approval = normalizeCourseApprovalStatus(c.approvalStatus, c.isApproved);
+      if (approval !== courseApprovalFilter) return false;
+    }
+    if (coursePricingFilter !== 'all') {
+      const pricing = classifyCoursePricing(c.fees || c.price, c.pricingType);
+      if (pricing !== coursePricingFilter) return false;
     }
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
@@ -1138,6 +1349,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
   const pendingApprovalsCount =
     jobs.filter((j) => !j.isApproved && j.verificationStatus !== 'Rejected').length +
+    workshops.filter((w) => normalizeWorkshopApprovalStatus(w.approvalStatus, w.isApproved) === 'pending').length +
     submittedOpportunities.filter((o) => !o.isApproved && o.status !== 'Rejected').length;
 
   return (
@@ -1246,6 +1458,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
             ['sources', 'Sources Registry', Layers],
             ['backups', `Backups (${backups.length})`, HardDrive],
             ['automation', `Feeds (${pendingApprovalsCount} pending)`, Sparkles],
+            ['employers', 'Employers', Building2],
             ['audit', 'Logs & Export', History]
           ].map(([tabKey, label, Icon]: any) => (
             <button
@@ -1594,17 +1807,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     Manage summer research fellowships, industrial biotech internships, stipends, and host portal verification.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingInternship(null);
-                    setIsInternshipModalOpen(true);
-                  }}
-                  className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer text-xs"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Add Internship</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleScanExpiredInternships}
+                    className="px-3.5 py-2 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-xs cursor-pointer text-xs"
+                  >
+                    <Clock className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Scan Expired</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingInternship(null);
+                      setIsInternshipModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-xs cursor-pointer text-xs"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Internship</span>
+                  </button>
+                </div>
               </div>
 
               {/* Filter Chips */}
@@ -1802,8 +2025,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     Schedule hands-on lab training, update enrollment fees, registration links, format, and toggle featured programs on the homepage.
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
+                    type="button"
+                    onClick={handleScanExpiredWorkshops}
+                    disabled={isScanningExpiredWorkshops}
+                    className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 cursor-pointer text-xs disabled:opacity-60"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isScanningExpiredWorkshops ? 'animate-spin' : ''}`} />
+                    <span>{isScanningExpiredWorkshops ? 'Scanning...' : 'Scan Expired'}</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleOpenCreateWorkshop}
                     className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer text-xs"
                   >
@@ -1814,39 +2047,70 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
               </div>
 
               {/* Stats Bar */}
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Workshops</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total</span>
                   <span className="text-lg font-bold font-mono text-slate-900 dark:text-white">{workshops.length}</span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending Review</span>
+                  <span className="text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
+                    {workshops.filter((w) => normalizeWorkshopApprovalStatus(w.approvalStatus, w.isApproved) === 'pending').length}
+                  </span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Approved</span>
+                  <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                    {workshops.filter((w) => normalizeWorkshopApprovalStatus(w.approvalStatus, w.isApproved) === 'approved').length}
+                  </span>
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Upcoming</span>
                   <span className="text-lg font-bold font-mono text-sky-600 dark:text-sky-400">
-                    {workshops.filter(w => (w.status || 'upcoming').toLowerCase() === 'upcoming').length}
+                    {workshops.filter((w) => (w.status || 'upcoming').toLowerCase() === 'upcoming' && !isWorkshopExpired(w)).length}
                   </span>
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Ongoing</span>
-                  <span className="text-lg font-bold font-mono text-teal-600 dark:text-teal-400">
-                    {workshops.filter(w => (w.status || '').toLowerCase() === 'ongoing').length}
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Expired / Closed</span>
+                  <span className="text-lg font-bold font-mono text-rose-500">
+                    {workshops.filter((w) => isWorkshopExpired(w)).length}
                   </span>
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Completed</span>
-                  <span className="text-lg font-bold font-mono text-slate-500">
-                    {workshops.filter(w => (w.status || '').toLowerCase() === 'completed').length}
-                  </span>
-                </div>
-                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Homepage Featured</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Featured</span>
                   <span className="text-lg font-bold font-mono text-amber-500">
-                    {workshops.filter(w => w.featured).length}
+                    {workshops.filter((w) => w.featured).length}
                   </span>
                 </div>
               </div>
 
-              {/* Sub-Filters: Status & Format */}
+              {/* Sub-Filters: Approval, Status & Format */}
               <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-slate-400 font-semibold text-[11px]">Approval:</span>
+                  {(
+                    [
+                      { id: 'all', label: 'All' },
+                      { id: 'pending', label: 'Pending' },
+                      { id: 'approved', label: 'Approved' },
+                      { id: 'rejected', label: 'Rejected' },
+                    ] as const
+                  ).map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => setWorkshopApprovalFilter(a.id)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                        workshopApprovalFilter === a.id
+                          ? 'bg-emerald-700 text-white shadow-2xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                      }`}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-slate-400 font-semibold text-[11px]">Status:</span>
                   {[
@@ -1857,8 +2121,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   ].map((s) => (
                     <button
                       key={s.id}
+                      type="button"
                       onClick={() => setWorkshopStatusFilter(s.id)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
                         workshopStatusFilter === s.id
                           ? 'bg-[#0B2A5B] text-white shadow-2xs'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
@@ -1879,8 +2144,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   ].map((f) => (
                     <button
                       key={f.id}
+                      type="button"
                       onClick={() => setWorkshopFormatFilter(f.id)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors ${
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
                         workshopFormatFilter === f.id
                           ? 'bg-purple-700 text-white shadow-2xs'
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
@@ -1894,7 +2160,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
               {/* Workshops Cards Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredWorkshops.map((w) => (
+                {filteredWorkshops.map((w) => {
+                  const approvalStatus = normalizeWorkshopApprovalStatus(w.approvalStatus, w.isApproved);
+                  const expired = isWorkshopExpired(w);
+                  const capacityNum = typeof w.capacity === 'number' && w.capacity > 0 ? w.capacity : null;
+                  return (
                   <div
                     key={w.id}
                     className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between overflow-hidden relative group hover:border-[#14A3A0]/60 transition-all"
@@ -1903,80 +2173,135 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                       {/* Thumbnail Media */}
                       <div className="h-32 w-full bg-slate-100 dark:bg-slate-800 relative overflow-hidden">
                         <img
-                          src={w.imageUrl || 'https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=800&q=80'}
+                          src={w.imageUrl || DEFAULT_WORKSHOP_IMAGE}
                           alt={w.title}
                           className="w-full h-full object-cover"
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent" />
 
                         {/* Top Badges */}
-                        <div className="absolute top-2 left-2 right-2 flex items-center justify-between">
-                          <span
-                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold text-white backdrop-blur-md ${
-                              (w.format || w.workMode) === 'Offline'
-                                ? 'bg-emerald-600/90'
-                                : (w.format || w.workMode) === 'Hybrid'
-                                ? 'bg-purple-600/90'
-                                : 'bg-blue-600/90'
-                            }`}
-                          >
-                            {w.format || w.workMode || 'Online'}
-                          </span>
+                        <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold text-white backdrop-blur-md ${
+                                (w.format || w.workMode) === 'Offline'
+                                  ? 'bg-emerald-600/90'
+                                  : (w.format || w.workMode) === 'Hybrid'
+                                  ? 'bg-purple-600/90'
+                                  : 'bg-blue-600/90'
+                              }`}
+                            >
+                              {w.format || w.workMode || 'Online'}
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold backdrop-blur-md ${
+                                approvalStatus === 'approved'
+                                  ? 'bg-emerald-950/80 text-emerald-200'
+                                  : approvalStatus === 'rejected'
+                                  ? 'bg-rose-950/85 text-rose-200'
+                                  : 'bg-amber-600/90 text-white'
+                              }`}
+                            >
+                              {approvalStatus === 'approved'
+                                ? 'Approved'
+                                : approvalStatus === 'rejected'
+                                ? 'Rejected'
+                                : 'Pending'}
+                            </span>
+                            {expired && (
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-900/90 text-rose-300 backdrop-blur-md">
+                                Expired
+                              </span>
+                            )}
+                          </div>
 
                           <button
                             type="button"
                             onClick={() => handleToggleWorkshopFeatured(w)}
+                            disabled={approvalStatus !== 'approved'}
                             aria-label={w.featured ? `Unfeature ${w.title} from homepage` : `Feature ${w.title} on homepage`}
-                            className={`p-1.5 rounded-full backdrop-blur-md transition-colors cursor-pointer ${
+                            className={`p-1.5 rounded-full backdrop-blur-md transition-colors cursor-pointer disabled:opacity-40 ${
                               w.featured
                                 ? 'bg-amber-500 text-white shadow-xs'
                                 : 'bg-slate-900/60 text-slate-300 hover:text-amber-400'
                             }`}
-                            title={w.featured ? 'Featured on Homepage (Click to unfeature)' : 'Click to feature on homepage'}
+                            title={
+                              approvalStatus !== 'approved'
+                                ? 'Approve workshop before featuring on homepage'
+                                : w.featured
+                                ? 'Featured on Homepage (Click to unfeature)'
+                                : 'Click to feature on homepage'
+                            }
                           >
                             <Star className={`w-3.5 h-3.5 ${w.featured ? 'fill-current' : ''}`} />
                           </button>
                         </div>
 
-                        {/* Bottom Thumbnail Info */}
-                        <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] text-white font-mono">
-                          <span>{w.duration || '2 Days'}</span>
-                          <span className="font-bold text-emerald-300">{w.fees || 'Free'}</span>
-                        </div>
+                        {/* Bottom Thumbnail Info (saved fields only) */}
+                        {(w.duration || w.fees) && (
+                          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] text-white font-mono">
+                            <span>{w.duration || ''}</span>
+                            <span className="font-bold text-emerald-300">{w.fees || ''}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Content */}
                       <div className="p-4 space-y-3">
                         <div>
-                          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
-                            {w.organizer} {w.instructor && w.instructor !== w.organizer && `· ${w.instructor}`}
-                          </div>
+                          {w.category && (
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-purple-600 dark:text-purple-400 truncate mb-0.5">
+                              {w.category}
+                            </div>
+                          )}
+                          {(w.organizer || w.instructor) && (
+                            <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                              {w.organizer || w.instructor}
+                              {w.organizer && w.instructor && w.instructor !== w.organizer && ` · ${w.instructor}`}
+                            </div>
+                          )}
                           <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-0.5 line-clamp-2">
                             {w.title}
                           </h3>
                         </div>
 
                         <div className="space-y-1 text-[11px] text-slate-600 dark:text-slate-300">
-                          <div className="flex items-center justify-between text-[10px]">
-                            <span className="text-slate-400">Schedule:</span>
-                            <span className="font-semibold text-slate-700 dark:text-slate-200">
-                              {w.startDate || w.date} ({w.time || '09:30 AM'})
-                            </span>
-                          </div>
+                          {(w.startDate || w.date) && (
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">Schedule:</span>
+                              <span className="font-semibold text-slate-700 dark:text-slate-200">
+                                {w.startDate || w.date}
+                                {w.time ? ` (${w.time})` : ''}
+                              </span>
+                            </div>
+                          )}
 
-                          <div className="flex items-center justify-between text-[10px]">
-                            <span className="text-slate-400">Venue:</span>
-                            <span className="truncate max-w-[150px] font-medium" title={w.venue || w.location}>
-                              {w.venue || w.location || 'Online'}
-                            </span>
-                          </div>
+                          {(w.venue || w.location) && (
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">Venue:</span>
+                              <span className="truncate max-w-[150px] font-medium" title={w.venue || w.location}>
+                                {w.venue || w.location}
+                              </span>
+                            </div>
+                          )}
 
-                          <div className="flex items-center justify-between text-[10px]">
-                            <span className="text-slate-400">Deadline:</span>
-                            <span className="font-mono text-slate-700 dark:text-slate-200">
-                              {w.registrationDeadline || 'Open'}
-                            </span>
-                          </div>
+                          {w.registrationDeadline && (
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">Deadline:</span>
+                              <span className="font-mono text-slate-700 dark:text-slate-200">
+                                {w.registrationDeadline}
+                              </span>
+                            </div>
+                          )}
+
+                          {capacityNum !== null && (
+                            <div className="flex items-center justify-between text-[10px]">
+                              <span className="text-slate-400">Capacity:</span>
+                              <span className="font-mono text-slate-700 dark:text-slate-200">
+                                {capacityNum} seats
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Status & Availability Quick Selectors */}
@@ -2009,6 +2334,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                               <option value="Closed">Closed</option>
                             </select>
                           </div>
+                        </div>
+
+                        {/* Approval Moderation Bar */}
+                        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5">
+                          {approvalStatus !== 'approved' && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateWorkshopApproval(w, 'approved')}
+                              className="flex-1 py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                            >
+                              Approve
+                            </button>
+                          )}
+                          {approvalStatus !== 'rejected' && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateWorkshopApproval(w, 'rejected')}
+                              className="flex-1 py-1.5 px-2 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 dark:hover:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                            >
+                              Reject
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2061,121 +2408,244 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* ========================================================= */}
-          {/* PANEL C: COURSES MANAGEMENT (PHASE 09)                    */}
+          {/* PANEL C: COURSES MANAGEMENT (PHASE 13)                    */}
           {/* ========================================================= */}
           {activeTab === 'courses' && (
             <div className="space-y-4 text-xs">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
                 <div>
                   <h2 className="text-sm font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                    <span>Biotechnology Courses &amp; Educational Programs</span>
+                    <span>Biotechnology Courses Management</span>
                     <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300">
                       {courses.length} Courses
                     </span>
                   </h2>
                   <p className="text-slate-500 text-[11px] mt-0.5">
-                    Add, edit, or remove educational courses across 9 disciplines, upload course images, manage official registration links, availability, and homepage features.
+                    Manage third-party and BIO-INEXA courses, Free/Paid classification, categories, registration URL validation, expiry scanning, and approval moderation.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleOpenCreateCourse}
-                  className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Add Course</span>
-                </button>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={isScanningExpiredCourses}
+                    onClick={handleScanExpiredCourses}
+                    className="px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Clock className={`w-3.5 h-3.5 ${isScanningExpiredCourses ? 'animate-spin' : ''}`} />
+                    <span>{isScanningExpiredCourses ? 'Scanning...' : 'Scan Expired'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOpenCreateCourse}
+                    className="px-4 py-2 bg-[#0B2A5B] hover:bg-blue-900 text-white font-bold rounded-xl transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add Course</span>
+                  </button>
+                </div>
               </div>
 
               {/* Stats Bar */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Courses</span>
                   <span className="text-lg font-bold font-mono text-slate-900 dark:text-white">{courses.length}</span>
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Available</span>
-                  <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
-                    {courses.filter((c) => normalizeCourseStatus(c.status, c.availability) === 'available').length}
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pending Approval</span>
+                  <span className="text-lg font-bold font-mono text-amber-600 dark:text-amber-400">
+                    {courses.filter((c) => normalizeCourseApprovalStatus(c.approvalStatus, c.isApproved) === 'pending').length}
                   </span>
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Closed</span>
-                  <span className="text-lg font-bold font-mono text-slate-500">
-                    {courses.filter((c) => normalizeCourseStatus(c.status, c.availability) === 'closed').length}
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Available</span>
+                  <span className="text-lg font-bold font-mono text-emerald-600 dark:text-emerald-400">
+                    {courses.filter((c) => !isCourseExpired(c) && normalizeCourseStatus(c.status, c.availability) === 'available').length}
+                  </span>
+                </div>
+                <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Closed / Expired</span>
+                  <span className="text-lg font-bold font-mono text-rose-600 dark:text-rose-400">
+                    {courses.filter((c) => isCourseExpired(c) || normalizeCourseStatus(c.status, c.availability) === 'closed').length}
                   </span>
                 </div>
                 <div className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Homepage Featured</span>
-                  <span className="text-lg font-bold font-mono text-amber-500">
+                  <span className="text-lg font-bold font-mono text-sky-600 dark:text-sky-400">
                     {courses.filter((c) => c.featured).length}
                   </span>
                 </div>
               </div>
 
-              {/* Filter Toolbar: 9 Categories + Availability Status */}
+              {/* Course Category Management Strip */}
+              <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <span className="font-bold text-slate-800 dark:text-slate-100 text-[11px]">
+                      Course Category Management ({allCourseCategories.length})
+                    </span>
+                    <span className="text-[10px] text-slate-400 ml-2">
+                      9 core categories + custom categories
+                    </span>
+                  </div>
+                  <form onSubmit={handleAddCourseCategory} className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newCourseCategory}
+                      onChange={(e) => setNewCourseCategory(e.target.value)}
+                      placeholder="New custom category..."
+                      aria-label="New custom course category name"
+                      className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 text-[11px] focus:outline-none"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isManagingCourseCategory || !newCourseCategory.trim()}
+                      className="px-2.5 py-1 rounded-lg bg-[#14A3A0] hover:bg-teal-700 disabled:opacity-50 text-white font-bold text-[11px] cursor-pointer"
+                    >
+                      Add
+                    </button>
+                  </form>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {allCourseCategories.map((cat) => {
+                    const isCore = coreCourseCategorySet.has(cat.toLowerCase());
+                    return (
+                      <span
+                        key={cat}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-semibold ${
+                          isCore
+                            ? 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            : 'bg-teal-50 dark:bg-teal-950/50 text-teal-800 dark:text-teal-300 border border-teal-200 dark:border-teal-800'
+                        }`}
+                      >
+                        <span>{cat}</span>
+                        {!isCore && (
+                          <button
+                            type="button"
+                            disabled={isManagingCourseCategory}
+                            onClick={() => handleDeleteCourseCategory(cat)}
+                            aria-label={`Remove custom category ${cat}`}
+                            className="hover:text-rose-600 cursor-pointer"
+                            title="Remove custom category"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Filter Toolbar: Categories, Approval, Pricing & Availability */}
               <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800">
-                <div className="flex items-center gap-2">
-                  <label htmlFor="admin-course-category-filter" className="text-slate-400 font-semibold text-[11px]">
-                    Category:
-                  </label>
-                  <select
-                    id="admin-course-category-filter"
-                    value={courseCategoryFilter}
-                    onChange={(e) => setCourseCategoryFilter(e.target.value)}
-                    className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold text-[11px] focus:outline-none"
-                  >
-                    <option value="all">All 9 Categories</option>
-                    {COURSE_CATEGORIES.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <label htmlFor="admin-course-category-filter" className="text-slate-400 font-semibold text-[11px]">
+                      Category:
+                    </label>
+                    <select
+                      id="admin-course-category-filter"
+                      value={courseCategoryFilter}
+                      onChange={(e) => setCourseCategoryFilter(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-semibold text-[11px] focus:outline-none"
+                    >
+                      <option value="all">All Categories ({allCourseCategories.length})</option>
+                      {allCourseCategories.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-400 font-semibold text-[11px] mr-1">Approval:</span>
+                    {(['all', 'pending', 'approved', 'rejected'] as const).map((ap) => (
+                      <button
+                        key={ap}
+                        type="button"
+                        onClick={() => setCourseApprovalFilter(ap)}
+                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold capitalize transition-colors cursor-pointer ${
+                          courseApprovalFilter === ap
+                            ? 'bg-amber-600 text-white shadow-2xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                        }`}
+                      >
+                        {ap}
+                      </button>
                     ))}
-                  </select>
+                  </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-slate-400 font-semibold text-[11px]">Status:</span>
-                  {(
-                    [
-                      { id: 'all', label: 'All' },
-                      { id: 'available', label: 'Available' },
-                      { id: 'closed', label: 'Closed' }
-                    ] as const
-                  ).map((st) => (
-                    <button
-                      key={st.id}
-                      type="button"
-                      onClick={() => setCourseStatusFilter(st.id)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
-                        courseStatusFilter === st.id
-                          ? 'bg-[#0B2A5B] text-white shadow-2xs'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
-                      }`}
-                    >
-                      {st.label}
-                    </button>
-                  ))}
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-400 font-semibold text-[11px] mr-1">Pricing:</span>
+                    {(['all', 'free', 'paid'] as const).map((pr) => (
+                      <button
+                        key={pr}
+                        type="button"
+                        onClick={() => setCoursePricingFilter(pr)}
+                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold capitalize transition-colors cursor-pointer ${
+                          coursePricingFilter === pr
+                            ? 'bg-[#14A3A0] text-white shadow-2xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                        }`}
+                      >
+                        {pr}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-400 font-semibold text-[11px] mr-1">Status:</span>
+                    {(
+                      [
+                        { id: 'all', label: 'All' },
+                        { id: 'available', label: 'Available' },
+                        { id: 'closed', label: 'Closed' }
+                      ] as const
+                    ).map((st) => (
+                      <button
+                        key={st.id}
+                        type="button"
+                        onClick={() => setCourseStatusFilter(st.id)}
+                        className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
+                          courseStatusFilter === st.id
+                            ? 'bg-[#0B2A5B] text-white shadow-2xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                        }`}
+                      >
+                        {st.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
               {/* Courses Cards Grid */}
               {filteredCourses.length === 0 ? (
                 <div className="p-8 text-center bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-slate-500">
-                  No courses match the current category or status filter.
+                  No courses match the current category, approval, pricing, or status filter.
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {filteredCourses.map((c) => {
-                    const normalizedStatus = normalizeCourseStatus(c.status, c.availability);
+                    const expired = isCourseExpired(c);
+                    const normalizedStatus = expired ? 'closed' : normalizeCourseStatus(c.status, c.availability);
+                    const approvalStatus = normalizeCourseApprovalStatus(c.approvalStatus, c.isApproved);
+                    const providerType = normalizeCourseProviderType(c.providerType);
+                    const pricingType = classifyCoursePricing(c.fees || c.price, c.pricingType);
                     const curriculumList = c.curriculum || c.syllabus || [];
                     const regUrl = c.registrationUrl || c.registrationLink || '';
+                    const urlValidation = validateCourseRegistrationUrl(regUrl);
 
                     return (
                       <div
@@ -2192,10 +2662,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                             />
                             <div className="absolute inset-0 bg-gradient-to-t from-slate-950/75 via-transparent to-transparent" />
 
-                            <div className="absolute top-2 left-2 right-2 flex items-center justify-between gap-2">
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-white bg-[#0B2A5B]/90 backdrop-blur-md truncate max-w-[170px]">
-                                {normalizeCourseCategory(c.category)}
-                              </span>
+                            <div className="absolute top-2 left-2 right-2 flex items-start justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-1 max-w-[82%]">
+                                <span className="px-2 py-0.5 rounded-md text-[10px] font-bold text-white bg-[#0B2A5B]/90 backdrop-blur-md truncate">
+                                  {c.category || 'Biotechnology'}
+                                </span>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase ${
+                                    providerType === 'bionexa'
+                                      ? 'bg-[#14A3A0] text-white'
+                                      : 'bg-slate-900/85 text-sky-200'
+                                  }`}
+                                >
+                                  {providerType === 'bionexa' ? 'BIO-INEXA' : 'Third-Party'}
+                                </span>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase ${
+                                    pricingType === 'free'
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'bg-indigo-600 text-white'
+                                  }`}
+                                >
+                                  {pricingType}
+                                </span>
+                                {expired && (
+                                  <span className="px-1.5 py-0.5 rounded-md text-[9px] font-bold uppercase bg-rose-700 text-white">
+                                    Expired
+                                  </span>
+                                )}
+                              </div>
 
                               <button
                                 type="button"
@@ -2205,7 +2700,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                                     ? `Unfeature course ${c.title} from homepage`
                                     : `Feature course ${c.title} on homepage`
                                 }
-                                className={`p-1.5 rounded-full backdrop-blur-md transition-colors cursor-pointer ${
+                                className={`p-1.5 rounded-full backdrop-blur-md transition-colors cursor-pointer shrink-0 ${
                                   c.featured
                                     ? 'bg-amber-500 text-white shadow-xs'
                                     : 'bg-slate-900/60 text-slate-300 hover:text-amber-400'
@@ -2217,22 +2712,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                             </div>
 
                             <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] text-white font-mono">
-                              <span>{c.duration || 'Self-Paced'}</span>
+                              <span>{c.duration || 'Duration TBA'}</span>
                               <span className="font-bold text-emerald-300 truncate max-w-[130px]">
-                                {c.fees || c.price || 'See Provider'}
+                                {c.fees || c.price || 'Not specified'}
                               </span>
                             </div>
                           </div>
 
                           {/* Course Info Body */}
                           <div className="p-4 space-y-2.5">
-                            <div>
-                              <div className="text-[10px] font-semibold text-[#14A3A0] truncate">
-                                {c.provider || c.instructor || 'Course Provider'}
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-[10px] font-semibold text-[#14A3A0] truncate">
+                                  {c.provider || c.instructor || 'Course Provider'}
+                                </div>
+                                <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-0.5 line-clamp-2">
+                                  {c.title}
+                                </h3>
                               </div>
-                              <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 mt-0.5 line-clamp-2">
-                                {c.title}
-                              </h3>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase shrink-0 ${
+                                  approvalStatus === 'approved'
+                                    ? 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
+                                    : approvalStatus === 'pending'
+                                    ? 'bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300'
+                                    : 'bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300'
+                                }`}
+                              >
+                                {approvalStatus}
+                              </span>
                             </div>
 
                             <p className="text-[11px] text-slate-600 dark:text-slate-300 line-clamp-2">
@@ -2241,15 +2749,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
 
                             <div className="space-y-1 text-[10px] text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800">
                               <div className="flex items-center justify-between gap-2">
-                                <span>Mode:</span>
-                                <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">
-                                  {c.deliveryMode || 'Online (Self-Paced)'}
+                                <span>Portal:</span>
+                                <span className="font-mono text-slate-700 dark:text-slate-200 truncate">
+                                  {urlValidation.valid ? urlValidation.domain : 'Invalid / Missing URL'}
                                 </span>
                               </div>
                               <div className="flex items-center justify-between gap-2">
                                 <span>Deadline:</span>
                                 <span className="font-mono text-slate-700 dark:text-slate-200">
-                                  {c.registrationDeadline || 'Open / Rolling'}
+                                  {c.registrationDeadline || 'Not specified'}
                                 </span>
                               </div>
                               <div className="flex items-center justify-between gap-2">
@@ -2259,6 +2767,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                                 </span>
                               </div>
                             </div>
+
+                            {/* Approval Moderation Actions */}
+                            {approvalStatus !== 'approved' && (
+                              <div className="flex items-center gap-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-800">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateCourseApproval(c, 'approved')}
+                                  className="flex-1 py-1.5 px-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  <span>Approve</span>
+                                </button>
+                                {approvalStatus !== 'rejected' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateCourseApproval(c, 'rejected')}
+                                    className="flex-1 py-1.5 px-2 rounded-lg bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 font-bold text-[10px] flex items-center justify-center gap-1 cursor-pointer"
+                                  >
+                                    <XCircle className="w-3 h-3" />
+                                    <span>Reject</span>
+                                  </button>
+                                )}
+                              </div>
+                            )}
 
                             {/* Quick Status Toggle */}
                             <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800">
@@ -2287,19 +2819,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                         {/* Card Footer Actions */}
                         <div className="p-3 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
-                            {isValidCourseRegistrationUrl(regUrl) ? (
+                            {urlValidation.valid ? (
                               <a
-                                href={regUrl}
+                                href={urlValidation.normalizedUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 aria-label={`Open official registration link for ${c.title}`}
                                 className="p-1.5 text-slate-500 hover:text-teal-600 rounded-lg hover:bg-white dark:hover:bg-slate-700 transition-colors"
-                                title="Verify Official Registration URL in New Tab"
+                                title={`Verify Official Registration URL (${urlValidation.domain})`}
                               >
                                 <ExternalLink className="w-3.5 h-3.5" />
                               </a>
                             ) : (
-                              <span className="text-[10px] text-amber-500">No URL</span>
+                              <span className="text-[10px] text-amber-500">Invalid URL</span>
                             )}
                             <span className="text-[10px] text-slate-400">
                               {c.featured ? '★ Featured' : ''}
@@ -2307,6 +2839,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                           </div>
 
                           <div className="flex items-center gap-1.5">
+                            {approvalStatus === 'approved' && (
+                              <button
+                                type="button"
+                                onClick={() => handleUpdateCourseApproval(c, 'rejected')}
+                                title="Unpublish / Reject Course"
+                                className="px-2 py-1 text-[10px] text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg font-semibold cursor-pointer"
+                              >
+                                Unpublish
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleOpenEditCourse(c)}
@@ -3057,6 +3599,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
               }}
             />
           )}
+
+          {/* ========================================================= */}
+          {/* PANEL J2: EMPLOYER VERIFICATION & ACCOUNT GOVERNANCE      */}
+          {/* ========================================================= */}
+          {activeTab === 'employers' && <AdminCompaniesPanel />}
 
           {/* ========================================================= */}
           {/* PANEL K: ADMINISTRATOR ACTIVITY LOGS & AUTHORIZED EXPORT  */}
@@ -3936,29 +4483,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 )}
               </div>
 
-              {/* Organizer Institute & Instructor */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Organizer Institute, Instructor & Category */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Organizer Institute *</label>
                   <input
                     type="text"
                     name="organizer"
                     required
-                    defaultValue={editingWorkshop?.organizer || 'CSIR-IGIB'}
+                    defaultValue={editingWorkshop?.organizer || ''}
                     placeholder="e.g. CSIR-IGIB, IISc, Biocon Academy"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Lead Instructor / Faculty *</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Lead Instructor (Optional)</label>
                   <input
                     type="text"
                     name="instructor"
-                    required
-                    defaultValue={editingWorkshop?.instructor || editingWorkshop?.organizer || 'Lead Research Scientist'}
-                    placeholder="e.g. Dr. Debojyoti Chakraborty, Senior Principal Scientist"
+                    defaultValue={editingWorkshop?.instructor || ''}
+                    placeholder="e.g. Dr. Debojyoti Chakraborty"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Category *</label>
+                  <select
+                    name="category"
+                    required
+                    defaultValue={editingWorkshop?.category || WORKSHOP_CATEGORIES[0]}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
+                  >
+                    {WORKSHOP_CATEGORIES.map((cat) => (
+                      <option key={cat} value={cat}>
+                        {cat}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -3982,7 +4543,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     type="text"
                     name="venue"
                     required
-                    defaultValue={editingWorkshop?.venue || editingWorkshop?.location || 'CSIR-IGIB South Campus, Mathura Road, New Delhi'}
+                    defaultValue={editingWorkshop?.venue || editingWorkshop?.location || ''}
                     placeholder="e.g. IISc Campus, Bengaluru or Virtual Live Gateway"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
@@ -3992,12 +4553,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
               {/* Schedule: Date, Time & Duration */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Date *</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Workshop Date *</label>
                   <input
                     type="date"
                     name="startDate"
                     required
-                    defaultValue={toDateInputValue(editingWorkshop?.startDate || editingWorkshop?.date, '2026-12-10')}
+                    defaultValue={toDateInputValue(editingWorkshop?.startDate || editingWorkshop?.date, '')}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
@@ -4006,8 +4567,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <input
                     type="text"
                     name="time"
-                    defaultValue={editingWorkshop?.time || '09:30 AM - 04:30 PM IST'}
-                    placeholder="09:30 AM - 04:30 PM IST"
+                    defaultValue={editingWorkshop?.time || ''}
+                    placeholder="e.g. 09:30 AM - 04:30 PM IST"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-mono"
                   />
                 </div>
@@ -4016,7 +4577,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <input
                     type="text"
                     name="duration"
-                    defaultValue={editingWorkshop?.duration || '3 Days Intensive'}
+                    defaultValue={editingWorkshop?.duration || ''}
                     placeholder="e.g. 3 Days Intensive Lab"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
@@ -4032,7 +4593,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <input
                     type="date"
                     name="registrationDeadline"
-                    defaultValue={toDateInputValue(editingWorkshop?.registrationDeadline, '2026-12-05')}
+                    defaultValue={toDateInputValue(editingWorkshop?.registrationDeadline, '')}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none font-mono"
                   />
                 </div>
@@ -4041,7 +4602,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     <label className="block font-bold text-slate-700 dark:text-slate-300">
                       Registration URL * (Official Destination)
                     </label>
-                    {isValidWorkshopRegistrationUrl(workshopRegUrlDraft) && (
+                    {validateWorkshopRegistrationUrl(workshopRegUrlDraft).valid && (
                       <a
                         href={workshopRegUrlDraft.trim()}
                         target="_blank"
@@ -4062,6 +4623,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     placeholder="https://www.igib.res.in/"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none text-[11px]"
                   />
+                  {workshopRegUrlDraft.trim() && !validateWorkshopRegistrationUrl(workshopRegUrlDraft).valid && (
+                    <p className="text-[10px] text-rose-600 dark:text-rose-400">
+                      {validateWorkshopRegistrationUrl(workshopRegUrlDraft).reason}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -4099,17 +4665,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <input
                     type="text"
                     name="fees"
-                    defaultValue={editingWorkshop?.fees || 'Free / Subsidized'}
+                    defaultValue={editingWorkshop?.fees || ''}
+                    placeholder="e.g. Free or ₹1,500"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Capacity (Seats)</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Capacity (Optional)</label>
                   <input
                     type="number"
                     name="capacity"
-                    defaultValue={editingWorkshop?.capacity || 40}
+                    min={1}
+                    defaultValue={typeof editingWorkshop?.capacity === 'number' && editingWorkshop.capacity > 0 ? editingWorkshop.capacity : ''}
+                    placeholder="Leave blank if N/A"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
@@ -4310,8 +4879,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 )}
               </div>
 
-              {/* Provider & Instructor */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Provider, Provenance & Instructor */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Provider / Institution *</label>
                   <input
@@ -4319,9 +4888,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     name="provider"
                     required
                     defaultValue={editingCourse?.provider || ''}
-                    placeholder="e.g. NPTEL / SWAYAM, EMBL-EBI, Biocon Academy"
+                    placeholder="e.g. NPTEL / SWAYAM, EMBL-EBI"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Provider Provenance *</label>
+                  <select
+                    name="providerType"
+                    defaultValue={normalizeCourseProviderType(editingCourse?.providerType)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
+                  >
+                    <option value="third_party">Third-Party Provider (External)</option>
+                    <option value="bionexa">BIO-INEXA Provided (Direct Only)</option>
+                  </select>
+                  <p className="text-[10px] text-amber-700 dark:text-amber-300">
+                    Only mark BIO-INEXA Provided if BIO-INEXA actually creates and conducts the course.
+                  </p>
                 </div>
                 <div className="space-y-1">
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Lead Instructor (Optional)</label>
@@ -4341,10 +4924,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Course Category *</label>
                   <select
                     name="category"
-                    defaultValue={editingCourse ? normalizeCourseCategory(editingCourse.category) : 'Biotechnology'}
+                    defaultValue={editingCourse ? (editingCourse.category || 'Biotechnology') : 'Biotechnology'}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
                   >
-                    {COURSE_CATEGORIES.map((cat) => (
+                    {allCourseCategories.map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
                       </option>
@@ -4381,36 +4964,48 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                 </div>
               </div>
 
-              {/* Duration, Fees & Registration Deadline */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {/* Duration, Pricing Classification, Fees & Registration Deadline */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <div className="space-y-1">
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Duration *</label>
                   <input
                     type="text"
                     name="duration"
                     required
-                    defaultValue={editingCourse?.duration || '8 Weeks'}
+                    defaultValue={editingCourse?.duration || ''}
                     placeholder="e.g. 8 Weeks / Self-Paced"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Fees (if applicable)</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Pricing *</label>
+                  <select
+                    name="pricingType"
+                    defaultValue={classifyCoursePricing(editingCourse?.fees || editingCourse?.price, editingCourse?.pricingType)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold focus:outline-none"
+                  >
+                    <option value="free">Free</option>
+                    <option value="paid">Paid</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Fees *</label>
                   <input
                     type="text"
                     name="fees"
-                    defaultValue={editingCourse?.fees || editingCourse?.price || 'Free enrollment'}
-                    placeholder="e.g. Free / Program Fee applies"
+                    required
+                    defaultValue={editingCourse?.fees || editingCourse?.price || ''}
+                    placeholder="e.g. Free or ₹1,500"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
                 </div>
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Registration Deadline</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Reg. Deadline</label>
                   <input
                     type="text"
                     name="registrationDeadline"
-                    defaultValue={editingCourse?.registrationDeadline || 'Open / Rolling'}
-                    placeholder="YYYY-MM-DD or Open / Rolling"
+                    defaultValue={editingCourse?.registrationDeadline || ''}
+                    placeholder="YYYY-MM-DD or Rolling"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono focus:outline-none"
                   />
                 </div>
@@ -4419,12 +5014,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
               {/* Eligibility & Official Registration Link */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300">Eligibility *</label>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Eligibility (Optional)</label>
                   <input
                     type="text"
                     name="eligibility"
-                    required
-                    defaultValue={editingCourse?.eligibility || 'B.Sc / M.Sc / B.Tech Biotechnology & Life Sciences Students'}
+                    defaultValue={editingCourse?.eligibility || ''}
                     placeholder="e.g. B.Sc / M.Sc / Ph.D in Life Sciences"
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                   />
@@ -4435,14 +5029,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     <label className="block font-bold text-slate-700 dark:text-slate-300">
                       Official Registration Link *
                     </label>
-                    {isValidCourseRegistrationUrl(courseRegUrlDraft) && (
+                    {validateCourseRegistrationUrl(courseRegUrlDraft).valid && (
                       <a
-                        href={courseRegUrlDraft.trim()}
+                        href={validateCourseRegistrationUrl(courseRegUrlDraft).normalizedUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 text-[10px] font-bold text-teal-600 hover:underline"
                       >
-                        <span>Test URL</span>
+                        <span>Test ({validateCourseRegistrationUrl(courseRegUrlDraft).domain})</span>
                         <ExternalLink className="w-3 h-3" />
                       </a>
                     )}
@@ -4454,8 +5048,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     value={courseRegUrlDraft}
                     onChange={(e) => setCourseRegUrlDraft(e.target.value)}
                     placeholder="https://onlinecourses.nptel.ac.in/"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-[11px] focus:outline-none"
+                    className={`w-full px-3 py-2 rounded-xl border bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-mono text-[11px] focus:outline-none ${
+                      courseRegUrlDraft.trim() && !validateCourseRegistrationUrl(courseRegUrlDraft).valid
+                        ? 'border-rose-400'
+                        : 'border-slate-200 dark:border-slate-700'
+                    }`}
                   />
+                  {courseRegUrlDraft.trim() && !validateCourseRegistrationUrl(courseRegUrlDraft).valid && (
+                    <p className="text-[10px] text-rose-600 dark:text-rose-400">
+                      {validateCourseRegistrationUrl(courseRegUrlDraft).reason}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -4466,7 +5069,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   rows={3}
                   name="description"
                   required
-                  defaultValue={editingCourse?.description}
+                  defaultValue={editingCourse?.description || ''}
                   placeholder="Describe what learners will study and practical competencies covered..."
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                 />
@@ -4495,13 +5098,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   type="text"
                   name="certificateInfo"
                   defaultValue={editingCourse?.certificateInfo || ''}
-                  placeholder="Leave blank if not offered; do not invent accreditations or affiliations"
+                  placeholder="Leave blank if not offered; never claim BIO-INEXA certifies third-party courses"
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none"
                 />
               </div>
 
-              {/* Status & Feature on Homepage */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+              {/* Availability, Approval Status & Feature on Homepage */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
                 <div className="space-y-1">
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Availability Status *</label>
                   <select
@@ -4509,8 +5112,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                     defaultValue={editingCourse ? normalizeCourseStatus(editingCourse.status, editingCourse.availability) : 'available'}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
                   >
-                    <option value="available">Available (Open for Registration)</option>
-                    <option value="closed">Closed (Registration Closed)</option>
+                    <option value="available">Available (Open)</option>
+                    <option value="closed">Closed</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300">Approval Status *</label>
+                  <select
+                    name="approvalStatus"
+                    defaultValue={editingCourse ? normalizeCourseApprovalStatus(editingCourse.approvalStatus, editingCourse.isApproved) : 'approved'}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
+                  >
+                    <option value="approved">Approved (Public)</option>
+                    <option value="pending">Pending Review</option>
+                    <option value="rejected">Rejected (Hidden)</option>
                   </select>
                 </div>
 
@@ -4518,8 +5134,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <div className="flex items-center gap-2">
                     <Star className="w-4 h-4 text-amber-500 fill-amber-500 shrink-0" />
                     <div>
-                      <div className="font-bold text-slate-900 dark:text-slate-100">Feature on Homepage</div>
-                      <div className="text-[10px] text-slate-500">Show in Section 05 Courses</div>
+                      <div className="font-bold text-slate-900 dark:text-slate-100">Feature</div>
+                      <div className="text-[10px] text-slate-500">Homepage Sec. 05</div>
                     </div>
                   </div>
                   <input
@@ -4707,13 +5323,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ adminUser, onLog
                   <label className="block font-bold text-slate-700 dark:text-slate-300">Verification Status</label>
                   <select
                     name="verificationStatus"
-                    defaultValue={editingInternship?.verificationStatus || 'Verified'}
+                    defaultValue={editingInternship?.verificationStatus || 'Pending Verification'}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-bold focus:outline-none"
                   >
-                    <option value="Verified">Verified</option>
                     <option value="Pending Verification">Pending Verification</option>
-                    <option value="Rejected">Rejected</option>
+                    <option value="Verified">Verified</option>
+                    <option value="Link Unavailable">Link Unavailable</option>
                     <option value="Expired">Expired</option>
+                    <option value="Rejected">Rejected</option>
                   </select>
                 </div>
               </div>

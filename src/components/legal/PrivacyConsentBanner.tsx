@@ -42,7 +42,7 @@ export const PrivacyConsentBanner: React.FC = () => {
               <span>Privacy, Cookies &amp; Browser Storage Notice (India DPDP Act)</span>
             </div>
             <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
-              BIO-INEXA uses strictly necessary browser storage for bookmarks/theme, an Admin-only session cookie, and an optional session visit ping via Google Apps Script. No advertising trackers are used.{' '}
+              BIO-INEXA uses strictly necessary browser storage for bookmarks/theme, strictly necessary HttpOnly session cookies for authenticated Student &amp; Admin accounts, and an optional session visit ping via Google Apps Script. No advertising trackers are used.{' '}
               <button
                 type="button"
                 onClick={() => navigate('/privacy')}

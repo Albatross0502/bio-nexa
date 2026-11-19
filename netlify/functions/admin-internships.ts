@@ -29,6 +29,7 @@ import {
   SERVERLESS_INTERNSHIPS,
 } from './_shared/serverlessCatalog';
 import { formatAdminInternship, getSupabaseRepository } from './_shared/supabaseDb';
+import { validateInternshipApplicationUrl } from '../../src/services/internships/internshipHelpers';
 
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const BASE_PREFIXES = ['/.netlify/functions/admin-internships', '/api/admin/internships'];
@@ -99,12 +100,13 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       );
     }
 
-    if (!isValidHttpUrl(applicationUrl)) {
+    const urlCheck = validateInternshipApplicationUrl(applicationUrl);
+    if (!urlCheck.valid) {
       return errorResponse(
         event,
         400,
         'Validation Error',
-        'Application URL must start with http:// or https://',
+        urlCheck.reason || 'Application URL must start with http:// or https://',
         { code: 'INVALID_URL', allowedMethods: ['GET', 'POST'] }
       );
     }
@@ -118,7 +120,7 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       );
     }
 
-    const verificationStatus = sanitizeString(body.verificationStatus) || 'Verified';
+    const verificationStatus = sanitizeString(body.verificationStatus) || 'Pending Verification';
     const isApproved =
       verificationStatus === 'Verified' || verificationStatus === 'Link Unavailable'
         ? true
@@ -166,6 +168,43 @@ export const handler = async (event: NetlifyEvent): Promise<NetlifyResponse> => 
       201,
       { success: true, internship: formatAdminInternship(created) },
       ['GET', 'POST']
+    );
+  }
+
+  if (subPath === 'expire-scan') {
+    if (method !== 'POST') {
+      return methodNotAllowedResponse(event, ['POST']);
+    }
+    if (!repo) {
+      return serviceUnavailableResponse(
+        event,
+        'Expired internship scans require Supabase PostgreSQL configuration.',
+        'PERSISTENT_DB_NOT_CONFIGURED',
+        ['POST']
+      );
+    }
+    const result = await repo.expirePastDeadlineInternships();
+    await repo
+      .recordAdminAuditLog({
+        adminUserId: auth.user.id,
+        actorUsername: auth.user.username,
+        action: 'ADMIN_INTERNSHIP_EXPIRE_SCAN',
+        entityType: 'internship',
+        details: result,
+      })
+      .catch(() => {});
+    return jsonResponse(
+      event,
+      200,
+      {
+        success: true,
+        ...result,
+        message:
+          result.expiredCount > 0
+            ? `Marked ${result.expiredCount} past-deadline internship(s) as Expired.`
+            : 'All active internships have valid upcoming or rolling deadlines.',
+      },
+      ['POST']
     );
   }
 

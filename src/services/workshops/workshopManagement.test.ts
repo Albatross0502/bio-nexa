@@ -4,12 +4,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BionexaDatabase } from '../../db/bionexaDatabase';
 import {
+  WORKSHOP_CATEGORIES,
+  extractWorkshopCategories,
   isValidWorkshopRegistrationUrl,
+  validateWorkshopRegistrationUrl,
+  validateWorkshopSubmissionPayload,
   isValidWorkshopImageUrl,
+  normalizeWorkshopApprovalStatus,
   normalizeWorkshopFormat,
   normalizeWorkshopStatus,
   normalizeAvailabilityOption,
   toDateInputValue,
+  isWorkshopExpired,
   isWorkshopRegistrationClosed,
   filterWorkshops,
   mapApiWorkshopToUnified,
@@ -298,5 +304,192 @@ describe('Phase 08: Workshops Management System', () => {
     assert.equal(opp.workMode, 'On-site');
     assert.equal(opp.applicationUrl, 'https://www.igib.res.in/');
     assert.equal(opp.featured, true);
+    assert.equal(opp.workshopDetails?.certificateAvailable, false);
+  });
+
+  it('10. Phase 12: strictly validates registration URLs and rejects placeholder/localhost/unsafe schemes', () => {
+    const validRes = validateWorkshopRegistrationUrl('https://www.igib.res.in/workshops/crispr');
+    assert.equal(validRes.valid, true);
+    assert.equal(validRes.domain, 'www.igib.res.in');
+
+    assert.equal(validateWorkshopRegistrationUrl('https://example.com/fake-register').valid, false);
+    assert.equal(validateWorkshopRegistrationUrl('http://localhost:3000/register').valid, false);
+    assert.equal(validateWorkshopRegistrationUrl('http://127.0.0.1/register').valid, false);
+    assert.equal(validateWorkshopRegistrationUrl('javascript:alert(1)').valid, false);
+    assert.equal(validateWorkshopRegistrationUrl('data:text/html,hi').valid, false);
+    assert.equal(validateWorkshopRegistrationUrl('not-a-url').valid, false);
+  });
+
+  it('11. Phase 12: preserves saved-only workshop data without inventing organizers, capacity, or certifications', () => {
+    const minimal = mapApiWorkshopToUnified({
+      id: 'ws-minimal-1',
+      name: 'Saved-Only Proteomics Seminar',
+      organizer: 'NCBS-TIFR',
+      category: 'Proteomics & Structural Biology',
+      format: 'Online',
+      date: '2027-01-15',
+      venue: 'Online Portal',
+      registrationUrl: 'https://www.ncbs.res.in/events',
+      description: 'Real saved description only.',
+      status: 'upcoming',
+      availability: 'Open',
+      approvalStatus: 'approved',
+      isApproved: true,
+    });
+
+    assert.equal(minimal.organizer, 'NCBS-TIFR');
+    assert.equal(minimal.instructor, '');
+    assert.equal(minimal.time, '');
+    assert.equal(minimal.duration, '');
+    assert.equal(minimal.fees, '');
+    assert.equal(minimal.capacity, null);
+    assert.equal(minimal.category, 'Proteomics & Structural Biology');
+
+    const opp = mapUnifiedWorkshopToOpportunity(minimal);
+    assert.equal(opp.workshopDetails?.certificateAvailable, false);
+  });
+
+  it('12. Phase 12: validates public submission payloads and enforces pending review workflow', () => {
+    const badSub = validateWorkshopSubmissionPayload({
+      title: 'Test',
+      organizer: '',
+      description: 'Short',
+      date: '2027-02-01',
+      registrationUrl: 'https://example.com/fake',
+    });
+    assert.equal(badSub.valid, false);
+    assert.ok(badSub.errors.length >= 2);
+
+    const goodSub = validateWorkshopSubmissionPayload({
+      title: 'National Single-Cell Transcriptomics Workshop',
+      organizer: 'IISc Bengaluru',
+      instructor: 'Prof. S. Kulkarni',
+      category: WORKSHOP_CATEGORIES[1],
+      description: 'Two-day hands-on training in single-cell RNA-seq preprocessing, clustering, and trajectory inference.',
+      format: 'Hybrid',
+      venue: 'IISc Campus & Zoom',
+      date: '2027-03-10',
+      registrationDeadline: '2027-03-01',
+      registrationUrl: 'https://iisc.ac.in/workshops/scrna',
+      capacity: '',
+    });
+    assert.equal(goodSub.valid, true);
+    assert.ok(goodSub.sanitized);
+    assert.equal(goodSub.sanitized?.capacity, null);
+    assert.equal(goodSub.sanitized?.format, 'Hybrid');
+
+    // Persist as pending and verify it does NOT appear in public approved listing
+    const s = goodSub.sanitized!;
+    const pendingWs = db.createWorkshop({
+      id: 'ws-pending-p12',
+      name: s.title,
+      description: s.description,
+      organizer: s.organizer,
+      instructor: s.instructor,
+      category: s.category,
+      date: s.date,
+      time: '',
+      duration: '',
+      format: s.format,
+      venue: s.venue,
+      registrationDeadline: s.registrationDeadline,
+      registrationLink: s.registrationUrl,
+      availability: 'Open',
+      status: 'upcoming',
+      fees: '',
+      capacity: 0,
+      skillsCovered: [],
+      approvalStatus: 'pending',
+      isApproved: false,
+      featured: false,
+    });
+
+    assert.equal(pendingWs.approvalStatus, 'pending');
+    assert.equal(pendingWs.isApproved, false);
+    assert.equal(
+      db.getWorkshops({ onlyApproved: true }).some((w) => w.id === 'ws-pending-p12'),
+      false
+    );
+
+    // Admin approves -> now appears in public approved listing and category filter
+    const approved = db.updateWorkshop('ws-pending-p12', {
+      approvalStatus: 'approved',
+      isApproved: true,
+    });
+    assert.equal(approved?.approvalStatus, 'approved');
+    assert.equal(approved?.isApproved, true);
+    assert.equal(
+      db.getWorkshops({ onlyApproved: true, category: s.category }).some((w) => w.id === 'ws-pending-p12'),
+      true
+    );
+
+    // Admin rejects -> disappears from public listing and clears featured
+    const rejected = db.updateWorkshop('ws-pending-p12', {
+      approvalStatus: 'rejected',
+      isApproved: false,
+      featured: false,
+    });
+    assert.equal(normalizeWorkshopApprovalStatus(rejected?.approvalStatus, rejected?.isApproved), 'rejected');
+    assert.equal(
+      db.getWorkshops({ onlyApproved: true }).some((w) => w.id === 'ws-pending-p12'),
+      false
+    );
+  });
+
+  it('13. Phase 12: automatically identifies and marks expired workshops by past date or past deadline', () => {
+    const fixedNow = new Date('2026-11-18T12:00:00Z');
+    assert.equal(
+      isWorkshopExpired({ status: 'upcoming', availability: 'Open', date: '2026-11-01' }, fixedNow),
+      true
+    );
+    assert.equal(
+      isWorkshopExpired({ status: 'upcoming', availability: 'Open', date: '2026-12-20', registrationDeadline: '2026-11-10' }, fixedNow),
+      true
+    );
+    assert.equal(
+      isWorkshopExpired({ status: 'upcoming', availability: 'Open', date: '2026-12-20', registrationDeadline: '2026-12-10' }, fixedNow),
+      false
+    );
+
+    db.createWorkshop({
+      id: 'ws-expired-auto-p12',
+      name: 'Past Date Microscopy Workshop',
+      description: 'Workshop whose date has already elapsed.',
+      organizer: 'C-CAMP Bengaluru',
+      instructor: '',
+      category: 'Cell Biology & Immunology',
+      date: '2020-05-10',
+      time: '',
+      duration: '',
+      format: 'Offline',
+      venue: 'C-CAMP Bengaluru',
+      registrationDeadline: '2020-05-01',
+      registrationLink: 'https://www.ccamp.res.in/workshops',
+      status: 'upcoming',
+      availability: 'Open',
+      fees: '',
+      capacity: 0,
+      featured: false,
+      skillsCovered: [],
+      approvalStatus: 'approved',
+      isApproved: true,
+    });
+
+    const scanResult = db.expirePastWorkshops(fixedNow);
+    assert.ok(scanResult.expiredIds.includes('ws-expired-auto-p12'));
+    const afterScan = db.getWorkshopById('ws-expired-auto-p12');
+    assert.equal(afterScan?.status, 'completed');
+    assert.equal(afterScan?.availability, 'Closed');
+
+    // Excluding expired workshops omits ws-expired-auto-p12 from active homepage feed
+    const activeOnly = db.getWorkshops({ onlyApproved: true, includeExpired: false });
+    assert.equal(activeOnly.some((w) => w.id === 'ws-expired-auto-p12'), false);
+
+    // Category extraction & filtering
+    const unified = db.getWorkshops({ onlyApproved: true }).map(mapApiWorkshopToUnified);
+    const categories = extractWorkshopCategories(unified);
+    assert.ok(categories.includes('Cell Biology & Immunology'));
+    const filteredActive = filterWorkshops(unified, { includeExpired: false });
+    assert.equal(filteredActive.some((w) => w.id === 'ws-expired-auto-p12'), false);
   });
 });

@@ -309,7 +309,7 @@ export const SEED_INTERNSHIPS: Internship[] = [
     organization: 'Biocon Academy',
     location: 'Electronic City, Bengaluru',
     mode: 'On-site Lab',
-    stipend: '₹18,00,0 / month + Subsidized Accommodation',
+    stipend: '₹18,000 / month + Subsidized Accommodation',
     duration: '6 Months (Jan - June 2027)',
     deadline: '2026-12-10',
     category: 'Industrial R&D',

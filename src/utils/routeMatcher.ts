@@ -63,17 +63,53 @@ export function parseRoute(rawPath: string): ParsedRoute {
 
   const segments = pathname.split('/').filter(Boolean);
 
-  // Direct detail pages with ID: e.g. /jobs/:id, /job/:id, /biotech-jobs/:id, /opportunities/:id
+  // Direct detail pages & Student Auth two-segment routes
   if (segments.length === 2) {
-    const [prefix, id] = segments;
+    const [prefix, sub] = segments;
     if (prefix === 'jobs' || prefix === 'job' || prefix === 'biotech-jobs' || prefix === 'opportunities' || prefix === 'opportunity') {
-      params.id = id;
+      params.id = sub;
       return {
         route: 'job-detail',
         pathname,
         params,
         queryParams
       };
+    }
+    if (prefix === 'student') {
+      switch (sub) {
+        case 'login':
+        case 'signin':
+          return { route: 'student-login', pathname, params, queryParams };
+        case 'register':
+        case 'signup':
+          return { route: 'student-register', pathname, params, queryParams };
+        case 'verify-email':
+          return { route: 'student-verify-email', pathname, params, queryParams };
+        case 'reset-password':
+          return { route: 'student-reset-password', pathname, params, queryParams };
+        case 'dashboard':
+          return { route: 'dashboard-student', pathname, params, queryParams };
+        default:
+          break;
+      }
+    }
+    if (prefix === 'company' || prefix === 'employer') {
+      switch (sub) {
+        case 'login':
+        case 'signin':
+          return { route: 'company-login', pathname, params, queryParams };
+        case 'register':
+        case 'signup':
+          return { route: 'company-register', pathname, params, queryParams };
+        case 'verify-email':
+          return { route: 'company-verify-email', pathname, params, queryParams };
+        case 'reset-password':
+          return { route: 'company-reset-password', pathname, params, queryParams };
+        case 'dashboard':
+          return { route: 'dashboard-company', pathname, params, queryParams };
+        default:
+          break;
+      }
     }
   }
 
@@ -82,6 +118,16 @@ export function parseRoute(rawPath: string): ParsedRoute {
     const segment = segments[0];
 
     switch (segment) {
+      case 'login':
+      case 'signin':
+        return { route: 'student-login', pathname, params, queryParams };
+      case 'register':
+      case 'signup':
+        return { route: 'student-register', pathname, params, queryParams };
+      case 'verify-email':
+        return { route: 'student-verify-email', pathname, params, queryParams };
+      case 'reset-password':
+        return { route: 'student-reset-password', pathname, params, queryParams };
       case 'job':
       case 'jobs':
         return { route: 'jobs', pathname, params, queryParams };

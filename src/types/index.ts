@@ -1,4 +1,4 @@
-export type Role = 'student' | 'company' | 'admin';
+export type Role = 'guest' | 'student' | 'company' | 'admin';
 
 export interface User {
   id: string;
@@ -8,8 +8,14 @@ export interface User {
   avatar?: string;
   title?: string;
   institution?: string;
+  specialization?: string;
+  graduationYear?: string;
+  location?: string;
   skills?: string[];
   bio?: string;
+  linkedinUrl?: string;
+  orcidId?: string;
+  emailVerified?: boolean;
   cvUrl?: string;
 }
 
@@ -78,6 +84,14 @@ export interface Internship {
   };
   applicationUrl?: string;
   featured?: boolean;
+  verificationStatus?: JobVerificationStatus;
+  verificationNotes?: string;
+  lastVerificationDate?: string;
+  isVerified?: boolean;
+  isApproved?: boolean;
+  isActive?: boolean;
+  isExpired?: boolean;
+  compensationType?: 'paid' | 'unpaid';
 }
 
 export interface CourseLesson {

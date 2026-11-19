@@ -16,6 +16,8 @@ import { CareerGuidancePage } from './components/guidance/CareerGuidancePage';
 import { CommunityPage } from './components/community/CommunityPage';
 import { NewsPage } from './components/news/NewsPage';
 import { StudentDashboard } from './components/dashboard/StudentDashboard';
+import { StudentAuthPage } from './components/student/StudentAuthPage';
+import { CompanyAuthPage } from './components/company/CompanyAuthPage';
 import { CompanyDashboard } from './components/dashboard/CompanyDashboard';
 import { AdminPanel } from './components/admin/AdminPanel';
 import {
@@ -78,7 +80,7 @@ const MainContent: React.FC = () => {
       case 'workshops':
         return <WorkshopsPage />;
       case 'internships':
-        return <OpportunitiesPortal initialType="internship" />;
+        return <InternshipsPage />;
       case 'courses':
         return <CoursesPage />;
       case 'exams':
@@ -93,8 +95,24 @@ const MainContent: React.FC = () => {
         return <CommunityPage />;
       case 'news':
         return <NewsPage />;
+      case 'student-login':
+        return <StudentAuthPage initialMode="login" />;
+      case 'student-register':
+        return <StudentAuthPage initialMode="register" />;
+      case 'student-verify-email':
+        return <StudentAuthPage initialMode="verify" initialToken={parsed.queryParams.token || ''} />;
+      case 'student-reset-password':
+        return <StudentAuthPage initialMode="reset" initialToken={parsed.queryParams.token || ''} />;
       case 'dashboard-student':
         return <StudentDashboard />;
+      case 'company-login':
+        return <CompanyAuthPage initialMode="login" />;
+      case 'company-register':
+        return <CompanyAuthPage initialMode="register" />;
+      case 'company-verify-email':
+        return <CompanyAuthPage initialMode="verify" initialToken={parsed.queryParams.token || ''} />;
+      case 'company-reset-password':
+        return <CompanyAuthPage initialMode="reset" initialToken={parsed.queryParams.token || ''} />;
       case 'dashboard-company':
         return <CompanyDashboard />;
       case 'admin':

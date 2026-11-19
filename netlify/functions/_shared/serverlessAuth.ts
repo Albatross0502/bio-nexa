@@ -305,6 +305,33 @@ export function requireServerlessAdminAuth(
 
   const token = extractAdminToken(event);
   if (!token) {
+    const cookies = parseCookies(getHeader(event.headers, 'cookie'));
+    if (cookies['bionexa_student_session']) {
+      return {
+        authorized: false,
+        response: errorResponse(
+          event,
+          403,
+          'Forbidden',
+          'Student accounts are not permitted to access administrator APIs.',
+          { code: 'ROLE_FORBIDDEN', allowedMethods },
+          env
+        ),
+      };
+    }
+    if (cookies['bionexa_company_session']) {
+      return {
+        authorized: false,
+        response: errorResponse(
+          event,
+          403,
+          'Forbidden',
+          'Company accounts are not permitted to access administrator APIs.',
+          { code: 'ROLE_FORBIDDEN', allowedMethods },
+          env
+        ),
+      };
+    }
     return {
       authorized: false,
       response: errorResponse(
